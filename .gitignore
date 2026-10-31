@@ -20,3 +20,12 @@ eval_results*/
 uploads/
 db-data/
 pyproject.toml.old
+studio_work/
+studio_output/
+studio_demo*/
+studio_fixture/
+studio_doctor.*
+
+# Local media, analysis, athlete identities and job logs (never commit personal video data)
+/results/
+/project/

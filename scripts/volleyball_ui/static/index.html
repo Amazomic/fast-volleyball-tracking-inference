@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Volley Studio · Анализ матчей</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div class="shell">
+  <aside class="sidebar">
+    <div class="brand"><span class="brand-logo">V</span><span><b>VOLLEY<span class="accent">STUDIO</span></b><small>AI Match Workspace</small></span></div>
+    <div class="nav-caption">РАБОЧЕЕ ПРОСТРАНСТВО</div>
+    <nav class="nav">
+      <button class="nav-button active" data-view="dashboard"><span class="nav-icon">◈</span> Обзор</button>
+      <button class="nav-button" data-view="analysis"><span class="nav-icon">▶</span> Анализ видео</button>
+      <button class="nav-button" data-view="players"><span class="nav-icon">♧</span> Игроки и ID</button>
+      <button class="nav-button" data-view="report"><span class="nav-icon">▥</span> Отчёт</button>
+      <button class="nav-button" data-view="results"><span class="nav-icon">▣</span> Готовые ролики</button>
+    </nav>
+    <div class="sidebar-bottom">
+      <div class="sidebar-note"><span class="pulse"></span>Локальный сервер в WSL<br><small>Результаты сохраняются в /results</small></div>
+      <div class="version">MVP / 0.1.0</div>
+    </div>
+  </aside>
+  <main class="main">
+    <header class="topbar">
+      <div><div class="eyebrow">MATCH INTELLIGENCE / WORKSPACE</div><h1 id="page-title">Обзор матча</h1></div>
+      <div class="topbar-controls">
+        <span class="selected-label">ВИДЕО</span><select id="top-video" aria-label="Выбрать видео"></select>
+        <button class="icon-button" id="refresh" title="Обновить данные">↻</button>
+      </div>
+    </header>
+    <div class="content">
+      <div id="alerts" role="status"></div>
+      <section id="view-dashboard" class="view active">
+        <div class="hero">
+          <div>
+            <div class="hero-kicker"><span class="dot"></span> VIDEO ANALYTICS SUITE</div>
+            <h2>Матч под контролем.<br><span>Данные без повторного анализа.</span></h2>
+            <p>Траектории мяча, игровые события, идентификация спортсменов и подборки лучших моментов — в одном месте.</p>
+            <div class="hero-actions"><button class="primary" data-go="analysis">Начать анализ <span>↗</span></button><button class="secondary" data-go="report">Посмотреть отчёт</button></div>
+          </div>
+          <div class="hero-art" aria-hidden="true"><div class="orb orb-1"></div><div class="orb orb-2"></div><div class="ring ring-a"></div><div class="ring ring-b"></div><div class="hero-ball">●</div></div>
+        </div>
+        <div class="section-head"><h3>Сводка по выбранному видео</h3><span id="cache-status" class="hint"></span></div>
+        <div id="metrics" class="metric-grid"></div>
+        <div class="two-column">
+          <article class="panel">
+            <div class="panel-heading"><h3>Обнаруженные события</h3><span class="muted">Эвристические метки</span></div>
+            <div id="event-bars" class="event-bars"></div>
+          </article>
+          <article class="panel">
+            <div class="panel-heading"><h3>Недавние результаты</h3><button class="text-link" data-go="results">Все файлы →</button></div>
+            <div id="recent-renders" class="file-list"></div>
+          </article>
+        </div>
+      </section>
+      <section id="view-analysis" class="view">
+        <div class="section-intro"><h2>Анализ нового видео</h2><p>Выберите исходный файл и параметры. Кэш предыдущих вычислений будет использован, если настройки совпадают.</p></div>
+        <div class="two-column analysis-columns">
+          <article class="panel">
+            <div class="panel-heading"><h3>01 / Источник и параметры</h3></div>
+            <form id="analysis-form">
+              <label class="field"><span>Исходное видео</span><select id="analysis-video" required></select></label>
+              <div class="form-row"><label class="field"><span>Модель мяча</span><select name="backend"><option value="onnx">ONNX Runtime</option><option value="openvino">OpenVINO</option></select></label><label class="field"><span>Ширина анализа, px</span><input name="analysis_width" type="number" min="320" max="1920" step="2" value="1280"></label></div>
+              <div class="form-row"><label class="field"><span>Минимум розыгрыша, с</span><input name="min_rally" type="number" min="0.5" max="30" step="0.5" value="1.5"></label><label class="field"><span>Уверенность детекции</span><input name="min_confidence" type="number" min="0.05" max="1" step="0.05" value="0.5"></label></div>
+              <div class="form-row"><label class="field"><span>Начало фрагмента, с</span><input name="analysis_start" type="number" min="0" step="1" value="0"></label><label class="field"><span>Длина фрагмента, с (0 = всё)</span><input name="analysis_seconds" type="number" min="0" step="1" value="0"></label></div>
+              <div class="form-row"><label class="field"><span>Число CPU потоков</span><input name="threads" type="number" min="1" max="32" step="1" value="8"></label><label class="checkbox-field"><input name="beach" type="checkbox" checked><span>Пляжный волейбол</span></label></div>
+              <p class="footnote">Анализ распознаёт мяч и игроков, строит траектории и индексирует игровые события. При смене модели или масштаба возможен новый проход.</p>
+              <button class="primary wide" type="submit">Запустить анализ <span>↗</span></button>
+            </form>
+          </article>
+          <article class="panel jobs-panel">
+            <div class="panel-heading"><h3>02 / Ход обработки</h3><span id="job-badge" class="status-pill">Нет задачи</span></div>
+            <div class="job-illustration"><span>⌁</span><div><b id="job-head">Ожидание запуска</b><p id="job-sub">Никакая обработка сейчас не выполняется.</p></div></div>
+            <div class="progress-row"><span>Прогресс</span><strong id="job-percent">—</strong></div><div class="progress-track"><div id="job-progress"></div></div>
+            <div class="job-actions"><button class="secondary" id="cancel-job" type="button" disabled>Остановить</button><button class="secondary" id="open-report" data-go="report" type="button">Открыть отчёт</button></div>
+            <div class="console-label">ЖУРНАЛ ОБРАБОТКИ</div><pre id="job-log" class="terminal">Здесь появятся сообщения pipeline.</pre>
+          </article>
+        </div>
+      </section>
+      <section id="view-players" class="view">
+        <div class="section-intro"><h2>Игроки и идентификаторы</h2><p>Выберите несколько ID, если трекер разделил одного спортсмена на разные треки. Задайте имя — статистика этих ID будет объединена без изменения исходного анализа.</p></div>
+        <div class="two-column players-columns">
+          <article class="panel">
+            <div class="panel-heading"><h3>Найденные track ID</h3><span class="muted" id="raw-count"></span></div>
+            <label class="field"><span>Поиск по ID</span><input type="search" id="track-search" placeholder="Например: 725"></label>
+            <div class="table-scroll"><table><thead><tr><th><input type="checkbox" id="select-all-ids" title="Выбрать видимые ID"></th><th>TRACK ID</th><th>АТАКИ</th><th>ПРИЁМЫ</th><th>ПЕРЕДАЧИ</th><th>ИГРОК</th></tr></thead><tbody id="raw-players"></tbody></table></div>
+            <div class="table-footer"><span id="table-hint">Показаны первые 60 совпадений</span><button class="secondary small" id="show-more">Показать ещё</button></div>
+          </article>
+          <div class="stack">
+            <article class="panel">
+              <div class="panel-heading"><h3>Присвоить имя / объединить ID</h3></div>
+              <p class="muted paragraph">Отметьте строки в таблице слева и введите имя. Если такое имя уже существует, выбранные ID присоединятся к нему.</p>
+              <label class="field"><span>Имя игрока</span><input id="player-name" list="known-names" placeholder="Например: Иван" maxlength="80" autocomplete="off"><datalist id="known-names"></datalist></label>
+              <div id="selected-ids" class="chosen">ID не выбраны</div>
+              <div class="form-row"><button class="primary" id="assign-ids">Сохранить и объединить</button><button class="secondary" id="unassign-ids">Убрать привязку</button></div>
+            </article>
+            <article class="panel">
+              <div class="panel-heading"><h3>Именованные игроки</h3><span class="muted" id="groups-count"></span></div>
+              <div id="named-list" class="named-list"></div>
+            </article>
+          </div>
+        </div>
+      </section>
+      <section id="view-report" class="view">
+        <div class="section-intro"><h2>Отчёт по матчу</h2><p>Сводка игровых действий и агрегированная статистика по именованным игрокам.</p></div>
+        <div id="report-notice" class="notice"></div>
+        <div id="report-metrics" class="metric-grid"></div>
+        <div class="two-column">
+          <article class="panel"><div class="panel-heading"><h3>Действия по типам</h3></div><div id="report-bars" class="event-bars"></div></article>
+          <article class="panel"><div class="panel-heading"><h3>Игроки с объединёнными ID</h3><button class="text-link" data-go="players">Изменить ID →</button></div><div id="report-people"></div></article>
+        </div>
+      </section>
+      <section id="view-results" class="view">
+        <div class="section-intro"><h2>Ролики и подборки</h2><p>Готовые файлы из каталога results. Новый ролик собирается из сохранённых данных без запуска нейросетей.</p></div>
+        <div class="two-column analysis-columns">
+          <article class="panel"><div class="panel-heading"><h3>Новая подборка</h3></div>
+            <form id="highlights-form">
+              <label class="field"><span>Источник</span><select id="highlight-video"></select></label>
+              <label class="field"><span>Желаемая длительность, секунд</span><input name="duration" type="number" min="10" max="600" step="10" value="120"></label>
+              <p class="footnote">Приоритет — зрелищные полноценные розыгрыши, поэтому итоговая длительность может отличаться от заданной. Границы розыгрышей определяются эвристически.</p>
+              <button class="primary wide" type="submit">Собрать лучшие моменты <span>↗</span></button>
+            </form>
+            <div class="panel-heading space-top"><h3>Готовые MP4</h3></div><div id="all-renders" class="file-list"></div>
+          </article>
+          <article class="panel preview-panel"><div class="panel-heading"><h3>Просмотр</h3></div>
+            <div class="preview-stage"><video id="preview-player" controls playsinline preload="metadata"></video><div id="preview-empty" class="empty-video">Выберите MP4 из списка слева</div></div>
+            <div class="muted preview-caption" id="preview-title">—</div>
+          </article>
+        </div>
+      </section>
+    </div>
+    <footer>VOLLEY STUDIO · ЛОКАЛЬНЫЙ ИНТЕРФЕЙС <span>Необработанные данные сохраняются · 2026</span></footer>
+  </main>
+</div>
+<script src="/app.js" defer></script>
+</body>
+</html>
