@@ -451,3 +451,28 @@ footer{border-top:1px solid var(--border);padding:22px 42px;color:#557073;font-s
   }
   .analysis-media-panel .timeline-input-only{margin-top:16px;padding-top:16px}
 }
+
+/* The sole seek/range bar belongs immediately below the source player,
+   exactly as wide as the video column (not the entire card + source sidebar). */
+.analysis-media-panel .workspace-video-main .timeline-input-only{
+  border:0;border-radius:0;background:transparent;
+  padding:0;margin:6px 0 0;
+  width:100%;min-width:0;
+}
+.analysis-media-panel .workspace-video-main .timeline-canvas{
+  width:100%;margin:0 0 6px;
+}
+.analysis-media-panel .workspace-video-main .timeline-ticks{
+  width:100%;
+}
+.analysis-media-panel .workspace-video-main .analysis-play-controls{
+  margin:10px 0 6px;
+}
+.analysis-media-panel .workspace-video-main>.footnote{
+  margin:10px 0 0;
+}
+@media(max-width:780px){
+  .analysis-media-panel .workspace-video-main .timeline-input-only{
+    margin-top:6px;padding:0;border-top:0;
+  }
+}
