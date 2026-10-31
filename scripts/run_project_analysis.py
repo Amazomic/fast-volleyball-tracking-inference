@@ -49,6 +49,14 @@ def main():
              "--analysis-start",str(seg_start)]
         if seg_length>0:
             cmd+=["--analysis-seconds",str(seg_length)]
+        from scripts.volleyball_ui.court import court_path
+        court = court_path(args.project_id, source.name)
+        if court.is_file():
+            cmd += ["--court-json", str(court)]
+            print("PROJECT COURT: "+str(court),flush=True)
+        else:
+            cmd.append("--no-court-fallback")
+            print("PROJECT COURT: no saved calibration for "+source.name,flush=True)
         if args.beach:
             cmd.append("--beach")
         subprocess.run(cmd,cwd=ROOT,check=True)

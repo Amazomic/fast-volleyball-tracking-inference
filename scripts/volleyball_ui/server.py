@@ -18,6 +18,7 @@ from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 from .data import RESULTS, ROOT, assign, find_cache, list_videos, report, unassign, video_path, video_renders
 from .preview import preview_frame, target_width, video_info
+from .court import get_court, save_context, project_context
 from .timeline import timeline
 from .projects import (all_projects, create_project, update_project, get_project,
                        project_videos, project_summary, project_output, project_report,
@@ -265,6 +266,11 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"projects": [project_summary(p["id"]) for p in all_projects()]})
             if route == "/api/project-report":
                 return self._json(project_report(query.get("id", [""])[0]))
+            if route == "/api/project-context":
+                return self._json(project_context(query.get("project_id", [""])[0]))
+            if route == "/api/court":
+                return self._json({"court": get_court(
+                    query.get("project_id", [""])[0], query.get("video", [""])[0])})
             if route == "/api/benchmark-results":
                 project_id = query.get("project_id", [""])[0]
                 from .projects import project_dir
@@ -357,6 +363,7 @@ class Handler(BaseHTTPRequestHandler):
                 "/": ("index.html", "text/html; charset=utf-8"),
                 "/app.js": ("app.js", "text/javascript; charset=utf-8"),
                 "/analysis-ui.js": ("analysis-ui.js", "text/javascript; charset=utf-8"),
+                "/court-ui.js": ("court-ui.js", "text/javascript; charset=utf-8"),
                 "/results-ui.js": ("results-ui.js", "text/javascript; charset=utf-8"),
                 "/style.css": ("style.css", "text/css; charset=utf-8"),
             }
@@ -385,6 +392,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"project": create_project(body.get("name"), body.get("videos", []), body.get("ranges"))})
             if route == "/api/project-update":
                 return self._json({"project": update_project(body.get("id"), body.get("name"), body.get("videos"), body.get("ranges"))})
+            if route == "/api/analysis-context":
+                return self._json(save_context(
+                    body.get("project_id"), body.get("video"), body.get("range"),
+                    body.get("court"), body.get("clear_court", False)))
             if route == "/api/analyze":
                 return self._json(start_job("analyze", body))
             if route == "/api/highlights":

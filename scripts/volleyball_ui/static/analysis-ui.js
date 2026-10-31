@@ -167,6 +167,9 @@ window.VolleyballAnalysisUI=(()=>{
       ]);
       if(request!==loadSeq)return;
       meta=info;
+      if(window.VolleyballCourtUI)
+        await window.VolleyballCourtUI.setVideo(projectId,name,info);
+      if(request!==loadSeq)return;
       const saved=ranges.get(name);
       start=saved?clamp(saved.start,0,Math.max(0,info.duration_sec-1)):0;
       end=saved?clamp(saved.end,start+1,info.duration_sec):info.duration_sec;
@@ -245,6 +248,7 @@ window.VolleyballAnalysisUI=(()=>{
   }
   function setProjectRanges(saved={},identifier=""){
     ++loadSeq;cancelScheduledSeek();
+    if(window.VolleyballCourtUI)window.VolleyballCourtUI.reset();
     projectId=identifier;video="";meta=null;ranges.clear();drag=null;
     player().pause();
     for(const [name,range] of Object.entries(saved||{})){

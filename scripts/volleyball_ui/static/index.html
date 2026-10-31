@@ -70,6 +70,8 @@
               </div>
               <div class="workspace-video-player">
                 <video id="source-video-player" playsinline preload="metadata" aria-label="Просмотр исходного видео"></video>
+                <svg id="court-overlay" class="court-overlay" xmlns="http://www.w3.org/2000/svg" aria-label="Точки разметки волейбольной площадки" hidden></svg>
+                <div class="court-overlay-badge" id="court-overlay-badge" hidden>Разметка площадки</div>
                 <span id="source-video-placeholder">Загрузка видео…</span>
               </div>
           <article class="timeline-panel timeline-input-only">
@@ -101,9 +103,19 @@
             </div>
             <div class="timeline-save-row">
               <span class="muted" id="range-save-status">Диапазон хранится в проекте</span>
-              <button type="button" class="secondary small" id="save-timeline-range">Сохранить диапазон</button>
+              <button type="button" class="secondary small" id="save-timeline-range">Сохранить диапазон и разметку</button>
             </div>
           </article>
+              <div class="court-calibration-tools">
+                <button type="button" class="secondary small" id="court-mode-toggle">Разметить площадку</button>
+                <span class="court-progress" id="court-progress">Разметка ещё не сохранена</span>
+                <button type="button" class="secondary small" id="court-undo" hidden>Отменить точку</button>
+                <button type="button" class="secondary small" id="court-clear" hidden>Сбросить разметку</button>
+              </div>
+              <div class="court-instruction" id="court-instruction" hidden>
+                <b id="court-point-prompt">Точка 1 из 8</b>
+                <span>Нажимайте на изображение площадки; готовые точки можно перетаскивать. Для пляжного волейбола точки 5–6 — условная средняя линия, а не нарисованная линия атаки.</span>
+              </div>
               <p class="footnote" id="source-playback-note">
                 Выберите видео справа и задайте временной диапазон под проигрывателем.
               </p>
@@ -121,6 +133,7 @@
           <article class="panel analysis-settings-panel">
             <div class="panel-heading"><h3>Настройки запуска анализа</h3></div>
             <form id="analysis-form">
+              <div class="analysis-context-summary" id="analysis-context-summary" aria-label="Контекст анализа каждого видео"></div>
               <p class="footnote" id="analysis-project-hint">Параметры применяются ко всем видео проекта, а диапазон выбирается отдельно для каждого видео.</p>
               <div class="form-row">
                 <label class="field"><span>Движок обнаружения мяча</span>
@@ -307,6 +320,7 @@
   </main>
 </div>
 <script src="/analysis-ui.js" defer></script>
+<script src="/court-ui.js" defer></script>
 <script src="/results-ui.js" defer></script>
 <script src="/app.js" defer></script>
 </body>

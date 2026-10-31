@@ -476,3 +476,45 @@ footer{border-top:1px solid var(--border);padding:22px 42px;color:#557073;font-s
     margin-top:6px;padding:0;border-top:0;
   }
 }
+
+/* In-player project-scoped court calibration */
+.workspace-video-player .court-overlay{
+  position:absolute;inset:0;width:100%;height:100%;z-index:6;
+  pointer-events:none;touch-action:none;overflow:hidden;
+}
+.workspace-video-player .court-overlay[hidden]{display:none!important}
+.workspace-video-player .court-overlay.is-editing{
+  pointer-events:auto;cursor:crosshair;
+}
+.workspace-video-player .court-overlay.is-editing circle[data-point]{
+  cursor:grab;touch-action:none;
+}
+.workspace-video-player .court-overlay-badge{
+  position:absolute;left:14px;top:12px;z-index:8;
+  background:#143b2ce8;color:#baf68e;border:1px solid #81cd6b;
+  border-radius:7px;padding:7px 11px;font-size:11px;font-weight:800;
+  pointer-events:none;
+}
+.workspace-video-player .court-overlay-badge[hidden]{display:none!important}
+.court-calibration-tools{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:13px}
+.court-progress{font-size:12px;color:#b5c8c3;flex:1;min-width:145px}
+.court-instruction{padding:12px 15px;margin:10px 0 0;border:1px solid #669a56;
+  background:#1e3224;color:#e6f6df;border-radius:9px;line-height:1.6;
+  display:flex;gap:8px;flex-direction:column;font-size:12px}
+.court-instruction[hidden]{display:none!important}
+.court-instruction b{color:#aeef7c;font-size:13px}
+.analysis-context-summary{border:1px solid #344c41;border-radius:11px;
+  background:#0d1d1a;padding:14px 17px;margin:0 0 22px}
+.analysis-context-heading{font-size:12px;font-weight:800;color:#e2f1e7;
+  margin-bottom:11px;letter-spacing:.02em}
+.analysis-context-row{display:grid;grid-template-columns:minmax(170px,1fr) minmax(130px,.65fr) minmax(180px,.55fr);
+  gap:16px;align-items:center;padding:9px 0;
+  border-top:1px solid #2a4138;font-size:12px}
+.analysis-context-row .context-video{overflow-wrap:anywhere;font-weight:700}
+.analysis-context-row .context-range{font-variant-numeric:tabular-nums;color:#a9c4b9}
+.analysis-context-row .context-court{color:#bdbcb2}
+.analysis-context-row .context-court.is-saved{color:#a4e47a}
+@media(max-width:780px){
+ .analysis-context-row{grid-template-columns:1fr 1fr;gap:8px}
+ .analysis-context-row .context-video{grid-column:1/-1}
+}

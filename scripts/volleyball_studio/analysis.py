@@ -39,7 +39,14 @@ def analyze(source, work, args):
     model = ROOT / "models/VballNetV4c_seq9_grayscale_20260908_213829.onnx"
     players_model = ROOT / "ov/RAVEL-VB-012-9f.xml"
     court_in_results = ROOT / "results" / (source.stem + "_court.json")
-    court = court_in_results if court_in_results.is_file() else source.with_name(source.stem + "_court.json")
+    if getattr(args, "court_json", None):
+        court = args.court_json.resolve()
+        if not court.is_file():
+            raise ValueError("Разметка площадки для этого видео не найдена")
+    elif getattr(args, "no_court_fallback", False):
+        court = work / "__no_saved_court__.json"
+    else:
+        court = court_in_results if court_in_results.is_file() else source.with_name(source.stem + "_court.json")
     source_id = identity(source)
     code = {p.name: digest(p) for p in (ROOT / "src").glob("*.py")}
     signature = key([ANALYSIS_INPUT_VERSION, source_id, args.analysis_seconds, args.analysis_start, args.analysis_width, code])

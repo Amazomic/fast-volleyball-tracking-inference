@@ -4,7 +4,7 @@ const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => Array.from(document.querySelectorAll(selector));
 const state = {videos: [], video: "", projects: [], project: "", aggregate: null, report: null, renders: [],
   selected: new Set(), limit: 60, previewId: null, photoToken: 0, jobStatus: "idle",
-  dialogEdit: false, dialogBusy: false, dialogRequestId: 0};
+  dialogEdit: false, dialogBusy: false, dialogRequestId: 0, analysisContext: null};
 const label = {attack:"Атаки", block:"Блоки", serve:"Подачи", dig:"Приёмы", overhead_pass:"Верхние передачи", low_touch:"Другие касания"};
 const eventOrder = ["attack", "block", "serve", "dig", "overhead_pass", "low_touch"];
 
@@ -280,14 +280,14 @@ async function saveProjectDialog() {
 async function loadAll() {
   await loadProjects();
   if(selectedProject()){
-    await Promise.all([loadReport(),loadRenders(),loadBenchmarkResults(),
+    await Promise.all([loadReport(),loadRenders(),loadBenchmarkResults(),refreshAnalysisContext(),
       window.VolleyballAnalysisUI.setProjectRanges(selectedProject().ranges||{},state.project)]);
     if(state.video)await window.VolleyballAnalysisUI.setVideo(state.video);
     if($("#view-analysis-results").classList.contains("active"))
       await window.VolleyballResultsUI.setProject(state.project,selectedProject().videos);
   }else{
-    state.report=null;state.aggregate=null;state.renders=[];
-    renderReport();renderRenders();
+    state.report=null;state.aggregate=null;state.renders=[];state.analysisContext=null;
+    renderReport();renderRenders();displayAnalysisContext();
   }
   alertBox("");
 }
@@ -307,16 +307,43 @@ async function loadRenders(){
   state.renders=p?.highlight_ready?[{name:p.name+" — итоговый ролик",size_mb:"готов",url:"/api/project-media?id="+encodeURIComponent(p.id)}]:[];
   renderRenders();
 }
+function displayAnalysisContext(){
+  const el=$("#analysis-context-summary");
+  const p=selectedProject();
+  if(!p){el.replaceChildren();return;}
+  const contexts=new Map((state.analysisContext?.videos||[]).map(c=>[c.video,c]));
+  el.innerHTML='<div class="analysis-context-heading">Сохранённый контекст по видео</div>'+
+    p.videos.map(name=>{
+      const item=contexts.get(name);
+      const range=item?.range||p.ranges[name];
+      const period=range?clock(range.start)+" – "+clock(range.end):"Не задан";
+      const court=item?.court_saved?"Площадка размечена":"Без разметки площадки";
+      return '<div class="analysis-context-row"><span class="context-video">'+esc(name)+'</span>'+
+        '<span class="context-range">'+esc(period)+'</span>'+
+        '<span class="context-court '+(item?.court_saved?"is-saved":"is-missing")+'">'+court+'</span></div>';
+    }).join("");
+}
+async function refreshAnalysisContext(){
+  if(!state.project){state.analysisContext=null;displayAnalysisContext();return;}
+  state.analysisContext=await api("/api/project-context?project_id="+encodeURIComponent(state.project));
+  displayAnalysisContext();
+}
 async function saveCurrentRange(){
   const p=selectedProject();
   if(!p)return;
   const range=window.VolleyballAnalysisUI.currentRange();
   if(!range)throw Error("Диапазон не загружен");
-  const ranges={...p.ranges,[state.video]:range};
-  $("#range-save-status").textContent="Сохраняем…";
-  const updated=await api("/api/project-update",{id:p.id,ranges});
-  p.ranges=updated.project.ranges;
-  $("#range-save-status").textContent="Сохранено · "+clock(range.start)+"–"+clock(range.end);
+  const draft=window.VolleyballCourtUI.snapshot();
+  const active=state.video;
+  $("#range-save-status").textContent="Сохраняем диапазон и разметку…";
+  const updated=await api("/api/analysis-context",{
+    project_id:p.id,video:active,range,court:draft.court,clear_court:draft.clear_court
+  });
+  p.ranges={...p.ranges,[active]:updated.range};
+  window.VolleyballCourtUI.markSaved(updated.court);
+  $("#range-save-status").textContent="Сохранено · "+clock(range.start)+"–"+clock(range.end)+
+    (updated.court?" · площадка размечена":" · без разметки");
+  await refreshAnalysisContext();
   renderSources();
 }
 async function pollJob() {
@@ -396,7 +423,7 @@ function bind() {
     const p=selectedProject();
     state.video=p?.videos[0]||"";
     renderSources();
-    await Promise.all([loadReport(),loadRenders(),loadBenchmarkResults(),
+    await Promise.all([loadReport(),loadRenders(),loadBenchmarkResults(),refreshAnalysisContext(),
       window.VolleyballAnalysisUI.setProjectRanges(p?.ranges||{},state.project)]);
     if(state.video)await window.VolleyballAnalysisUI.setVideo(state.video);
     if($("#view-analysis-results").classList.contains("active") && p)
@@ -494,6 +521,7 @@ function bind() {
   });
 }
 document.addEventListener("DOMContentLoaded",async()=>{
+  window.VolleyballCourtUI.init();
   window.VolleyballAnalysisUI.init();
   window.VolleyballResultsUI.init();
   bind();

@@ -55,6 +55,10 @@ def parser():
     p.add_argument("--analysis-seconds", type=positive)
     p.add_argument("--analysis-start", type=float, default=0.)
     p.add_argument("--width", type=int, default=1080)
+    p.add_argument("--court-json", type=Path, default=None,
+                   help="Explicit validated project-scoped court calibration")
+    p.add_argument("--no-court-fallback", action="store_true",
+                   help="Do not use global/adjacent court annotation files")
     p.add_argument("--beach", action="store_true")
     p.add_argument("--non-interactive", action="store_true")
     p.add_argument("--resume", type=Path)
