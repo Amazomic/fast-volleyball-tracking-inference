@@ -29,8 +29,15 @@ function go(view) {
   if(!state.project&&view!=="analysis")view="analysis";
   $$(".nav-button").forEach(b => b.classList.toggle("active",b.dataset.view===view));
   $$(".view").forEach(v => v.classList.toggle("active",v.id==="view-"+view));
-  const names={analysis:"Анализ",players:"Игроки",report:"Отчёт проекта",benchmark:"Бенчмарк",results:"Монтаж"};
+  const names={analysis:"Анализ","analysis-results":"Результат анализа",players:"Игроки",report:"Отчёт проекта",benchmark:"Бенчмарк",results:"Монтаж"};
   $("#page-title").textContent=names[view] || names.analysis;
+  if(view==="analysis-results"&&state.project){
+    const project=selectedProject();
+    window.VolleyballResultsUI.setProject(state.project,project.videos).catch(err=>alertBox(err.message));
+  } else if(view!=="analysis-results"){
+    const player=$("#result-video-player");
+    if(player)player.pause();
+  }
 }
 function metric(name,value,sub) {
   return '<div class="metric"><div class="metric-name">'+esc(name)+'</div><div class="metric-num">'+esc(value)+'</div><div class="metric-sub">'+esc(sub)+'</div></div>';
@@ -53,7 +60,7 @@ function renderReport() {
   const c=r.counts||{};
   $("#report-notice").textContent=r.analyzed
     ? "Статистика суммируется по всем обработанным видео проекта. Track ID относятся к конкретной записи; отсутствие метки не доказывает отсутствие действия. Без разметки площадки подачи и блоки могут не распознаваться."
-    : "Нет обработанных записей проекта. Перейдите во вкладку «Видео и анализ».";
+    : "Нет обработанных записей проекта. Перейдите во вкладку «Анализ».";
   $("#report-metrics").innerHTML=[
     metric("Фрагменты игры",r.rallies??"—","Не подтверждённые очки"),
     metric("Атаки",c.attack??"—","Распознанные"),
@@ -156,19 +163,18 @@ function renderSources() {
     return;
   }
   $("#active-project-name").textContent=p.name;
-  $("#active-project-description").textContent="Выберите запись для предпросмотра и настройки диапазона. Анализ запускается сразу для всех видео проекта.";
+  $("#active-project-description").textContent="Выберите видео справа, задайте диапазон под проигрывателем и параметры запуска ниже.";
   $("#source-count").textContent="· "+p.videos.length;
-  $("#current-source-name").textContent=state.video||"";
-  $("#project-source-list").innerHTML=p.videos.map(name=>{
-    const analyzed=p.analyses?.find(i=>i.video===name)?.analyzed;
+  $("#project-source-list").innerHTML=p.videos.map((name,i)=>{
     const range=projectRange(name);
     const duration=range.end>0?clock(range.start)+" — "+clock(range.end):"Весь файл";
     return '<button type="button" class="project-source '+(state.video===name?"selected":"")+
-      '" data-source="'+esc(name)+'"><span class="source-name">'+esc(name)+'</span>'+
-      '<span class="source-range">'+esc(duration)+'</span>'+
-      '<span class="source-status '+(analyzed?"done":"pending")+'">'+(analyzed?"Анализ готов":"Ожидает анализа")+'</span></button>';
+      '" data-source="'+esc(name)+'"><span class="source-index">ВИДЕО '+String(i+1).padStart(2,"0")+'</span>'+
+      '<span class="source-name">'+esc(name)+'</span>'+
+      '<span class="source-range">'+esc(duration)+'</span></button>';
   }).join("");
-  $("#analysis-project-hint").textContent=p.videos.length+" видео в проекте. Диапазоны сохраняются отдельно для каждой записи; запуск обработает все выбранные источники.";
+  $("#analysis-project-hint").textContent="Анализ всех "+p.videos.length+
+      " видео проекта. Параметры применяются ко всем файлам, временные диапазоны настраиваются отдельно.";
   $("#highlights-project-hint").textContent="Монтаж из "+p.videos.length+" видео проекта; полный выбранный розыгрыш не обрезается ради длительности.";
   populatePlayersSelect();
   $("#benchmark-video").innerHTML=p.videos.map(name=>
@@ -277,6 +283,8 @@ async function loadAll() {
     await Promise.all([loadReport(),loadRenders(),loadBenchmarkResults(),
       window.VolleyballAnalysisUI.setProjectRanges(selectedProject().ranges||{},state.project)]);
     if(state.video)await window.VolleyballAnalysisUI.setVideo(state.video);
+    if($("#view-analysis-results").classList.contains("active"))
+      await window.VolleyballResultsUI.setProject(state.project,selectedProject().videos);
   }else{
     state.report=null;state.aggregate=null;state.renders=[];
     renderReport();renderRenders();
@@ -325,6 +333,10 @@ async function pollJob() {
   $("#cancel-job").disabled=info.status!=="running";
   $("#job-log").textContent=info.log || "Здесь появятся сообщения pipeline.";
   if(info.status==="running")$("#job-log").scrollTop=$("#job-log").scrollHeight;
+  $("#analysis-run-status").textContent=info.kind==="analyze"?
+    ({running:"Анализ выполняется…",complete:"Анализ завершён. Смотрите вкладку «Результат анализа».",
+      failed:"Ошибка анализа — откройте «Результат анализа» и проверьте журнал.",
+      cancelled:"Анализ остановлен."}[info.status]||""):"Готово к запуску";
   $("#benchmark-state").textContent=info.kind==="benchmark"
     ? ({running:"Измерение…",complete:"Готово",failed:"Ошибка",cancelled:"Остановлен"}[info.status]||"Нет замера")
     : "Нет замера";
@@ -387,6 +399,8 @@ function bind() {
     await Promise.all([loadReport(),loadRenders(),loadBenchmarkResults(),
       window.VolleyballAnalysisUI.setProjectRanges(p?.ranges||{},state.project)]);
     if(state.video)await window.VolleyballAnalysisUI.setVideo(state.video);
+    if($("#view-analysis-results").classList.contains("active") && p)
+      await window.VolleyballResultsUI.setProject(state.project,p.videos);
   });
   $("#create-project").addEventListener("click",()=>openProjectDialog(false));
   $$("[data-create-project]").forEach(button=>button.addEventListener("click",()=>openProjectDialog(false)));
@@ -419,7 +433,7 @@ function bind() {
     try {
       Object.assign(params,window.VolleyballAnalysisUI.params());
       await saveCurrentRange();
-      await submitTask("/api/analyze",params);
+      await submitTask("/api/analyze",params,"analysis-results");
     }catch(err){alertBox(err.message)}
   });
   $("#benchmark-mode").addEventListener("change",e=>{
@@ -481,11 +495,12 @@ function bind() {
 }
 document.addEventListener("DOMContentLoaded",async()=>{
   window.VolleyballAnalysisUI.init();
+  window.VolleyballResultsUI.init();
   bind();
   const requestedView=new URLSearchParams(window.location.search).get("view");
   try{
     await loadAll();
-    if(["analysis","players","report","benchmark","results"].includes(requestedView))go(requestedView);
+    if(["analysis","analysis-results","players","report","benchmark","results"].includes(requestedView))go(requestedView);
     await pollJob();
   }catch(e){alertBox(e.message)}
   window.setInterval(()=>pollJob().catch(e=>console.warn("status",e)),2500);

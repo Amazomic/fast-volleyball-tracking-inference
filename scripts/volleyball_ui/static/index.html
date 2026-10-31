@@ -13,6 +13,7 @@
     <div class="nav-caption">РАБОЧЕЕ ПРОСТРАНСТВО</div>
     <nav class="nav">
       <button class="nav-button active" data-view="analysis"><span class="nav-icon">▶</span> Анализ</button>
+      <button class="nav-button" data-view="analysis-results"><span class="nav-icon">▤</span> Результат анализа</button>
       <button class="nav-button" data-view="players"><span class="nav-icon">♧</span> Игроки</button>
       <button class="nav-button" data-view="report"><span class="nav-icon">▥</span> Отчёт</button>
       <button class="nav-button" data-view="benchmark"><span class="nav-icon">g</span> Бенчмарк</button>
@@ -41,7 +42,7 @@
         <label class="field"><span>Название проекта</span><input id="new-project-name" name="project_name" maxlength="100" autocomplete="off" required></label>
         <div class="project-dialog-section-head"><h3>Исходные видео</h3><span class="muted">Каталог project/</span></div>
         <div id="new-project-video-options" class="project-dialog-video-list"></div>
-        <p class="project-dialog-note">Для каждого видео по умолчанию выбран весь файл. После создания проекта откроется вкладка «Видео и анализ»: там можно изменить диапазоны, модель и остальные параметры до запуска.</p>
+        <p class="project-dialog-note">Для каждого видео по умолчанию выбран весь файл. После создания проекта откроется вкладка «Анализ»: там можно изменить диапазоны, модель и остальные параметры до запуска.</p>
         <div id="project-dialog-error" class="form-error" role="alert" hidden></div>
         <div class="project-dialog-footer"><span id="project-selected-count" class="muted">Выберите хотя бы одно видео</span>
           <button class="secondary" id="cancel-create-project" type="button">Отмена</button>
@@ -52,86 +53,136 @@
     <div class="content">
       <div id="alerts" role="status"></div>
       <section id="view-analysis" class="view active">
-        <div class="section-intro"><h2 id="active-project-name">Видео проекта</h2>
-          <p id="active-project-description">Выберите проект или создайте новый, чтобы добавить видеозаписи и задать параметры анализа.</p>
+        <div class="section-intro"><h2 id="active-project-name">Анализ</h2>
+          <p id="active-project-description">Выберите проект, настройте видео и запустите обработку.</p>
         </div>
         <div id="no-project" class="panel no-project">
-          <h3>Начните с проекта</h3><p>Создайте проект и выберите видео. Все настройки анализа доступны на следующем экране.</p>
+          <h3>Начните с проекта</h3><p>Создайте проект и выберите исходные видео.</p>
           <button class="primary" data-create-project type="button">+ Создать проект</button>
         </div>
         <div id="project-workspace" hidden>
-          <div class="section-head source-head"><h3>Исходные видео <span id="source-count" class="muted"></span></h3>
-             <button class="secondary small" id="edit-project-videos" type="button">Изменить видео проекта</button>
+          <div class="workspace-video-layout">
+            <div class="workspace-video-main">
+              <div class="workspace-video-head">
+                <h3>Видео для анализа</h3>
+                <span id="preview-source-details" class="muted">Выберите исходное видео</span>
+              </div>
+              <div class="workspace-video-player">
+                <video id="source-video-player" controls playsinline preload="metadata"></video>
+                <span id="source-video-placeholder">Загрузка видео…</span>
+              </div>
+              <p class="footnote" id="source-playback-note">
+                Выберите видео справа и задайте временной диапазон под проигрывателем.
+              </p>
+            </div>
+            <aside class="workspace-video-sidebar">
+              <div class="workspace-video-sidebar-head">
+                <h3>Видео проекта <span id="source-count" class="muted"></span></h3>
+                <button class="secondary small" id="edit-project-videos" type="button">Изменить</button>
+              </div>
+              <div id="project-source-list" class="project-source-list"></div>
+            </aside>
           </div>
-          <div id="project-source-list" class="project-source-list"></div>
-          <div class="section-head source-head"><h3>Выбранное видео <span id="current-source-name" class="muted"></span></h3></div>
-        <article class="panel timeline-panel">
-          <div class="panel-heading"><h3>Временная шкала матча</h3><span class="muted" id="timeline-status">Загрузка событий…</span></div>
-          <div class="timeline-legend">
-            <span><i class="legend-rally"></i>Розыгрыши</span><span><i class="legend-attack"></i>Атаки</span>
-            <span><i class="legend-block"></i>Блоки</span><span><i class="legend-serve"></i>Подачи</span>
-            <span><i class="legend-dig"></i>Приёмы</span><span><i class="legend-pass"></i>Передачи</span>
-          </div>
-          <div class="timeline-row-label">РОЗЫГРЫШИ <span>(приблизительные границы)</span></div>
-          <div class="timeline-canvas" id="match-timeline" aria-label="Шкала времени матча">
-            <div id="timeline-rallies" class="timeline-rallies"></div>
-            <div class="timeline-row-label timeline-inner-label">ИГРОВЫЕ ДЕЙСТВИЯ</div>
-            <div id="timeline-actions" class="timeline-actions"></div>
-            <div id="timeline-selected-range" class="timeline-selected-range"></div>
-            <div id="timeline-playhead" class="timeline-playhead"></div>
-            <button type="button" id="timeline-start-handle" class="timeline-handle start-handle" aria-label="Передвинуть начало анализа" title="Перетащите начало диапазона"></button>
-            <button type="button" id="timeline-end-handle" class="timeline-handle end-handle" aria-label="Передвинуть конец анализа" title="Перетащите конец диапазона"></button>
-          </div>
-          <div class="timeline-ticks" id="timeline-ticks"></div>
-          <div class="timeline-controls">
-            <label>Начало анализа <input type="number" id="timeline-start-input" min="0" step="1" value="0"> <span>сек.</span></label>
-            <label>Конец анализа <input type="number" id="timeline-end-input" min="1" step="1" value="0"> <span>сек.</span></label>
-            <button class="secondary small" type="button" id="timeline-reset">Весь матч</button>
-            <div class="timeline-selection-label" id="timeline-range-label">Будет обработано всё видео</div>
-          </div>
-          <div class="timeline-save-row"><span class="muted" id="range-save-status">Диапазон сохранён в проекте</span>
-            <button type="button" class="secondary small" id="save-timeline-range">Сохранить диапазон</button></div>
-          <p class="footnote timeline-explanation">Перетащите начало и конец или задайте секунды вручную. Нажмите на метку для предпросмотра. Сохраните диапазон перед анализом. Все события модели приблизительны.</p>
-        </article>
-        <div class="two-column analysis-columns">
-          <article class="panel">
-            <div class="panel-heading"><h3>Параметры анализа проекта</h3></div>
+          <article class="panel timeline-panel timeline-input-only">
+            <div class="panel-heading"><h3>Диапазон для анализа</h3><span class="muted" id="timeline-status">Выберите участок записи</span></div>
+            <div class="timeline-canvas" id="match-timeline" aria-label="Шкала выбора участка видео">
+              <div id="timeline-selected-range" class="timeline-selected-range"></div>
+              <div id="timeline-playhead" class="timeline-playhead"></div>
+              <button type="button" id="timeline-start-handle" class="timeline-handle start-handle"
+                aria-label="Передвинуть начало анализа" title="Начало диапазона"></button>
+              <button type="button" id="timeline-end-handle" class="timeline-handle end-handle"
+                aria-label="Передвинуть конец анализа" title="Конец диапазона"></button>
+            </div>
+            <div class="timeline-ticks" id="timeline-ticks"></div>
+            <div class="timeline-controls">
+              <label>Начало <input type="number" id="timeline-start-input" min="0" step="1" value="0"> сек.</label>
+              <label>Конец <input type="number" id="timeline-end-input" min="1" step="1" value="0"> сек.</label>
+              <button class="secondary small" type="button" id="timeline-reset">Весь матч</button>
+              <div class="timeline-selection-label" id="timeline-range-label">Всё видео</div>
+            </div>
+            <div class="timeline-save-row">
+              <span class="muted" id="range-save-status">Диапазон хранится в проекте</span>
+              <button type="button" class="secondary small" id="save-timeline-range">Сохранить диапазон</button>
+            </div>
+          </article>
+          <article class="panel analysis-settings-panel">
+            <div class="panel-heading"><h3>Настройки запуска анализа</h3></div>
             <form id="analysis-form">
-              <p class="notice" id="analysis-project-hint">Все видео проекта будут обработаны последовательно. Для каждого используется собственный сохранённый диапазон.</p>
-              <div class="form-row"><label class="field"><span>Модель мяча</span><select name="backend"><option value="onnx">ONNX Runtime</option><option value="openvino">OpenVINO</option></select></label>
-                <div class="field"><span>Размер кадра для анализа</span><div class="auto-size"><b>Автоматически</b><span id="auto-size-value">Определяется по видео</span></div></div></div>
-              <details id="analysis-advanced" class="advanced-settings"><summary>Дополнительные настройки размера кадра</summary>
-                <label class="checkbox-field"><input type="checkbox" id="manual-width-enabled"><span>Задать ширину вручную</span></label>
-                <label class="field"><span>Целевая ширина, пиксели</span><input name="analysis_width" id="analysis-width" type="number" min="320" max="1920" step="2" value="1280" disabled></label>
-                <p class="footnote">Это размер изображения <b>перед анализом</b>, а не разрешение исходного видео или нейросети. Высота автоматически вычисляется с сохранением пропорций.</p>
+              <p class="footnote" id="analysis-project-hint">Параметры применяются ко всем видео проекта, а диапазон выбирается отдельно для каждого видео.</p>
+              <div class="form-row">
+                <label class="field"><span>Движок обнаружения мяча</span>
+                  <select name="backend"><option value="onnx">ONNX Runtime</option><option value="openvino">OpenVINO</option></select>
+                </label>
+                <div class="field"><span>Размер кадра анализа</span>
+                  <div class="auto-size"><b>Автоматически</b><span id="auto-size-value">По видео</span></div>
+                </div>
+              </div>
+              <details id="analysis-advanced" class="advanced-settings">
+                <summary>Ручное разрешение кадра</summary>
+                <label class="checkbox-field"><input type="checkbox" id="manual-width-enabled"><span>Задать целевую ширину вручную</span></label>
+                <label class="field"><span>Ширина, пикселей</span>
+                  <input name="analysis_width" id="analysis-width" type="number" min="320" max="1920" step="2" value="1280" disabled>
+                </label>
+                <p class="footnote">Размер перед анализом. Высота вычисляется автоматически, исходное видео не меняется.</p>
               </details>
-              <p id="resolution-explanation" class="footnote">Разрешение будет определено после выбора видео.</p>
-              <div class="form-row"><label class="field"><span>Минимум розыгрыша, с</span><input name="min_rally" type="number" min="0.5" max="30" step="0.5" value="1.5"></label><label class="field"><span>Уверенность детекции</span><input name="min_confidence" type="number" min="0.05" max="1" step="0.05" value="0.5"></label></div>
-              <div class="form-row"><label class="field"><span>Число CPU потоков</span><input name="threads" type="number" min="1" max="32" step="1" value="8"></label><label class="checkbox-field"><input name="beach" type="checkbox" checked><span>Пляжный волейбол</span></label></div>
-              <p class="footnote">Анализ распознаёт мяч и игроков, строит траектории и индексирует игровые события. При смене модели или масштаба возможен новый проход.</p>
-              <button class="primary wide" type="submit">Запустить анализ <span>↗</span></button>
+              <p id="resolution-explanation" class="footnote">Разрешение определяется автоматически.</p>
+              <div class="form-row">
+                <label class="field"><span>Минимум розыгрыша, с</span><input name="min_rally" type="number" min="0.5" max="30" step="0.5" value="1.5"></label>
+                <label class="field"><span>Уверенность детекции</span><input name="min_confidence" type="number" min="0.05" max="1" step="0.05" value="0.5"></label>
+              </div>
+              <div class="form-row">
+                <label class="field"><span>CPU-потоки</span><input name="threads" type="number" min="1" max="32" step="1" value="8"></label>
+                <label class="checkbox-field"><input name="beach" type="checkbox" checked><span>Пляжный волейбол</span></label>
+              </div>
+              <button class="primary" type="submit">Запустить анализ всех видео проекта ↗</button>
+              <span id="analysis-run-status" class="muted analysis-run-status">После запуска перейдите в «Результат анализа».</span>
             </form>
           </article>
-          <div class="stack analysis-right">
-          <article class="panel analysis-preview-panel">
-            <div class="panel-heading"><h3>Предпросмотр видео</h3><span class="muted" id="preview-source-details">Загрузка параметров…</span></div>
-            <div class="preview-image-grid">
-              <div><div class="preview-small-heading">Исходный кадр <span id="source-dims">—</span></div><div class="preview-image-wrap"><img id="source-preview-img" alt="Исходный кадр видео"><span class="preview-placeholder" id="source-preview-placeholder">Выберите кадр</span></div></div>
-              <div><div class="preview-small-heading">Кадр анализа <span id="analysis-dims">—</span></div><div class="preview-image-wrap"><img id="analysis-preview-img" alt="Кадр после масштабирования для анализа"><span class="preview-placeholder" id="analysis-preview-placeholder">Выберите кадр</span></div></div>
-            </div>
-            <div class="preview-time-actions"><span>Кадр: <strong id="preview-time-label">00:00</strong></span><button class="secondary small" id="refresh-preview" type="button">Обновить кадр</button></div>
-            <p class="footnote preview-note">Предпросмотр отдельного кадра из выбранного видео без запуска нейросети. Масштабирование совпадает с настройкой анализа; миниатюры отображаются уменьшенными.</p>
-          </article>
-          <article class="panel jobs-panel">
-            <div class="panel-heading"><h3>Ход обработки</h3><span id="job-badge" class="status-pill">Нет задачи</span></div>
-            <div class="job-illustration"><span>⌁</span><div><b id="job-head">Ожидание запуска</b><p id="job-sub">Никакая обработка сейчас не выполняется.</p></div></div>
-            <div class="progress-row"><span>Прогресс</span><strong id="job-percent">—</strong></div><div class="progress-track"><div id="job-progress"></div></div>
-            <div class="job-actions"><button class="secondary" id="cancel-job" type="button" disabled>Остановить</button><button class="secondary" id="open-report" data-go="report" type="button">Открыть отчёт</button></div>
-            <div class="console-label">ЖУРНАЛ ОБРАБОТКИ</div><pre id="job-log" class="terminal">Здесь появятся сообщения pipeline.</pre>
-          </article>
-          </div>
         </div>
-        </div><!-- project-workspace -->
+      </section>
+      <section id="view-analysis-results" class="view">
+        <div class="section-intro"><h2>Результат анализа</h2>
+          <p>Видео с найденными игровыми событиями и розыгрышами. Выберите розыгрыш справа — воспроизведение остановится на его окончании.</p>
+        </div>
+        <div class="result-video-layout">
+          <div class="result-video-main">
+            <div class="result-video-head">
+              <div><h3 id="result-video-name">Видео проекта</h3><span id="result-meta" class="muted">Выберите проанализированное видео</span></div>
+              <span class="result-annotation-badge">Разметка событий</span>
+            </div>
+            <div class="result-player-wrap">
+              <video id="result-video-player" controls playsinline preload="metadata"></video>
+              <div id="result-overlay" class="result-overlay" aria-hidden="true">
+                <div id="result-overlay-ball" class="result-ball" hidden></div>
+                <div id="result-overlay-event" class="result-event-label" hidden></div>
+                <div id="result-overlay-rally" class="result-rally-label" hidden></div>
+              </div>
+              <div id="result-video-placeholder" class="result-video-placeholder">Ожидание анализа</div>
+            </div>
+            <div id="result-rally-now" class="result-playback-state">Выберите розыгрыш справа</div>
+            <div class="result-timeline">
+              <div id="result-rally-track" class="result-rally-track" aria-label="Розыгрыши и игровые действия"></div>
+              <div id="result-timeline-ticks" class="timeline-ticks"></div>
+            </div>
+            <p class="footnote">Границы розыгрышей и классификация действий определены автоматически и могут быть неточными. Метки на видео появляются в моменты обнаруженных событий.</p>
+          </div>
+          <aside class="result-rally-sidebar">
+            <label class="field"><span>Проанализированное видео</span><select id="result-source-select"></select></label>
+            <div class="result-rally-sidebar-head"><h3>Розыгрыши</h3><span id="result-rally-count" class="muted">0</span></div>
+            <div id="result-rally-list" class="result-rally-list">
+              <div class="empty">Розыгрыши появятся после анализа.</div>
+            </div>
+          </aside>
+        </div>
+        <article class="panel result-job-panel">
+          <div class="panel-heading"><h3>Ход обработки</h3><span id="job-badge" class="status-pill">Нет задачи</span></div>
+          <div class="job-illustration"><span>⌁</span><div><b id="job-head">Ожидание запуска</b><p id="job-sub">Запустите анализ на первой вкладке.</p></div></div>
+          <div class="progress-row"><span>Прогресс</span><strong id="job-percent">—</strong></div>
+          <div class="progress-track"><div id="job-progress"></div></div>
+          <div class="job-actions"><button class="secondary" id="cancel-job" type="button" disabled>Остановить</button><button class="secondary" id="open-report" data-go="report" type="button">Открыть отчёт</button></div>
+          <div class="console-label">ЖУРНАЛ ОБРАБОТКИ</div>
+          <pre id="job-log" class="terminal">Здесь появятся сообщения обработки.</pre>
+        </article>
       </section>
       <section id="view-players" class="view">
         <div class="section-intro"><h2>Игроки и идентификаторы</h2><p>Track ID относятся к конкретной записи. Выберите видео проекта, сравнивайте фотографии и объединяйте повторные ID одного спортсмена.</p></div>
@@ -243,6 +294,7 @@
   </main>
 </div>
 <script src="/analysis-ui.js" defer></script>
+<script src="/results-ui.js" defer></script>
 <script src="/app.js" defer></script>
 </body>
 </html>

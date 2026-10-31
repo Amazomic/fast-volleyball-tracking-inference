@@ -50,11 +50,21 @@ def timeline(video: str, project_id=None) -> dict:
             continue
         kind = e.get("type")
         if kind in ACTION_TYPES:
+            ball = e.get("ball")
+            point = None
+            if isinstance(ball, dict):
+                try:
+                    x, y = float(ball["x"]), float(ball["y"])
+                    if math.isfinite(x) and math.isfinite(y):
+                        point = {"x": x, "y": y, "space": ball.get("space", "analysis_pixels")}
+                except (KeyError, ValueError, TypeError):
+                    pass
             actions.append({
                 "id": str(e.get("id") or ""),
                 "type": kind, "time": when,
                 "confidence": round(float(e.get("confidence") or 0), 3),
                 "player_id": str(e["player_track_id"]) if e.get("player_track_id") is not None else None,
+                "ball": point,
             })
         if kind in ("rally_start", "rally_end"):
             track_id = str(e.get("track_id") or e.get("id") or "")

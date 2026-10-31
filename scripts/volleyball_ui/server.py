@@ -14,7 +14,7 @@ import uuid
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, unquote, urlsplit
+from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 from .data import RESULTS, ROOT, assign, find_cache, list_videos, report, unassign, video_path, video_renders
 from .preview import preview_frame, target_width, video_info
@@ -23,12 +23,31 @@ from .projects import (all_projects, create_project, update_project, get_project
                        project_videos, project_summary, project_output, project_report,
                        project_logs_root)
 from .photos import photo_path, photos_metadata
+from .projects import assert_project_video
 from .data import read_json
 
 PUBLIC = Path(__file__).with_name("static")
 RUN_DIR = RESULTS / "ui_runs"
 JOB_LOCK = threading.RLock()
 JOB = {"process": None, "id": None, "kind": None, "log": None, "started_at": None, "command": []}
+
+
+from functools import lru_cache
+
+
+@lru_cache(maxsize=32)
+def _probe_duration(path: str, mtime_ns: int, size: int) -> float:
+    result = subprocess.run(
+        ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+         "-of", "default=nokey=1:noprint_wrappers=1", path],
+        capture_output=True, text=True, timeout=25, check=True,
+    )
+    return float(result.stdout.strip())
+
+
+def _normalized_duration(source: Path) -> float:
+    stat = source.stat()
+    return _probe_duration(str(source), stat.st_mtime_ns, stat.st_size)
 
 
 def _tail(path: Path | None, limit: int = 14000) -> str:
@@ -255,6 +274,55 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(report(query.get("video", [""])[0], query.get("project_id", [None])[0]))
             if route == "/api/video-info":
                 return self._json(video_info(query.get("video", [""])[0]))
+            if route == "/api/video-view":
+                project_id, name = query.get("project_id", [""])[0], query.get("video", [""])[0]
+                assert_project_video(project_id, name)
+                original = video_path(name)
+                info = video_info(name)
+                cache = find_cache(name, project_id)
+                normalized = cache / "analysis.mp4" if cache else None
+                payload = read_json(cache / "analysis/events.json", {}) if cache else {}
+                offset = float(payload.get("analysis_offset_sec") or 0)
+                # An existing complete H264 analysis is a browser-compatible preview.
+                # Partial analyses must not masquerade as the complete source.
+                use_normalized = bool(normalized and normalized.is_file() and
+                    offset == 0 and normalized.stat().st_size > 0 and
+                    abs(video_info(name)["duration_sec"] - _normalized_duration(normalized)) < 3.0)
+                return self._json({
+                    "video": name, "duration_sec": info["duration_sec"],
+                    "media_url": "/api/video-media?project_id=" + project_id + "&video=" + quote(name),
+                    "browser_preview": "normalized" if use_normalized else "original",
+                    "preview_url": ("/api/analysis-media?project_id=" + project_id + "&video=" + quote(name)
+                                    if use_normalized else
+                                    "/api/video-media?project_id=" + project_id + "&video=" + quote(name)),
+                    "fallback_warning": ("" if use_normalized else
+                         "Формат оригинала может не поддерживать воспроизведение в браузере."),
+                    "poster_url": "/api/video-preview?video=" + quote(name) + "&time=2&mode=source"
+                })
+            if route == "/api/analysis-view":
+                project_id, name = query.get("project_id", [""])[0], query.get("video", [""])[0]
+                assert_project_video(project_id, name)
+                cache = find_cache(name, project_id)
+                if not cache or not (cache / "analysis.mp4").is_file():
+                    return self._json({"analyzed": False, "video": name, "rallies": [], "actions": []})
+                response = timeline(name, project_id)
+                response["video"] = name
+                response["media_url"] = "/api/analysis-media?project_id=" + project_id + "&video=" + quote(name)
+                response["duration_sec"] = _normalized_duration(cache / "analysis.mp4")
+                return self._json(response)
+            if route == "/api/video-media":
+                project_id, name = query.get("project_id", [""])[0], query.get("video", [""])[0]
+                assert_project_video(project_id, name)
+                source = video_path(name)
+                mime = "video/mp4" if source.suffix.lower() in (".mp4", ".m4v") else "video/" + source.suffix.lower().lstrip(".")
+                return self._file(source, mime, allow_ranges=True)
+            if route == "/api/analysis-media":
+                project_id, name = query.get("project_id", [""])[0], query.get("video", [""])[0]
+                assert_project_video(project_id, name)
+                cache = find_cache(name, project_id)
+                if not cache or not (cache / "analysis.mp4").is_file():
+                    return self._error("Анализ этого видео ещё не выполнен", 404)
+                return self._file(cache / "analysis.mp4", "video/mp4", allow_ranges=True)
             if route == "/api/timeline":
                 return self._json(timeline(query.get("video", [""])[0], query.get("project_id", [None])[0]))
             if route == "/api/video-preview":
@@ -289,6 +357,7 @@ class Handler(BaseHTTPRequestHandler):
                 "/": ("index.html", "text/html; charset=utf-8"),
                 "/app.js": ("app.js", "text/javascript; charset=utf-8"),
                 "/analysis-ui.js": ("analysis-ui.js", "text/javascript; charset=utf-8"),
+                "/results-ui.js": ("results-ui.js", "text/javascript; charset=utf-8"),
                 "/style.css": ("style.css", "text/css; charset=utf-8"),
             }
             if route in static_files:
