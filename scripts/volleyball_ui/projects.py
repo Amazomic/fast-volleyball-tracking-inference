@@ -157,6 +157,36 @@ def update_project(identifier: str, name=None, videos=None, ranges=None) -> dict
         return dict(found)
 
 
+def archive_project(identifier: str) -> dict:
+    """Remove a project from the active registry, preserving its directory in .trash.
+
+    Never unlink source recordings from project/ or a shared legacy cache.
+    The project-specific analysis, settings and renders are recoverable.
+    """
+    with _LOCK:
+        projects = _load()
+        original = next((p for p in projects if p.get("id") == identifier), None)
+        if original is None:
+            raise ValueError("Проект не найден")
+        directory = PROJECTS_DIR / identifier
+        trash = PROJECTS_DIR / ".trash"
+        trash.mkdir(parents=True, exist_ok=True)
+        target = trash / identifier
+        if target.exists():
+            raise ValueError("Архив проекта уже существует; операция отменена")
+        if directory.is_dir():
+            directory.rename(target)
+        try:
+            data.save_json(REGISTER, {"schema": 1, "projects": [
+                p for p in projects if p.get("id") != identifier
+            ]})
+        except BaseException:
+            if target.exists() and not directory.exists():
+                target.rename(directory)
+            raise
+        return {"id": identifier, "name": original["name"], "archived": target.is_dir()}
+
+
 def project_dir(identifier: str) -> Path:
     get_project(identifier)
     return PROJECTS_DIR / identifier

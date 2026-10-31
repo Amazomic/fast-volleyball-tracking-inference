@@ -38,6 +38,19 @@
           </svg>
         </button>
         <div class="project-picker-menu" id="project-picker-menu" role="listbox" aria-label="Доступные проекты" hidden></div>
+        <button type="button" class="project-settings-trigger" id="project-settings-trigger"
+          aria-label="Настройки текущего проекта" title="Настройки проекта" aria-haspopup="menu"
+          aria-expanded="false" aria-controls="project-settings-menu">
+          <svg aria-hidden="true" viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="1.75"
+            stroke-linecap="round" stroke-linejoin="round">
+            <path d="M10.4 2.7h3.2l.7 2.4 2.1.9 2.2-1.1 2.2 2.2-1.1 2.2.9 2.1 2.4.7v3.2l-2.4.7-.9 2.1 1.1 2.2-2.2 2.2-2.2-1.1-2.1.9-.7 2.4h-3.2l-.7-2.4-2.1-.9-2.2 1.1-2.2-2.2 1.1-2.2-.9-2.1-2.4-.7v-3.2l2.4-.7.9-2.1-1.1-2.2 2.2-2.2 2.2 1.1 2.1-.9z"/>
+            <circle cx="12" cy="12" r="3.1"/>
+          </svg>
+        </button>
+        <div class="project-settings-menu" id="project-settings-menu" role="menu" aria-label="Настройки проекта" hidden>
+          <button type="button" role="menuitem" id="project-settings-rename">Переименовать проект</button>
+          <button type="button" role="menuitem" id="project-settings-delete" class="project-settings-danger">Удалить проект</button>
+        </div>
       </div>
       <div class="topbar-controls">
         <button class="primary" id="create-project" type="button">+ Создать проект</button>
@@ -60,6 +73,30 @@
           <button class="primary" id="confirm-project" type="submit">Создать проект</button>
         </div>
       </form>
+    </dialog>
+    <dialog id="project-rename-dialog" class="project-action-dialog" aria-labelledby="rename-project-heading">
+      <form id="project-rename-form">
+        <h2 id="rename-project-heading">Переименовать проект</h2>
+        <p>Изменится только имя. Видео, разметка и результаты останутся прежними.</p>
+        <label class="field"><span>Название проекта</span>
+          <input id="project-rename-name" maxlength="100" required autocomplete="off"></label>
+        <div id="project-rename-error" class="form-error" role="alert" hidden></div>
+        <div class="project-action-buttons">
+          <button type="button" class="secondary" data-close-project-action>Отмена</button>
+          <button type="submit" class="primary" id="project-rename-confirm">Сохранить</button>
+        </div>
+      </form>
+    </dialog>
+    <dialog id="project-delete-dialog" class="project-action-dialog" aria-labelledby="delete-project-heading">
+      <h2 id="delete-project-heading">Удалить проект?</h2>
+      <p>Проект <strong id="delete-project-name"></strong> исчезнет из списка.
+        Его результаты и настройки будут перенесены в локальный архив.
+        Исходные видео из папки <code>project/</code> останутся на месте.</p>
+      <div id="project-delete-error" class="form-error" role="alert" hidden></div>
+      <div class="project-action-buttons">
+        <button type="button" class="secondary" data-close-project-action>Отмена</button>
+        <button type="button" class="project-danger-button" id="project-delete-confirm">Удалить проект</button>
+      </div>
     </dialog>
     <div class="content">
       <div id="alerts" role="status"></div>
@@ -96,6 +133,20 @@
                 <div class="court-overlay-badge" id="court-overlay-badge" hidden>Разметка площадки</div>
                 <span id="source-video-placeholder">Загрузка видео…</span>
               </div>
+
+              <p class="footnote" id="source-playback-note">
+                Выберите видео справа и задайте временной диапазон под проигрывателем.
+              </p>
+            </div>
+            <aside class="workspace-video-sidebar">
+              <div class="workspace-video-sidebar-head">
+                <h3>Видео проекта <span id="source-count" class="muted"></span></h3>
+                <button class="secondary small" id="edit-project-videos" type="button">Изменить</button>
+              </div>
+              <div id="project-source-list" class="project-source-list"></div>
+            </aside>
+          </div>
+          <div class="analysis-video-divider" role="separator" aria-label="Временная шкала"></div>
           <article class="timeline-panel timeline-input-only">
             <div class="timeline-canvas" id="match-timeline" aria-label="Единая шкала воспроизведения и выбора диапазона видео">
               <div id="timeline-selected-range" class="timeline-selected-range"></div>
@@ -128,19 +179,6 @@
               <button type="button" class="secondary small" id="save-timeline-range">Сохранить диапазон и разметку</button>
             </div>
           </article>
-              <p class="footnote" id="source-playback-note">
-                Выберите видео справа и задайте временной диапазон под проигрывателем.
-              </p>
-            </div>
-            <aside class="workspace-video-sidebar">
-              <div class="workspace-video-sidebar-head">
-                <h3>Видео проекта <span id="source-count" class="muted"></span></h3>
-                <button class="secondary small" id="edit-project-videos" type="button">Изменить</button>
-              </div>
-              <div id="project-source-list" class="project-source-list"></div>
-            </aside>
-          </div>
-
           </section>
           <article class="panel analysis-settings-panel">
             <div class="panel-heading"><h3>Настройки запуска анализа</h3></div>

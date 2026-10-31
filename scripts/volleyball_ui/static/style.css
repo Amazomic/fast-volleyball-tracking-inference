@@ -705,3 +705,128 @@ footer{border-top:1px solid var(--border);padding:22px 42px;color:#557073;font-s
 @media(prefers-reduced-motion:reduce){
  .project-picker-trigger,.project-picker-chevron,.project-picker-option{transition:none}
 }
+
+/* One stable analysis gallery: video + scrollable video list ABOVE divider,
+   timeline / editing controls span the FULL card width below the divider. */
+.analysis-media-panel{--analysis-gallery-height:clamp(500px,72vh,760px)}
+.analysis-media-panel .workspace-video-layout{
+  display:grid;grid-template-columns:minmax(0,1fr) 256px;
+  height:var(--analysis-gallery-height);min-height:0;max-height:none;
+  align-items:stretch;gap:18px;overflow:hidden;
+}
+.analysis-media-panel .workspace-video-main{
+  display:flex;flex-direction:column;align-items:stretch;
+  height:100%;min-height:0;overflow-y:auto;overflow-x:hidden;
+  scrollbar-width:thin;scrollbar-color:#466959 transparent;
+}
+.analysis-media-panel .workspace-video-main .workspace-video-head{flex:none}
+.analysis-media-panel .workspace-video-main .court-simple-toolbar{flex:none}
+.analysis-media-panel .workspace-video-main .court-inline-hint{flex:none}
+.analysis-media-panel .workspace-video-main .workspace-video-player{flex:0 0 auto;max-height:calc(var(--analysis-gallery-height) - 155px)}
+.analysis-media-panel .workspace-video-main #source-playback-note{flex:0 0 auto}
+.analysis-media-panel .workspace-video-sidebar{
+  min-height:0;max-height:100%;height:100%;
+  display:flex;flex-direction:column;overflow:hidden;
+}
+.analysis-media-panel .workspace-video-sidebar-head{flex:0 0 auto}
+.analysis-media-panel .workspace-video-sidebar .project-source-list{
+  display:flex;flex-direction:column;gap:9px;
+  flex:1 1 auto;min-height:0;max-height:none;margin:0;
+  overflow-y:auto;overflow-x:hidden;
+  scrollbar-width:thin;scrollbar-color:#456e57 transparent;
+  padding:1px 4px 8px 0;
+}
+.analysis-media-panel .workspace-video-sidebar .project-source{flex:none}
+.analysis-video-divider{
+  height:1px;width:100%;
+  margin:19px 0 15px;
+  background:linear-gradient(90deg,transparent 0%,#608573 8%,#608573 92%,transparent 100%);
+}
+.analysis-media-panel .timeline-input-only,
+.analysis-media-panel .timeline-input-only .timeline-canvas,
+.analysis-media-panel .timeline-input-only .timeline-ticks{
+  display:block;width:100%;max-width:none;min-width:0;
+}
+.analysis-media-panel .timeline-input-only{
+  border:0!important;margin:0!important;padding:0!important;background:transparent;
+}
+.analysis-media-panel .timeline-input-only .timeline-ticks{display:flex}
+.analysis-media-panel .timeline-input-only .analysis-play-controls{
+  width:100%;margin:11px 0 8px;
+}
+.analysis-media-panel .timeline-input-only .timeline-set-buttons,
+.analysis-media-panel .timeline-input-only .timeline-controls,
+.analysis-media-panel .timeline-input-only .timeline-save-row{width:100%}
+@media(max-width:1100px){
+ .analysis-media-panel .workspace-video-layout{grid-template-columns:minmax(0,1fr) 215px}
+}
+@media(max-width:780px){
+ .analysis-media-panel{--analysis-gallery-height:auto}
+ .analysis-media-panel .workspace-video-layout{
+   display:flex;flex-direction:column;height:auto;max-height:none;overflow:visible;
+ }
+ .analysis-media-panel .workspace-video-main{height:auto;max-height:none;overflow:visible}
+ .analysis-media-panel .workspace-video-main .workspace-video-player{max-height:none}
+ .analysis-media-panel .workspace-video-sidebar{
+   display:flex;flex-direction:column;height:auto;max-height:240px;min-height:0;
+   border-top:1px solid #314840;border-left:0;padding:12px 0 0;
+ }
+ .analysis-media-panel .workspace-video-sidebar .project-source-list{
+   display:flex;flex-direction:column;max-height:185px;overflow-y:auto;overflow-x:hidden;
+ }
+ .analysis-media-panel .analysis-video-divider{margin:16px 0}
+}
+/* Settings gear next to the top-attached selector */
+.project-settings-trigger{
+  position:absolute;top:7px;left:calc(100% + 9px);
+  width:42px;height:42px;display:grid;place-items:center;
+  padding:0;background:linear-gradient(145deg,#274538,#132b26);
+  color:#b1eb98;border:1px solid #547c61;
+  border-radius:13px;box-shadow:0 7px 18px #0007;
+  transition:background .18s,border-color .18s,transform .3s;
+}
+.project-settings-trigger:hover,.project-settings-trigger[aria-expanded="true"]{
+  background:linear-gradient(135deg,#426848,#224737);
+  border-color:var(--green);
+}
+.project-settings-trigger:hover svg{transform:rotate(30deg)}
+.project-settings-trigger svg{transition:transform .2s}
+.project-settings-trigger:disabled{opacity:.3;cursor:not-allowed}
+.project-settings-menu{
+  position:absolute;z-index:120;top:56px;left:calc(100% - 145px);
+  width:225px;display:flex;flex-direction:column;gap:8px;padding:10px;
+  border:1px solid #537a62;border-radius:17px;
+  background:linear-gradient(155deg,#223d32,#102421);
+  box-shadow:0 16px 40px #000b;
+}
+.project-settings-menu[hidden]{display:none!important}
+.project-settings-menu button{
+  min-height:44px;text-align:left;font-weight:700;font-size:12px;
+  padding:10px 15px;color:#dff0df;
+  background:linear-gradient(110deg,#294b3b,#182f2b);
+  border:1px solid #466754;border-radius:999px;
+}
+.project-settings-menu button:hover{border-color:#a2ec84;background:linear-gradient(110deg,#426b48,#274a38)}
+.project-settings-menu .project-settings-danger{color:#ffd2cf;border-color:#86534e;
+  background:linear-gradient(110deg,#52302f,#312224)}
+.project-settings-menu .project-settings-danger:hover{border-color:#ff9690;background:#633a38}
+.project-action-dialog{
+  position:fixed;inset:0;margin:auto;width:min(480px,calc(100vw - 28px));
+  border:1px solid #496f57;border-radius:17px;padding:26px;
+  color:var(--text);background:#10201d;box-shadow:0 30px 75px #000b;
+}
+.project-action-dialog::backdrop{background:#030a09c7;backdrop-filter:blur(4px)}
+.project-action-dialog h2{font:800 21px 'Manrope',sans-serif;margin:0 0 12px}
+.project-action-dialog p{line-height:1.65;color:#b1c4b8;font-size:13px;margin-bottom:20px}
+.project-action-dialog strong{color:#dcffd1}
+.project-action-buttons{display:flex;justify-content:flex-end;gap:10px;flex-wrap:wrap}
+.project-danger-button{
+  min-height:41px;padding:10px 18px;border:1px solid #d9857c;
+  border-radius:9px;font-weight:800;background:#9c4944;color:white;
+}
+.project-danger-button:hover{background:#b35950}
+@media(max-width:680px){
+ .project-settings-trigger{left:calc(100% + 7px);width:38px;height:38px}
+ .project-picker{width:min(320px,calc(100% - 105px))}
+ .project-settings-menu{left:auto;right:-44px;max-width:calc(100vw - 22px)}
+}

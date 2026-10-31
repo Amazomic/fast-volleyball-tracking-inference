@@ -19,7 +19,7 @@ window.VolleyballAnalysisUI=(()=>{
     const main=document.querySelector(".workspace-video-main");
     if(!main)return;
     // Fit the actual display orientation, not the full horizontal workspace.
-    const maxHeight=Math.min(window.innerHeight*.70,780);
+    const maxHeight=Math.min(window.innerHeight*.54,570);
     const fitWidth=maxHeight*meta.width/meta.height;
     main.style.setProperty("--source-display-width",Math.max(1,fitWidth)+"px");
     main.style.setProperty("--source-aspect",meta.width+"/"+meta.height);

@@ -22,7 +22,7 @@ from .court import get_court, save_context, project_context
 from .timeline import timeline
 from .projects import (all_projects, create_project, update_project, get_project,
                        project_videos, project_summary, project_output, project_report,
-                       project_logs_root)
+                       project_logs_root, archive_project)
 from .photos import photo_path, photos_metadata
 from .projects import assert_project_video
 from .data import read_json
@@ -392,6 +392,16 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"project": create_project(body.get("name"), body.get("videos", []), body.get("ranges"))})
             if route == "/api/project-update":
                 return self._json({"project": update_project(body.get("id"), body.get("name"), body.get("videos"), body.get("ranges"))})
+            if route == "/api/project-archive":
+                identifier = body.get("id")
+                if not isinstance(identifier, str):
+                    raise ValueError("Не указан проект")
+                with JOB_LOCK:
+                    process = JOB["process"]
+                    if (process and process.poll() is None and
+                            identifier in JOB.get("command", [])):
+                        raise ValueError("Нельзя удалить проект во время обработки. Остановите анализ.")
+                    return self._json({"project": archive_project(identifier)})
             if route == "/api/analysis-context":
                 return self._json(save_context(
                     body.get("project_id"), body.get("video"), body.get("range"),

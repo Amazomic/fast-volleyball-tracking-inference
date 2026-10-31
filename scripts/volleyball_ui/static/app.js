@@ -149,6 +149,7 @@ function populatePlayersSelect() {
 }
 function renderProjectPicker() {
   const current=selectedProject();
+  $("#project-settings-trigger").disabled=!current;
   $("#project-picker-name").textContent=current?.name||"Выберите проект";
   const menu=$("#project-picker-menu");
   menu.innerHTML=state.projects.length?state.projects.map((p,i)=>{
@@ -320,6 +321,10 @@ async function loadAll() {
       await window.VolleyballResultsUI.setProject(state.project,selectedProject().videos);
   }else{
     state.report=null;state.aggregate=null;state.renders=[];state.analysisContext=null;
+    window.VolleyballAnalysisUI.setProjectRanges({},"");
+    $("#source-video-player").pause();
+    $("#source-video-player").removeAttribute("src");
+    $("#source-video-player").load();
     renderReport();renderRenders();displayAnalysisContext();
   }
   alertBox("");
@@ -454,7 +459,100 @@ async function assignSelected(remove=false) {
     $("#player-name").value=name;
   } catch(error){alertBox(error.message)}
 }
+function closeSettingsMenu(returnFocus=false){
+  const menu=$("#project-settings-menu");
+  menu.hidden=true;
+  $("#project-settings-trigger").setAttribute("aria-expanded","false");
+  if(returnFocus)$("#project-settings-trigger").focus();
+}
+function openSettingsMenu(){
+  if(!selectedProject())return;
+  closeProjectPicker();
+  $("#project-settings-menu").hidden=false;
+  $("#project-settings-trigger").setAttribute("aria-expanded","true");
+}
+function closeProjectActionDialogs(){
+  for(const name of ["#project-rename-dialog","#project-delete-dialog"]){
+    const dlg=$(name);
+    if(dlg.open)dlg.close();
+  }
+}
+function beginRenameProject(){
+  const p=selectedProject();
+  if(!p)return;
+  closeSettingsMenu();
+  $("#project-rename-name").value=p.name;
+  $("#project-rename-error").hidden=true;
+  $("#project-rename-dialog").dataset.projectId=p.id;
+  $("#project-rename-dialog").showModal();
+  $("#project-rename-name").focus();
+  $("#project-rename-name").select();
+}
+function beginDeleteProject(){
+  const p=selectedProject();
+  if(!p)return;
+  closeSettingsMenu();
+  $("#delete-project-name").textContent=p.name;
+  $("#project-delete-error").hidden=true;
+  $("#project-delete-dialog").dataset.projectId=p.id;
+  $("#project-delete-dialog").showModal();
+}
+async function renameProject(event){
+  event.preventDefault();
+  const id=$("#project-rename-dialog").dataset.projectId;
+  const name=$("#project-rename-name").value.trim();
+  const button=$("#project-rename-confirm");
+  const error=$("#project-rename-error");
+  button.disabled=true;error.hidden=true;
+  try{
+    await api("/api/project-update",{id,name});
+    closeProjectActionDialogs();
+    await loadAll();
+  }catch(e){
+    error.textContent=e.message;error.hidden=false;
+  }finally{button.disabled=false;}
+}
+async function deleteProject(){
+  const id=$("#project-delete-dialog").dataset.projectId;
+  const button=$("#project-delete-confirm");
+  const error=$("#project-delete-error");
+  button.disabled=true;error.hidden=true;
+  try{
+    await api("/api/project-archive",{id});
+    closeProjectActionDialogs();
+    if(state.project===id){state.project="";state.video="";}
+    await loadAll();
+    go("analysis");
+  }catch(e){
+    error.textContent=e.message;error.hidden=false;
+  }finally{button.disabled=false;}
+}
 function bind() {
+  $("#project-settings-trigger").addEventListener("click",()=>{
+    const menu=$("#project-settings-menu");
+    if(menu.hidden)openSettingsMenu();else closeSettingsMenu();
+  });
+  $("#project-settings-trigger").addEventListener("keydown",e=>{
+    if(["ArrowDown","Enter"," "].includes(e.key)){
+      e.preventDefault();openSettingsMenu();
+      $("#project-settings-rename").focus();
+    }else if(e.key==="Escape")closeSettingsMenu();
+  });
+  $("#project-settings-menu").addEventListener("keydown",e=>{
+    if(e.key==="Escape"){e.preventDefault();closeSettingsMenu(true);}
+    if(e.key==="ArrowDown"||e.key==="ArrowUp"){
+      e.preventDefault();
+      const choices=[...$("#project-settings-menu").querySelectorAll('[role="menuitem"]')];
+      const position=choices.indexOf(document.activeElement);
+      choices[(position+(e.key==="ArrowDown"?1:-1)+choices.length)%choices.length]?.focus();
+    }
+  });
+  $("#project-settings-rename").addEventListener("click",beginRenameProject);
+  $("#project-settings-delete").addEventListener("click",beginDeleteProject);
+  $("#project-rename-form").addEventListener("submit",renameProject);
+  $("#project-delete-confirm").addEventListener("click",deleteProject);
+  $$("[data-close-project-action]").forEach(el=>
+    el.addEventListener("click",closeProjectActionDialogs));
   $("#project-picker-trigger").addEventListener("click",()=>{
     const expanded=$("#project-picker-trigger").getAttribute("aria-expanded")==="true";
     if(expanded)closeProjectPicker();
@@ -490,9 +588,11 @@ function bind() {
   });
   document.addEventListener("pointerdown",e=>{
     if(!e.target.closest("#project-picker"))closeProjectPicker();
+    if(!e.target.closest("#project-settings-trigger,#project-settings-menu"))closeSettingsMenu();
   });
   document.addEventListener("focusin",e=>{
     if(!e.target.closest("#project-picker"))closeProjectPicker();
+    if(!e.target.closest("#project-settings-trigger,#project-settings-menu"))closeSettingsMenu();
   });
   $("#top-project").addEventListener("change",async e=>{
     state.project=e.target.value;

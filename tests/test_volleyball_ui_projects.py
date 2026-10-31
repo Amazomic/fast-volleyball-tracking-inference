@@ -80,6 +80,32 @@ class ProjectDataTests(unittest.TestCase):
         projects.update_project(first["id"],name="01.11.2026")
         self.assertEqual(len(projects.all_projects()),2)
 
+    def test_archive_project_keeps_source_and_is_recoverable(self):
+        first=projects.create_project("Тестовый",["one.mp4"])
+        other=projects.create_project("Не удалять",["two.mp4"])
+        folder=projects.project_dir(first["id"])
+        sample=folder/"analysis"/"cache"/"ranking.json"
+        sample.parent.mkdir(parents=True)
+        sample.write_text('{"data": "keep"}',encoding="utf-8")
+        archived=projects.archive_project(first["id"])
+        self.assertEqual(archived["id"],first["id"])
+        self.assertTrue(archived["archived"])
+        self.assertFalse(folder.exists())
+        saved=self.out/"projects"/".trash"/first["id"]/"analysis"/"cache"/"ranking.json"
+        self.assertEqual(saved.read_text(encoding="utf-8"),'{"data": "keep"}')
+        self.assertTrue((self.p/"one.mp4").exists())
+        self.assertTrue((self.p/"two.mp4").exists())
+        self.assertEqual([x["id"] for x in projects.all_projects()],[other["id"]])
+        with self.assertRaisesRegex(ValueError,"не найден"):
+            projects.archive_project(first["id"])
+
+    def test_archive_project_with_no_results_does_not_touch_other_project(self):
+        first=projects.create_project("Удалить",["one.mp4"])
+        other=projects.create_project("Сохранить",["one.mp4"])
+        projects.archive_project(first["id"])
+        self.assertEqual(projects.get_project(other["id"])["name"],"Сохранить")
+        self.assertTrue(projects.project_dir(other["id"]).is_dir())
+
     def test_project_cache_does_not_see_other_projects(self):
         first=projects.create_project("A",["one.mp4"])
         second=projects.create_project("B",["one.mp4"])
