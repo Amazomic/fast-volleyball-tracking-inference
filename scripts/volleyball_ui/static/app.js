@@ -4,7 +4,7 @@ const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => Array.from(document.querySelectorAll(selector));
 const state = {videos: [], video: "", projects: [], project: "", aggregate: null, report: null, renders: [],
   selected: new Set(), limit: 60, previewId: null, photoToken: 0, jobStatus: "idle",
-  infoCache: new Map(), dialogEdit: false, dialogBusy: false};
+  dialogEdit: false, dialogBusy: false, dialogRequestId: 0};
 const label = {attack:"Атаки", block:"Блоки", serve:"Подачи", dig:"Приёмы", overhead_pass:"Верхние передачи", low_touch:"Другие касания"};
 const eventOrder = ["attack", "block", "serve", "dig", "overhead_pass", "low_touch"];
 
@@ -29,7 +29,7 @@ function go(view) {
   if(!state.project&&view!=="analysis")view="analysis";
   $$(".nav-button").forEach(b => b.classList.toggle("active",b.dataset.view===view));
   $$(".view").forEach(v => v.classList.toggle("active",v.id==="view-"+view));
-  const names={analysis:"Видео и анализ",players:"Игроки",report:"Отчёт проекта",results:"Монтаж"};
+  const names={analysis:"Анализ",players:"Игроки",report:"Отчёт проекта",results:"Монтаж"};
   $("#page-title").textContent=names[view] || names.analysis;
 }
 function metric(name,value,sub) {
@@ -130,13 +130,7 @@ function clock(s) {
 }
 function projectRange(name) {
   const p=selectedProject();
-  return p?.ranges?.[name]||{start:0,end:state.infoCache.get(name)?.duration_sec||0};
-}
-async function getVideoInfo(name) {
-  if(state.infoCache.has(name))return state.infoCache.get(name);
-  const meta=await api("/api/video-info?video="+encodeURIComponent(name));
-  state.infoCache.set(name,meta);
-  return meta;
+  return p?.ranges?.[name]||{start:0,end:0};
 }
 function populatePlayersSelect() {
   const select=$("#players-video"),p=selectedProject();
@@ -153,8 +147,8 @@ function renderSources() {
   $("#project-workspace").hidden=!p;
   for(const btn of $$(".nav-button"))btn.disabled=!p&&btn.dataset.view!=="analysis";
   if(!p) {
-    $("#active-project-name").textContent="Видео и анализ";
-    $("#active-project-description").textContent="Нажмите «Создать проект», выберите записи и задайте индивидуальные диапазоны анализа.";
+    $("#active-project-name").textContent="Анализ";
+    $("#active-project-description").textContent="Создайте проект и добавьте видео. Настройки анализа доступны после создания.";
     return;
   }
   $("#active-project-name").textContent=p.name;
@@ -197,40 +191,45 @@ function updateDialogSelection() {
     row.classList.toggle("is-selected",cb.checked);
   }
 }
-async function fillDialogVideoMeta(name) {
-  const row=$$(".dialog-video-row").find(x=>x.dataset.video===name);
-  if(!row)return;
-  try {
-    const meta=await getVideoInfo(name);
-    if(!row.isConnected)return;
-    row.querySelector(".dialog-duration").textContent=clock(meta.duration_sec)+" · "+meta.width+"×"+meta.height;
-    row.dataset.ready="yes";
-  }catch(error){
-    row.dataset.ready="error";
-    row.querySelector(".dialog-duration").textContent="Не удалось определить длительность: "+error.message;
-  }
-}
 async function openProjectDialog(edit=false) {
   if(state.dialogBusy)return;
+  const requestId=++state.dialogRequestId;
   state.dialogEdit=edit;
   const p=selectedProject(),dlg=$("#project-dialog");
   $("#project-dialog-error").hidden=true;
   $("#project-dialog-title").textContent=edit?"Видео и название проекта":"Создать проект";
   $("#confirm-project").textContent=edit?"Сохранить изменения":"Создать проект";
   $("#new-project-name").value=edit&&p?p.name:todayProjectName();
-  const selected=new Set(edit&&p?p.videos:[]);
-  $("#new-project-video-options").innerHTML=state.videos.length?state.videos.map(v=>
-    '<div class="dialog-video-row" data-video="'+esc(v.name)+'">'+
-      '<label class="dialog-video-heading"><input type="checkbox" class="dialog-source-check" value="'+esc(v.name)+'" '+(selected.has(v.name)?"checked":"")+'><span><strong>'+esc(v.name)+'</strong><small class="dialog-duration">Считываем длительность…</small></span></label>'+
-      '</div>'
-  ).join(""):'<p class="muted">В каталоге project/ пока нет видео. Скопируйте файлы туда и нажмите обновление страницы.</p>';
+  $("#confirm-project").disabled=true;
+  $("#project-selected-count").textContent="Поиск доступных видео…";
+  $("#new-project-video-options").innerHTML='<p class="muted">Проверяем папку project/…</p>';
   dlg.showModal();
   $("#new-project-name").focus();
   $("#new-project-name").select();
-  updateDialogSelection();
-  await Promise.all(state.videos.map(v=>fillDialogVideoMeta(v.name)));
+
+  // Check available source files only when this dialog is explicitly opened.
+  try {
+    const response=await api("/api/videos");
+    if(requestId!==state.dialogRequestId||!dlg.open)return;
+    state.videos=response.videos;
+    const selected=new Set(edit&&p?p.videos:[]);
+    $("#new-project-video-options").innerHTML=state.videos.length?state.videos.map(v=>
+      '<div class="dialog-video-row" data-video="'+esc(v.name)+'">'+
+        '<label class="dialog-video-heading"><input type="checkbox" class="dialog-source-check" value="'+esc(v.name)+'" '+(selected.has(v.name)?"checked":"")+'><span><strong>'+esc(v.name)+'</strong><small class="dialog-duration">'+esc(v.size_gb)+' ГБ</small></span></label>'+
+      '</div>'
+    ).join(""):'<p class="muted">В папке project/ нет подходящих видео. Добавьте файлы и откройте это окно снова.</p>';
+    $("#confirm-project").disabled=!state.videos.length;
+    updateDialogSelection();
+  } catch(error) {
+    if(requestId!==state.dialogRequestId||!dlg.open)return;
+    $("#new-project-video-options").innerHTML="";
+    $("#project-selected-count").textContent="Список видео не загружен";
+    $("#project-dialog-error").textContent=error.message;
+    $("#project-dialog-error").hidden=false;
+  }
 }
 function closeProjectDialog() {
+  ++state.dialogRequestId;
   $("#project-dialog").close();
 }
 async function saveProjectDialog() {
@@ -244,7 +243,6 @@ async function saveProjectDialog() {
   const videos=[];
   for(const row of rows){
     const filename=row.dataset.video;
-    if(row.dataset.ready!=="yes")return fail("Не удалось прочитать видео: "+filename);
     videos.push(filename);
   }
   state.dialogBusy=true;$("#confirm-project").disabled=true;error.hidden=true;
@@ -260,8 +258,6 @@ async function saveProjectDialog() {
   finally{state.dialogBusy=false;$("#confirm-project").disabled=false}
 }
 async function loadAll() {
-  const v=await api("/api/videos");
-  state.videos=v.videos;
   await loadProjects();
   if(selectedProject()){
     await Promise.all([loadReport(),loadRenders(),window.VolleyballAnalysisUI.setProjectRanges(selectedProject().ranges||{})]);
@@ -371,7 +367,6 @@ function bind() {
     window.VolleyballAnalysisUI.setVideo(state.video);
   });
   $("#save-timeline-range").addEventListener("click",()=>saveCurrentRange().catch(err=>alertBox(err.message)));
-  $("#refresh").addEventListener("click",()=>loadAll().catch(err=>alertBox(err.message)));
   $("#analysis-form").addEventListener("submit",async e=>{
     e.preventDefault();
     if(!state.project)return alertBox("Сначала создайте проект");
