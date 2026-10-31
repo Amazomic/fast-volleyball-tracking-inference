@@ -70,19 +70,27 @@ def list_videos():
     return out
 
 
-def _identities():
-    data = read_json(IDS_FILE, {"schema": 1, "videos": {}})
+def identity_file(project_id=None):
+    if project_id is None or project_id == "":
+        return IDS_FILE
+    from .projects import get_project, project_dir
+    get_project(project_id)
+    return project_dir(project_id) / "player_identities.json"
+
+
+def _identities(project_id=None):
+    data = read_json(identity_file(project_id), {"schema": 1, "videos": {}})
     if not isinstance(data, dict) or not isinstance(data.get("videos"), dict):
         return {"schema": 1, "videos": {}}
     return data
 
 
-def groups_for(name: str) -> list:
-    data = _identities()
+def groups_for(name: str, project_id=None) -> list:
+    data = _identities(project_id)
     return data["videos"].get(name, [])
 
 
-def assign(name: str, track_ids: list, display_name: str) -> list:
+def assign(name: str, track_ids: list, display_name: str, project_id=None) -> list:
     video_path(name)
     if not isinstance(track_ids, list) or not track_ids or len(track_ids) > 200:
         raise ValueError("Выберите один или несколько ID (до 200)")
@@ -93,7 +101,7 @@ def assign(name: str, track_ids: list, display_name: str) -> list:
         raise ValueError("ID игрока должен быть числом")
     display_name = display_name.strip()
     with _LOCK:
-        data = _identities()
+        data = _identities(project_id)
         groups = data["videos"].setdefault(name, [])
         chosen = next((g for g in groups if g["name"].casefold() == display_name.casefold()), None)
         if chosen is None:
@@ -103,22 +111,22 @@ def assign(name: str, track_ids: list, display_name: str) -> list:
             g["track_ids"] = [tid for tid in g["track_ids"] if tid not in ids]
         chosen["track_ids"] = sorted(set(chosen["track_ids"] + ids), key=int)
         groups[:] = [g for g in groups if g["track_ids"]]
-        save_json(IDS_FILE, data)
+        save_json(identity_file(project_id), data)
         return groups
 
 
-def unassign(name: str, ids: list) -> list:
+def unassign(name: str, ids: list, project_id=None) -> list:
     video_path(name)
     if not isinstance(ids, list) or not ids or any(not str(x).isdigit() for x in ids):
         raise ValueError("Укажите ID для открепления")
     with _LOCK:
-        data = _identities()
+        data = _identities(project_id)
         groups = data["videos"].setdefault(name, [])
         keys = set(map(str, ids))
         for g in groups:
             g["track_ids"] = [x for x in g["track_ids"] if x not in keys]
         groups[:] = [g for g in groups if g["track_ids"]]
-        save_json(IDS_FILE, data)
+        save_json(identity_file(project_id), data)
         return groups
 
 
@@ -144,7 +152,7 @@ def _raw_stats(name: str, cache: Path, events: list) -> list:
     return sorted(records, key=lambda r: -r["total_actions"])
 
 
-def report(name: str) -> dict:
+def report(name: str, project_id=None) -> dict:
     video_path(name)
     cache = find_cache(name)
     if cache is None:
@@ -155,7 +163,7 @@ def report(name: str) -> dict:
         events = []
     counts = Counter(e.get("type") for e in events if isinstance(e, dict))
     raw = _raw_stats(name, cache, events)
-    identities = groups_for(name)
+    identities = groups_for(name, project_id)
     ids_to_stat = {str(x["player_track_id"]): x for x in raw}
     named = []
     assigned = set()

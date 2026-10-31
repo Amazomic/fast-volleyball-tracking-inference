@@ -2,7 +2,7 @@
 
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => Array.from(document.querySelectorAll(selector));
-const state = {videos: [], video: "", report: null, renders: [], selected: new Set(), limit: 60, previewId: null, photoToken: 0, jobStatus: "idle"};
+const state = {videos: [], video: "", projects: [], project: "", aggregate: null, report: null, renders: [], selected: new Set(), limit: 60, previewId: null, photoToken: 0, jobStatus: "idle"};
 const label = {attack:"Атаки", block:"Блоки", serve:"Подачи", dig:"Приёмы", overhead_pass:"Верхние передачи", low_touch:"Другие касания"};
 const eventOrder = ["attack", "block", "serve", "dig", "overhead_pass", "low_touch"];
 
@@ -42,9 +42,9 @@ function barRows(counts) {
   }).join("");
 }
 function renderDashboard() {
-  const r=state.report || {};
+  const r=state.aggregate||state.report||{};
   const c=r.counts||{};
-  $("#cache-status").textContent=r.analyzed?"Анализ сохранён • "+r.cache_id:"Нет завершённого анализа";
+  $("#cache-status").textContent=r.analyzed?(state.aggregate?"Проект: "+r.analyzed_videos+"/"+r.total_videos+" видео":"Анализ сохранён • "+r.cache_id):"Нет завершённого анализа";
   $("#metrics").innerHTML=[
     metric("Фрагменты розыгрышей",r.rallies??"—","Эвристические границы"),
     metric("Обнаруженные атаки",c.attack??"—","По сохранённым событиям"),
@@ -56,10 +56,10 @@ function renderDashboard() {
 }
 function renderFiles(files) {
   if (!files || !files.length) return '<div class="empty">Пока нет готовых роликов</div>';
-  return files.map(f=>'<button type="button" class="file-row render-file" data-file="'+esc(f.name)+'"><span class="file-icon">▣</span><span class="file-info"><strong>'+esc(f.name)+'</strong><small>MP4 · '+esc(f.size_mb)+' МБ</small></span><span class="file-arrow">↗</span></button>').join("");
+  return files.map(f=>'<button type="button" class="file-row render-file" data-file="'+esc(f.name)+'" data-url="'+esc(f.url||"")+'"><span class="file-icon">▣</span><span class="file-info"><strong>'+esc(f.name)+'</strong><small>MP4 · '+esc(f.size_mb)+' МБ</small></span><span class="file-arrow">↗</span></button>').join("");
 }
 function renderReport() {
-  const r=state.report||{};
+  const r=state.aggregate||state.report||{};
   const c=r.counts||{};
   $("#report-notice").textContent=r.analyzed
     ? "Статистика приблизительная: один спортсмен может получить несколько track ID. Нулевое значение не доказывает отсутствие действия. "+
@@ -132,10 +132,66 @@ function renderRenders() {
 function fillSelect(selector) {
   const sel=$(selector);
   const current=sel.value||state.video;
-  sel.innerHTML=state.videos.map(v=>
+  const project=selectedProject();
+  const candidates=project?.videos?.length?state.videos.filter(v=>project.videos.includes(v.name)):state.videos;
+  sel.innerHTML=candidates.map(v=>
     '<option value="'+esc(v.name)+'">'+esc(v.name)+(v.analyzed?" ✓":"")+'</option>'
   ).join("");
   sel.value=state.videos.some(v=>v.name===current)?current:state.video;
+}
+function selectedProject() {
+  return state.projects.find(p=>p.id===state.project)||null;
+}
+function drawProjectControls() {
+  const select=$("#top-project");
+  select.innerHTML='<option value="">Без проекта — одно видео</option>'+
+    state.projects.map(p=>'<option value="'+esc(p.id)+'">'+esc(p.name)+'</option>').join("");
+  select.value=state.project;
+  const p=selectedProject(),included=new Set(p?.videos||[]);
+  $("#project-video-options").innerHTML=state.videos.map(v=>
+    '<label class="project-check"><input class="project-video-check" type="checkbox" value="'+esc(v.name)+'" '+
+    (included.has(v.name)?"checked":"")+'> <span>'+esc(v.name)+(v.analyzed?" · анализ готов":" · ожидает анализа")+'</span></label>'
+  ).join("");
+  $("#project-summary").textContent=p?(p.videos.length+" исходных видео · "+p.analyses.filter(x=>x.analyzed).length+" обработано"):
+    "Создайте проект и отметьте исходные записи";
+  $("#analysis-project-hint").textContent=p
+    ? 'Проект «'+p.name+'»: обработка всех '+p.videos.length+' видео по очереди. Диапазон на шкале задаётся отдельно для каждой записи.'
+    : "Без проекта анализируется только выбранный файл. Для нескольких видео создайте проект на вкладке «Обзор».";
+  $("#highlights-project-hint").textContent=p
+    ? 'Проект «'+p.name+'»: лучшие полные розыгрыши будут отобраны из всех '+p.videos.length+' видео.'
+    : "Без проекта подборка строится из одного выбранного видео.";
+  $("#save-project-videos").disabled=!p;
+}
+async function loadProjects() {
+  state.projects=(await api("/api/projects")).projects;
+  if(!state.projects.some(p=>p.id===state.project))
+    state.project=state.projects[0]?.id||"";
+  const p=selectedProject();
+  if(p?.videos.length&&!p.videos.includes(state.video))state.video=p.videos[0];
+  drawProjectControls();
+}
+async function createNewProject() {
+  const name=$("#new-project-name").value.trim();
+  if(!name){alertBox("Введите название проекта");return}
+  const selected=Array.from(document.querySelectorAll(".project-video-check:checked")).map(x=>x.value);
+  if(!selected.length&&state.video)selected.push(state.video);
+  try{
+    const result=await api("/api/project-create",{name,videos:selected});
+    state.project=result.project.id;
+    $("#new-project-name").value="";
+    await loadAll();
+    $("#project-save-status").textContent="Проект создан";
+  }catch(e){alertBox(e.message)}
+}
+async function saveProjectVideos() {
+  if(!state.project){alertBox("Сначала создайте проект");return}
+  const videos=Array.from(document.querySelectorAll(".project-video-check:checked")).map(x=>x.value);
+  if(!videos.length){alertBox("Отметьте хотя бы одно видео для проекта");return}
+  try{
+    await api("/api/project-update",{id:state.project,videos});
+    await loadAll();
+    $("#project-save-status").textContent="Список сохранён";
+  }catch(e){alertBox(e.message)}
 }
 async function loadAll() {
   const videos=await api("/api/videos");
@@ -145,20 +201,25 @@ async function loadAll() {
     return;
   }
   if(!state.videos.some(v=>v.name===state.video))state.video=state.videos[0].name;
+  await loadProjects();
   ["#top-video","#analysis-video","#highlight-video"].forEach(fillSelect);
   await Promise.all([loadReport(),loadRenders()]);
   alertBox("");
 }
 async function loadReport() {
   if (!state.video) return;
-  state.report=await api("/api/report?video="+encodeURIComponent(state.video));
+  state.report=await api("/api/report?video="+encodeURIComponent(state.video)+(state.project?"&project_id="+encodeURIComponent(state.project):""));
+  state.aggregate=state.project?await api("/api/project-report?id="+encodeURIComponent(state.project)):null;
   state.selected.clear();
   state.previewId=state.report?.raw?.[0]?.player_track_id!=null?String(state.report.raw[0].player_track_id):null;
   renderDashboard();renderReport();renderPlayers();
   renderPlayerPhotos().catch(e=>console.warn("photos",e));
+  if(window.VolleyballAnalysisUI)window.VolleyballAnalysisUI.setVideo(state.video);
 }
 async function loadRenders() {
   state.renders=(await api("/api/renders")).videos;
+  const project=state.projects.find(p=>p.id===state.project);
+  if(project?.highlight_ready)state.renders.unshift({name:project.name+" / лучшие моменты",size_mb:"проект",url:"/api/project-media?id="+encodeURIComponent(project.id)});
   renderRenders();renderDashboard();
 }
 async function pollJob() {
@@ -193,7 +254,7 @@ async function assignSelected(remove=false) {
   const name=$("#player-name").value.trim();
   if(!remove && !name){alertBox("Укажите имя игрока.");return}
   try {
-    await api(remove?"/api/unassign":"/api/assign",{video:state.video,ids,name});
+    await api(remove?"/api/unassign":"/api/assign",{video:state.video,ids,name,project_id:state.project||null});
     await loadReport();
     state.previewId=ids[0];
     renderPlayerPhotos().catch(e=>console.warn("photos",e));
@@ -201,6 +262,16 @@ async function assignSelected(remove=false) {
   } catch(error){alertBox(error.message)}
 }
 function bind() {
+  $("#top-project").addEventListener("change",async e=>{
+    state.project=e.target.value;
+    const p=selectedProject();
+    if(p?.videos.length)state.video=p.videos[0];
+    drawProjectControls();
+    ["#top-video","#analysis-video","#highlight-video"].forEach(fillSelect);
+    try{await Promise.all([loadReport(),loadRenders()])}catch(error){alertBox(error.message)}
+  });
+  $("#create-project").addEventListener("click",createNewProject);
+  $("#save-project-videos").addEventListener("click",saveProjectVideos);
   $$(".nav-button").forEach(b=>b.addEventListener("click",()=>go(b.dataset.view)));
   $$("[data-go]").forEach(b=>b.addEventListener("click",()=>go(b.dataset.go)));
   $("#top-video").addEventListener("change",async e=>{
@@ -220,11 +291,14 @@ function bind() {
     const params=Object.fromEntries(new FormData(form).entries());
     params.video=$("#analysis-video").value;
     params.beach=form.querySelector('[name="beach"]').checked;
+    try{Object.assign(params,window.VolleyballAnalysisUI.params());}
+    catch(error){alertBox(error.message);return;}
+    if(state.project)params.project_id=state.project;
     submitTask("/api/analyze",params);
   });
   $("#highlights-form").addEventListener("submit",e=>{
     e.preventDefault();
-    submitTask("/api/highlights",{video:$("#highlight-video").value,duration:Number(e.target.elements.duration.value)});
+    submitTask("/api/highlights",{video:$("#highlight-video").value,duration:Number(e.target.elements.duration.value),...(state.project?{project_id:state.project}:{})});
   });
   $("#cancel-job").addEventListener("click",()=>api("/api/cancel",{}).then(pollJob).catch(e=>alertBox(e.message)));
   $("#track-search").addEventListener("input",()=>{state.limit=60;renderPlayers()});
@@ -254,7 +328,7 @@ function bind() {
     if(!btn)return;
     const name=btn.dataset.file;
     const player=$("#preview-player");
-    player.src="/media/"+encodeURIComponent(name);
+    player.src=btn.dataset.url||"/media/"+encodeURIComponent(name);
     player.style.display="block";
     $("#preview-empty").style.display="none";
     $("#preview-title").textContent=name;
@@ -263,6 +337,7 @@ function bind() {
   });
 }
 document.addEventListener("DOMContentLoaded",async()=>{
+  window.VolleyballAnalysisUI.init();
   bind();
   const requestedView=new URLSearchParams(window.location.search).get("view");
   if(["dashboard","analysis","players","report","results"].includes(requestedView))go(requestedView);
