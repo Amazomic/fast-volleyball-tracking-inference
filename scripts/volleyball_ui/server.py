@@ -17,6 +17,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlsplit
 
 from .data import RESULTS, ROOT, assign, find_cache, list_videos, report, unassign, video_path, video_renders
+from .photos import photo_path, photos_metadata
 
 PUBLIC = Path(__file__).with_name("static")
 RUN_DIR = RESULTS / "ui_runs"
@@ -198,6 +199,11 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"videos": list_videos()})
             if route == "/api/report":
                 return self._json(report(query.get("video", [""])[0]))
+            if route == "/api/player-photos":
+                return self._json(photos_metadata(query.get("video", [""])[0], query.get("id", [""])[0]))
+            if route == "/api/player-photo":
+                source = photo_path(query.get("video", [""])[0], query.get("id", [""])[0], int(query.get("sample", ["0"])[0]))
+                return self._file(source, "image/jpeg")
             if route == "/api/renders":
                 return self._json({"videos": video_renders()})
             if route == "/api/job":
@@ -217,6 +223,8 @@ class Handler(BaseHTTPRequestHandler):
                 name, mime = static_files[route]
                 return self._file(PUBLIC / name, mime)
             self._error("Страница не найдена", 404)
+        except FileNotFoundError as exc:
+            self._error(exc, 404)
         except (ValueError, OSError) as exc:
             self._error(exc)
         except Exception as exc:

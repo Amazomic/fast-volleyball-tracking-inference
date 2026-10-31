@@ -2,7 +2,7 @@
 
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => Array.from(document.querySelectorAll(selector));
-const state = {videos: [], video: "", report: null, renders: [], selected: new Set(), limit: 60, jobStatus: "idle"};
+const state = {videos: [], video: "", report: null, renders: [], selected: new Set(), limit: 60, previewId: null, photoToken: 0, jobStatus: "idle"};
 const label = {attack:"Атаки", block:"Блоки", serve:"Подачи", dig:"Приёмы", overhead_pass:"Верхние передачи", low_touch:"Другие касания"};
 const eventOrder = ["attack", "block", "serve", "dig", "overhead_pass", "low_touch"];
 
@@ -76,6 +76,31 @@ function renderReport() {
     '<div class="person-card"><div class="person-line"><strong>'+esc(g.name)+'</strong><span class="person-count">'+g.total_actions+' действий</span></div><small>Track ID: '+esc(g.track_ids.join(", "))+'</small><small>Атаки '+(g.actions.attack||0)+' · Приёмы '+(g.actions.dig||0)+' · Передачи '+(g.actions.overhead_pass||0)+'</small></div>'
   ).join("") : '<div class="empty">Пока нет подписанных игроков. Перейдите во вкладку «Игроки и ID».</div>';
 }
+function playerPhotoUrl(id,sample=0) {
+  return "/api/player-photo?video="+encodeURIComponent(state.video)+"&id="+encodeURIComponent(id)+"&sample="+sample;
+}
+function updateChosen() {
+  $("#selected-ids").textContent=state.selected.size
+    ?"Выбраны ID: "+Array.from(state.selected).join(", "):"ID не выбраны";
+}
+async function renderPlayerPhotos() {
+  const gallery=$("#player-photo-gallery");
+  const ids=state.selected.size?Array.from(state.selected).slice(0,6):(state.previewId?[state.previewId]:[]);
+  const token=++state.photoToken, video=state.video;
+  if(!ids.length){gallery.innerHTML='<div class="empty">Нажмите на фото или отметьте ID в таблице</div>';return}
+  gallery.innerHTML='<div class="muted">Загрузка фотографий из сохранённых кадров…</div>';
+  const cards=await Promise.all(ids.map(async id=>{
+    try {
+      const meta=await api("/api/player-photos?video="+encodeURIComponent(video)+"&id="+encodeURIComponent(id));
+      if(!meta.samples.length)return '<div class="empty">#'+esc(id)+': фото пока отсутствуют</div>';
+      return '<div class="photo-person"><div class="photo-person-head"><strong>Track #'+esc(id)+'</strong><span>'+meta.samples.length+' кадр(а)</span></div><div class="photo-strip">'
+        +meta.samples.map(s=>'<a href="'+esc(s.url)+'" target="_blank" rel="noopener" title="Увеличить кадр"><img loading="lazy" src="'+esc(s.url)+'" alt="Игрок, track #'+esc(id)+', кадр '+s.frame+'"><small>'+s.time_sec.toFixed(1)+' сек</small></a>').join("")
+        +'</div></div>';
+    }catch(error){return '<div class="empty">#'+esc(id)+': '+esc(error.message)+'</div>'}
+  }));
+  if(token!==state.photoToken||video!==state.video)return;
+  gallery.innerHTML=cards.join("")+(state.selected.size>6?'<div class="muted">Показаны первые 6 выбранных ID. Остальные останутся выбранными при сохранении.</div>':'');
+}
 function associatedMap() {
   const map=new Map();
   (state.report?.groups||[]).forEach(g=>g.track_ids.forEach(id=>map.set(String(id),g.name)));
@@ -90,11 +115,11 @@ function renderPlayers() {
   $("#raw-count").textContent=raw.length+" ID";
   $("#raw-players").innerHTML=shown.map(p=>{
     const id=String(p.player_track_id);
-    return '<tr><td><input type="checkbox" class="row-select" data-id="'+esc(id)+'" '+(state.selected.has(id)?"checked":"")+'></td><td><strong>#'+esc(id)+'</strong></td><td>'+(p.attack||0)+'</td><td>'+(p.dig||0)+'</td><td>'+(p.overhead_pass||0)+'</td><td>'+(association.has(id)?'<span class="tag">'+esc(association.get(id))+'</span>':'<span class="muted">—</span>')+'</td></tr>';
-  }).join("") || '<tr><td colspan="6" class="empty">Нет совпадений</td></tr>';
+    return '<tr><td><input type="checkbox" class="row-select" data-id="'+esc(id)+'" '+(state.selected.has(id)?"checked":"")+'></td><td><button type="button" class="photo-peek" data-id="'+esc(id)+'" title="Показать фото #'+esc(id)+'"><img loading="lazy" src="'+esc(playerPhotoUrl(id))+'" alt="Фото track ID '+esc(id)+'" onerror="this.style.opacity=0.15"></button></td><td><strong>#'+esc(id)+'</strong></td><td>'+(p.attack||0)+'</td><td>'+(p.dig||0)+'</td><td>'+(p.overhead_pass||0)+'</td><td>'+(association.has(id)?'<span class="tag">'+esc(association.get(id))+'</span>':'<span class="muted">—</span>')+'</td></tr>';
+  }).join("") || '<tr><td colspan="7" class="empty">Нет совпадений</td></tr>';
   $("#table-hint").textContent="Показано "+shown.length+" из "+matched.length+" ID";
   $("#show-more").disabled=state.limit>=matched.length;
-  $("#selected-ids").textContent=state.selected.size?"Выбраны ID: "+Array.from(state.selected).join(", "):"ID не выбраны";
+  updateChosen();
   $("#groups-count").textContent=groups.length+" игроков";
   $("#named-list").innerHTML=groups.map(g=>
     '<div class="person-card"><div class="person-line"><strong>'+esc(g.name)+'</strong><span class="person-count">'+g.total_actions+'</span></div><small>'+esc(g.track_ids.join(", "))+'</small></div>'
@@ -128,7 +153,9 @@ async function loadReport() {
   if (!state.video) return;
   state.report=await api("/api/report?video="+encodeURIComponent(state.video));
   state.selected.clear();
+  state.previewId=state.report?.raw?.[0]?.player_track_id!=null?String(state.report.raw[0].player_track_id):null;
   renderDashboard();renderReport();renderPlayers();
+  renderPlayerPhotos().catch(e=>console.warn("photos",e));
 }
 async function loadRenders() {
   state.renders=(await api("/api/renders")).videos;
@@ -168,6 +195,8 @@ async function assignSelected(remove=false) {
   try {
     await api(remove?"/api/unassign":"/api/assign",{video:state.video,ids,name});
     await loadReport();
+    state.previewId=ids[0];
+    renderPlayerPhotos().catch(e=>console.warn("photos",e));
     $("#player-name").value=name;
   } catch(error){alertBox(error.message)}
 }
@@ -204,11 +233,19 @@ function bind() {
     if(!e.target.classList.contains("row-select"))return;
     const id=e.target.dataset.id;
     if(e.target.checked)state.selected.add(id);else state.selected.delete(id);
-    $("#selected-ids").textContent=state.selected.size?"Выбраны ID: "+Array.from(state.selected).join(", "):"ID не выбраны";
+    updateChosen();
+    renderPlayerPhotos().catch(e=>console.warn("photos",e));
+  });
+  $("#raw-players").addEventListener("click",e=>{
+    const button=e.target.closest(".photo-peek");
+    if(!button)return;
+    state.previewId=button.dataset.id;
+    renderPlayerPhotos().catch(err=>console.warn("photos",err));
   });
   $("#select-all-ids").addEventListener("change",e=>{
     $$(".row-select").forEach(check=>{check.checked=e.target.checked;if(e.target.checked)state.selected.add(check.dataset.id);else state.selected.delete(check.dataset.id)});
     renderPlayers();
+    renderPlayerPhotos().catch(e=>console.warn("photos",e));
   });
   $("#assign-ids").addEventListener("click",()=>assignSelected());
   $("#unassign-ids").addEventListener("click",()=>assignSelected(true));
@@ -227,6 +264,8 @@ function bind() {
 }
 document.addEventListener("DOMContentLoaded",async()=>{
   bind();
+  const requestedView=new URLSearchParams(window.location.search).get("view");
+  if(["dashboard","analysis","players","report","results"].includes(requestedView))go(requestedView);
   try{await loadAll();await pollJob()}catch(e){alertBox(e.message)}
   window.setInterval(()=>pollJob().catch(e=>console.warn("status",e)),2500);
 });

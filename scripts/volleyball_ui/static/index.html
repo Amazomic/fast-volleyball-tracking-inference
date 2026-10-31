@@ -81,15 +81,20 @@
         </div>
       </section>
       <section id="view-players" class="view">
-        <div class="section-intro"><h2>Игроки и идентификаторы</h2><p>Выберите несколько ID, если трекер разделил одного спортсмена на разные треки. Задайте имя — статистика этих ID будет объединена без изменения исходного анализа.</p></div>
+        <div class="section-intro"><h2>Игроки и идентификаторы</h2><p>Сравнивайте кадры из видео по track ID, выбирайте совпадающих игроков и объединяйте их под одним именем. Фото показывают детекцию трекера, а не подтверждают личность.</p></div>
         <div class="two-column players-columns">
           <article class="panel">
             <div class="panel-heading"><h3>Найденные track ID</h3><span class="muted" id="raw-count"></span></div>
             <label class="field"><span>Поиск по ID</span><input type="search" id="track-search" placeholder="Например: 725"></label>
-            <div class="table-scroll"><table><thead><tr><th><input type="checkbox" id="select-all-ids" title="Выбрать видимые ID"></th><th>TRACK ID</th><th>АТАКИ</th><th>ПРИЁМЫ</th><th>ПЕРЕДАЧИ</th><th>ИГРОК</th></tr></thead><tbody id="raw-players"></tbody></table></div>
+            <div class="table-scroll"><table><thead><tr><th><input type="checkbox" id="select-all-ids" title="Выбрать видимые ID"></th><th>ФОТО</th><th>TRACK ID</th><th>АТАКИ</th><th>ПРИЁМЫ</th><th>ПЕРЕДАЧИ</th><th>ИГРОК</th></tr></thead><tbody id="raw-players"></tbody></table></div>
             <div class="table-footer"><span id="table-hint">Показаны первые 60 совпадений</span><button class="secondary small" id="show-more">Показать ещё</button></div>
           </article>
           <div class="stack">
+            <article class="panel">
+              <div class="panel-heading"><h3>Фото выбранных ID</h3><span class="muted">Кадры из analysis.mp4</span></div>
+              <div id="player-photo-gallery" class="photo-gallery"><div class="empty">Выберите ID или нажмите на фото в таблице</div></div>
+              <div class="footnote photo-warning">Сравнивайте несколько кадров: трекер может перепутать игроков или временно потерять их.</div>
+            </article>
             <article class="panel">
               <div class="panel-heading"><h3>Присвоить имя / объединить ID</h3></div>
               <p class="muted paragraph">Отметьте строки в таблице слева и введите имя. Если такое имя уже существует, выбранные ID присоединятся к нему.</p>

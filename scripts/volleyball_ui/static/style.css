@@ -132,3 +132,21 @@ input[type=checkbox]{accent-color:var(--green)}
 footer{border-top:1px solid var(--border);padding:22px 42px;color:#557073;font-size:10px;letter-spacing:.12em;display:flex;justify-content:space-between}
 @media(max-width:1120px){.shell{grid-template-columns:205px minmax(0,1fr)}.topbar{padding:20px 25px}.content{padding:25px}.metric-grid{grid-template-columns:repeat(2,1fr)}.two-column{grid-template-columns:1fr}.hero-art{width:180px;min-width:170px}.hero{padding:27px}}
 @media(max-width:680px){.shell{display:block}.sidebar{position:static;height:auto;padding:15px}.brand{padding:0 0 18px}.nav{display:flex;overflow-x:auto}.nav-button{white-space:nowrap;font-size:12px;padding:10px}.nav-caption,.sidebar-bottom{display:none}.topbar{flex-direction:column;align-items:stretch;padding:18px}.topbar-controls{width:100%}#top-video{min-width:0;flex:1}.content{padding:17px}.hero{padding:24px;min-height:0}.hero-art{display:none}.metric-grid{gap:8px}.metric{padding:15px}.metric .metric-num{font-size:26px}.panel{padding:17px}.form-row{grid-template-columns:1fr}.players-columns{display:block}.stack{margin-top:17px}footer{padding:18px}}
+
+/* Track identity photo review */
+.photo-peek{display:block;width:66px;height:72px;padding:0;border:1px solid #3d5650;background:#20312e;border-radius:8px;overflow:hidden}
+.photo-peek:hover{border-color:var(--green)}
+.photo-peek img{width:100%;height:100%;object-fit:cover;object-position:center;display:block}
+.photo-gallery{display:grid;gap:13px;min-height:70px;max-height:540px;overflow-y:auto}
+.photo-person{background:#162824;border:1px solid #345148;padding:12px;border-radius:10px}
+.photo-person-head{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:10px}
+.photo-person-head strong{color:var(--green)}
+.photo-person-head span{font-size:11px;color:#91a7a4}
+.photo-strip{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.photo-strip a{display:flex;flex-direction:column;min-width:0;border-radius:7px;overflow:hidden;background:#223632;border:1px solid #405449}
+.photo-strip a:hover{border-color:var(--green)}
+.photo-strip img{width:100%;height:150px;object-fit:contain;object-position:center;background:#08120f}
+.photo-strip small{text-align:center;color:#b9d2cd;padding:5px;font-size:10px}
+.photo-warning{margin:14px 0 0}
+.table-scroll td:nth-child(2){padding:5px}
+.table-scroll th:nth-child(2){width:74px}
