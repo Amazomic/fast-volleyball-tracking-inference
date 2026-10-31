@@ -75,6 +75,58 @@ class ProjectCourtTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             court.save_context(self.a["id"],"other.mp4",{"start":0,"end":40},court=self.sample())
 
+    def test_offscreen_estimated_corner_is_saved(self):
+        annotated = self.sample()
+        pt = annotated["keypoints"][0]
+        pt.update(x=-100, y=1600, status="estimated", visible=False)
+        result = court.save_context(self.a["id"],"game.mp4",
+                                    {"start":10,"end":100},court=annotated)
+        estimated = result["court"]["keypoints"][0]
+        self.assertFalse(estimated["visible"])
+        self.assertEqual(estimated["status"],"estimated")
+        self.assertEqual(estimated["x"],-100.0)
+        self.assertTrue(court.get_court(self.a["id"],"game.mp4"))
+        self.assertEqual(court.project_context(self.a["id"])["videos"][0]["court_estimated"],1)
+        self.assertTrue(court.project_context(self.a["id"])["videos"][0]["court_homography_ready"])
+        other = self.sample()
+        other["keypoints"][0].update(x=-650,y=1400,status="estimated",visible=False)
+        with self.assertRaisesRegex(ValueError,"слишком далеко"):
+            court.validate_court(self.a["id"],"game.mp4",other)
+
+    def test_unknown_corner_preserves_id_without_invented_homography(self):
+        annotated = self.sample()
+        annotated["keypoints"][1].update(x=None,y=None,status="unknown",visible=False)
+        result = court.save_context(self.a["id"],"game.mp4",
+                                    {"start":10,"end":100},court=annotated)
+        self.assertEqual(result["court"]["keypoints"][1]["name"],"2_back_left")
+        self.assertIsNone(result["court"]["keypoints"][1]["x"])
+        self.assertFalse(court.project_context(self.a["id"])["videos"][0]["court_homography_ready"])
+        self.assertEqual(court.project_context(self.a["id"])["videos"][0]["court_unknown"],1)
+        import sys
+        from pathlib import Path
+        src = Path(__file__).resolve().parents[1]/"src"
+        if str(src) not in sys.path:
+            sys.path.insert(0,str(src))
+        from court_transformer import CourtTransformer
+        matrix = CourtTransformer(str(court.court_path(self.a["id"],"game.mp4"))).load().matrix
+        self.assertIsNone(matrix)
+
+    def test_four_known_corners_can_transform_with_unknown_optional_point(self):
+        annotated = self.sample()
+        annotated["keypoints"][0].update(x=-100,y=1600,status="estimated",visible=False)
+        annotated["keypoints"][5].update(x=None,y=None,status="unknown",visible=False)
+        court.save_context(self.a["id"],"game.mp4",{"start":10,"end":100},court=annotated)
+        import sys
+        from pathlib import Path
+        src = Path(__file__).resolve().parents[1]/"src"
+        if str(src) not in sys.path:
+            sys.path.insert(0,str(src))
+        from court_transformer import CourtTransformer
+        result = CourtTransformer(str(court.court_path(self.a["id"],"game.mp4"))).load()
+        self.assertIsNotNone(result.matrix)
+        self.assertEqual(len(result.geometry.keypoints),5)
+        self.assertEqual(result.geometry.keypoints[0],(-100.,1600.))
+
     def test_project_runner_passes_saved_court_and_ranges(self):
         court.save_context(self.a["id"],"game.mp4",{"start":10,"end":40},court=self.sample())
         calls=[]

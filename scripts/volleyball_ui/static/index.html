@@ -68,6 +68,36 @@
                 <h3>Видео для анализа</h3>
                 <span id="preview-source-details" class="muted">Выберите исходное видео</span>
               </div>
+              <div class="court-compact-toolbar" aria-label="Режим разметки площадки">
+                <label class="court-toolbar-mode">Режим
+                  <select id="court-mode-select" aria-label="Режим разметки">
+                    <option value="view">Просмотр</option>
+                    <option value="visible">Точка в кадре</option>
+                    <option value="outside">Точка за кадром</option>
+                    <option value="unknown">Неизвестная точка</option>
+                  </select>
+                </label>
+                <label class="court-toolbar-point" id="court-point-wrap" hidden>Точка
+                  <select id="court-point-select" aria-label="Точка площадки">
+                    <option value="0">1 · Ближний левый</option>
+                    <option value="1">2 · Дальний левый</option>
+                    <option value="2">3 · Дальний правый</option>
+                    <option value="3">4 · Ближний правый</option>
+                    <option value="4">5 · Середина слева</option>
+                    <option value="5">6 · Середина справа</option>
+                    <option value="6">7 · Сетка слева</option>
+                    <option value="7">8 · Сетка справа</option>
+                  </select>
+                </label>
+                <button type="button" id="court-mark-unknown" class="secondary small" hidden>Отметить неизвестной</button>
+                <button type="button" id="court-undo" class="secondary small" title="Отменить последнюю правку" hidden>↶</button>
+                <button type="button" id="court-clear" class="secondary small" hidden>Сброс</button>
+                <span class="court-toolbar-status" id="court-progress">Площадка не размечена</span>
+              </div>
+              <div class="court-inline-hint" id="court-instruction" hidden>
+                <span id="court-point-prompt">Точка 1 из 8</span>
+                <span id="court-mode-hint"></span>
+              </div>
               <div class="workspace-video-player">
                 <video id="source-video-player" playsinline preload="metadata" aria-label="Просмотр исходного видео"></video>
                 <svg id="court-overlay" class="court-overlay" xmlns="http://www.w3.org/2000/svg" aria-label="Точки разметки волейбольной площадки" hidden></svg>
@@ -106,16 +136,6 @@
               <button type="button" class="secondary small" id="save-timeline-range">Сохранить диапазон и разметку</button>
             </div>
           </article>
-              <div class="court-calibration-tools">
-                <button type="button" class="secondary small" id="court-mode-toggle">Разметить площадку</button>
-                <span class="court-progress" id="court-progress">Разметка ещё не сохранена</span>
-                <button type="button" class="secondary small" id="court-undo" hidden>Отменить точку</button>
-                <button type="button" class="secondary small" id="court-clear" hidden>Сбросить разметку</button>
-              </div>
-              <div class="court-instruction" id="court-instruction" hidden>
-                <b id="court-point-prompt">Точка 1 из 8</b>
-                <span>Нажимайте на изображение площадки; готовые точки можно перетаскивать. Для пляжного волейбола точки 5–6 — условная средняя линия, а не нарисованная линия атаки.</span>
-              </div>
               <p class="footnote" id="source-playback-note">
                 Выберите видео справа и задайте временной диапазон под проигрывателем.
               </p>

@@ -116,9 +116,18 @@ def analyze(source, work, args):
             save(scaled_court, annotation)
             sys.path.insert(0, str(ROOT / "src"))
             from court_transformer import CourtTransformer
-            if CourtTransformer(str(scaled_court)).load().matrix is None:
+            calibrated = CourtTransformer(str(scaled_court)).load()
+            known_corners = all(
+                point.get("x") is not None and point.get("y") is not None and
+                point.get("status", "visible" if point.get("visible") else "unknown") != "unknown"
+                for point in annotation["keypoints"][:4]
+            )
+            if not known_corners:
+                print("COURT: unknown corner(s); no perspective transform used", flush=True)
+            elif calibrated.matrix is None:
                 raise ValueError("Некорректная геометрия площадки; координаты не будут выдуманы")
-            command += ["--court_json_path", scaled_court]
+            else:
+                command += ["--court_json_path", scaled_court]
         if args.beach:
             command += ["--beach"]
         run(command, folder / "tracks.log")

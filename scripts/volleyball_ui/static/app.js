@@ -317,7 +317,11 @@ function displayAnalysisContext(){
       const item=contexts.get(name);
       const range=item?.range||p.ranges[name];
       const period=range?clock(range.start)+" – "+clock(range.end):"Не задан";
-      const court=item?.court_saved?"Площадка размечена":"Без разметки площадки";
+      const court=item?.court_saved?
+        ("Площадка: "+(item.court_estimated||0)+" за кадром, "+
+         (item.court_unknown||0)+" неизвестны"+
+         (item.court_homography_ready===false?" · перспектива недоступна":"")):
+        "Без разметки площадки";
       return '<div class="analysis-context-row"><span class="context-video">'+esc(name)+'</span>'+
         '<span class="context-range">'+esc(period)+'</span>'+
         '<span class="context-court '+(item?.court_saved?"is-saved":"is-missing")+'">'+court+'</span></div>';

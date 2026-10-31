@@ -41,31 +41,53 @@ def validate_court(project_id: str, video: str, payload: dict):
     for i, pt in enumerate(pts):
         if not isinstance(pt, dict) or pt.get("id") != i or pt.get("name") != NAMES[i]:
             raise ValueError("Неправильный порядок точек площадки")
+        # Legacy annotations only contained visible=true; preserve compatibility.
+        status = pt.get("status", "visible" if pt.get("visible", False) else "unknown")
+        if status not in ("visible", "estimated", "unknown"):
+            raise ValueError("Недопустимое состояние точки")
+        if status == "unknown":
+            if pt.get("x") is not None or pt.get("y") is not None:
+                raise ValueError("У неизвестной точки не должно быть координат")
+            checked.append({"id": i, "name": NAMES[i], "x": None,
+                            "y": None, "visible": False, "status": "unknown"})
+            continue
         try:
             x, y = float(pt["x"]), float(pt["y"])
         except (KeyError, ValueError, TypeError, OverflowError) as exc:
             raise ValueError("Некорректные координаты точки") from exc
-        if not (math.isfinite(x) and math.isfinite(y) and 0 <= x <= width and 0 <= y <= height):
-            raise ValueError(f"Точка {i+1} за пределами кадра")
+        if not (math.isfinite(x) and math.isfinite(y)):
+            raise ValueError("Некорректные координаты точки")
+        if status == "visible":
+            if not 0 <= x <= width or not 0 <= y <= height:
+                raise ValueError(f"Точка {i+1} за пределами кадра")
+        else:
+            # Offscreen estimates are allowed only reasonably near the frame.
+            if not (-width*.5 <= x <= width*1.5 and -height*.5 <= y <= height*1.5):
+                raise ValueError(f"Предполагаемая точка {i+1} слишком далеко от кадра")
+            if 0 <= x <= width and 0 <= y <= height:
+                raise ValueError("Для точки внутри кадра используйте режим «В кадре»")
         checked.append({"id": i, "name": NAMES[i], "x": round(x, 3),
-                        "y": round(y, 3), "visible": True})
-    # The first four are ordered near-left, far-left, far-right, near-right;
-    # refuse essentially collinear or collapsed polygon.
-    corners = checked[:4]
-    signed_twice_area = sum(
-        corners[i]["x"]*corners[(i+1)%4]["y"] -
-        corners[(i+1)%4]["x"]*corners[i]["y"]
-        for i in range(4))
-    if abs(signed_twice_area) < width*height*0.0002:
-        raise ValueError("Четыре угла площадки образуют слишком маленький или вырожденный контур")
-    turns = []
-    for i in range(4):
-        a, b, c = (corners[(i+j)%4] for j in range(3))
-        cross = ((b["x"]-a["x"])*(c["y"]-b["y"])
-                 -(b["y"]-a["y"])*(c["x"]-b["x"]))
-        turns.append(cross)
-    if min(abs(t) for t in turns) < width*height*0.00002 or not (all(t>0 for t in turns) or all(t<0 for t in turns)):
-        raise ValueError("Углы площадки должны образовывать выпуклый контур без пересечений")
+                        "y": round(y, 3), "visible": status == "visible",
+                        "status": status})
+    # Only available coordinates are used; an unknown corner MUST NOT be
+    # replaced by a later keypoint and must not produce a homography.
+    if all(p["status"] != "unknown" for p in checked[:4]):
+        corners = checked[:4]
+        signed_twice_area = sum(
+            corners[i]["x"]*corners[(i+1)%4]["y"] -
+            corners[(i+1)%4]["x"]*corners[i]["y"]
+            for i in range(4))
+        if abs(signed_twice_area) < width*height*0.0002:
+            raise ValueError("Углы площадки образуют вырожденный контур")
+        turns = []
+        for i in range(4):
+            a, b, c = (corners[(i+j)%4] for j in range(3))
+            turns.append((b["x"]-a["x"])*(c["y"]-b["y"])
+                         -(b["y"]-a["y"])*(c["x"]-b["x"]))
+        if min(abs(t) for t in turns) < width*height*0.00002 or not (
+            all(t>0 for t in turns) or all(t<0 for t in turns)
+        ):
+            raise ValueError("Углы площадки должны образовывать выпуклый контур")
     t = payload.get("frame_sec")
     try:
         t = float(t)
@@ -105,8 +127,19 @@ def save_context(project_id: str, video: str, range_data: dict, court=None, clea
 def project_context(project_id: str):
     project = get_project(project_id)
     ranges = project_ranges(project_id)
-    return {"project_id": project_id, "videos": [
-        {"video": name, "range": ranges[name],
-         "court_saved": court_path(project_id, name).is_file()}
-        for name in project["videos"]
-    ]}
+    videos = []
+    for name in project["videos"]:
+        saved = get_court(project_id, name)
+        statuses = [p.get("status", "visible" if p.get("visible") else "unknown")
+                    for p in saved.get("keypoints", [])] if isinstance(saved, dict) else []
+        videos.append({
+            "video": name,
+            "range": ranges[name],
+            "court_saved": bool(saved),
+            "court_estimated": statuses.count("estimated"),
+            "court_unknown": statuses.count("unknown"),
+            "court_visible": statuses.count("visible"),
+            "court_homography_ready": len(statuses) >= 4 and
+                all(s != "unknown" for s in statuses[:4]),
+        })
+    return {"project_id": project_id, "videos": videos}

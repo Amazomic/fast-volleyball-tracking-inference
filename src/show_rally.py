@@ -832,7 +832,8 @@ def load_court_keypoints(court_path: Optional[str]) -> tuple[Optional[tuple[floa
     if raw_points:
         points: list[Optional[tuple[float, float]]] = []
         for point in raw_points:
-            if not point.get("visible", False) or point.get("x") is None or point.get("y") is None:
+            if (point.get("status", "visible" if point.get("visible", False) else "unknown") == "unknown"
+                    or point.get("x") is None or point.get("y") is None):
                 points.append(None)
             else:
                 points.append((float(point["x"]), float(point["y"])))

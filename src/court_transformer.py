@@ -87,21 +87,24 @@ class CourtTransformer:
                 if i + 2 >= len(keypoints_raw):
                     break
                 x, y, visibility = keypoints_raw[i], keypoints_raw[i + 1], keypoints_raw[i + 2]
-                if visibility > 0:
-                    keypoints.append((float(x), float(y)))
+                if visibility <= 0:
+                    break
+                keypoints.append((float(x), float(y)))
             return image_width, image_height, keypoints
 
         image_width = int(court_data.get("frame_width", image_width))
         image_height = int(court_data.get("frame_height", image_height))
         keypoints = []
+        # Preserve original indices: do NOT collapse missing points. Only
+        # a contiguous prefix may be passed to legacy geometry consumers.
         for point in court_data.get("keypoints", []):
-            if not point.get("visible", False):
-                continue
-            x = point.get("x")
-            y = point.get("y")
-            if x is None or y is None:
-                continue
-            keypoints.append((float(x), float(y)))
+            status = point.get("status", "visible" if point.get("visible", False) else "unknown")
+            if status == "unknown" or point.get("x") is None or point.get("y") is None:
+                break
+            x, y = float(point["x"]), float(point["y"])
+            if not np.isfinite([x, y]).all():
+                break
+            keypoints.append((x, y))
         return image_width, image_height, keypoints
 
     def _calculate_transform(self, keypoints: Sequence[Point2D]) -> Optional[np.ndarray]:
