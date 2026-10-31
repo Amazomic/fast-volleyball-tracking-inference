@@ -44,10 +44,11 @@ window.VolleyballAnalysisUI=(()=>{
     E("timeline-playhead").style.left=pct(current)+"%";
     for(const [id,value] of [["timeline-start-input",start],["timeline-end-input",end]]){
       const input=E(id);
-      if(document.activeElement!==input)input.value=String(Math.round(value*10)/10);
+      // A dragged handle always updates its corresponding numeric field.
+      // Do not overwrite a partially typed value during ordinary video playback.
+      if(document.activeElement!==input||drag)
+        input.value=String(Math.round(value*10)/10);
     }
-    E("timeline-range-label").textContent=stamp(start)+" — "+stamp(end)+" · "+stamp(end-start)+" для анализа";
-    E("timeline-status").textContent=stamp(current)+" / "+stamp(meta.duration_sec);
     E("timeline-playhead").setAttribute("aria-valuetext",stamp(current));
     ranges.set(video,{start,end});
   }
@@ -216,14 +217,25 @@ window.VolleyballAnalysisUI=(()=>{
       E("analysis-width").disabled=!e.target.checked;showWidth();
     });
     E("analysis-width").addEventListener("change",showWidth);
-    E("timeline-reset").addEventListener("click",()=>{
-      if(!meta)return;
-      start=0;end=meta.duration_sec;renderRange();markUnsaved();
-    });
-    E("timeline-set-start").addEventListener("click",()=>boundary("start",current,true));
-    E("timeline-set-end").addEventListener("click",()=>boundary("end",current,true));
-    E("timeline-start-input").addEventListener("change",e=>boundary("start",e.target.value,true));
-    E("timeline-end-input").addEventListener("change",e=>boundary("end",e.target.value,true));
+    for(const [id,side] of [["timeline-start-input","start"],["timeline-end-input","end"]]){
+      const input=E(id);
+      input.addEventListener("input",()=>{
+        if(!meta||!input.value.trim()||!Number.isFinite(input.valueAsNumber))return;
+        // While typing "320" the intermediate "3" must not move an
+        // already selected 180-second start boundary backwards.
+        const value=input.valueAsNumber;
+        if(side==="end"&&value<=start||side==="start"&&value>=end)return;
+        boundary(side,value,false);
+      });
+      input.addEventListener("change",()=>{
+        if(input.value.trim()&&Number.isFinite(input.valueAsNumber))
+          boundary(side,input.valueAsNumber,true);
+        renderRange();
+      });
+      input.addEventListener("blur",()=>{
+        if(meta)input.value=String(Math.round((side==="start"?start:end)*10)/10);
+      });
+    }
     const timebar=E("match-timeline");
     attachDrag(timebar,"playhead");
     attachDrag(E("timeline-playhead"),"playhead");

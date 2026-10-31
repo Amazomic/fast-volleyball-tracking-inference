@@ -129,6 +129,12 @@
               </div>
               <div class="workspace-video-player">
                 <video id="source-video-player" playsinline preload="metadata" aria-label="Просмотр исходного видео"></video>
+                <div class="source-overlay-actions" aria-label="Управление воспроизведением">
+                  <button type="button" id="source-play-toggle" class="source-overlay-button"
+                    aria-label="Воспроизвести" title="Воспроизведение / пауза (пробел)">▶</button>
+                  <button type="button" id="source-mute-toggle" class="source-overlay-button"
+                    aria-label="Выключить звук" title="Звук">🔊</button>
+                </div>
                 <svg id="court-overlay" class="court-overlay" xmlns="http://www.w3.org/2000/svg" aria-label="Точки разметки волейбольной площадки" hidden></svg>
                 <div class="court-overlay-badge" id="court-overlay-badge" hidden>Разметка площадки</div>
                 <span id="source-video-placeholder">Загрузка видео…</span>
@@ -158,25 +164,24 @@
                 aria-label="Передвинуть конец анализа" title="Конец диапазона"></button>
             </div>
             <div class="timeline-ticks" id="timeline-ticks"></div>
-            <div class="analysis-play-controls">
-              <button type="button" id="source-play-toggle" class="secondary analysis-play-button" aria-label="Воспроизвести" title="Воспроизвести / пауза (Пробел)">▶</button>
-              <span id="timeline-status" class="analysis-play-time" aria-live="off">00:00:00 / 00:00:00</span>
-              <button type="button" id="source-mute-toggle" class="secondary small" aria-label="Выключить звук" title="Включить / выключить звук">🔊</button>
-            </div>
-            <div class="timeline-set-buttons">
-              <button class="secondary small" id="timeline-set-start" type="button">Начало = текущий кадр</button>
-              <button class="secondary small" id="timeline-set-end" type="button">Конец = текущий кадр</button>
-              <span class="muted">Зелёные линии тоже можно перетаскивать</span>
-            </div>
-            <div class="timeline-controls">
-              <label>Начало <input type="number" id="timeline-start-input" min="0" step="1" value="0"> сек.</label>
-              <label>Конец <input type="number" id="timeline-end-input" min="1" step="1" value="0"> сек.</label>
-              <button class="secondary small" type="button" id="timeline-reset">Весь матч</button>
-              <div class="timeline-selection-label" id="timeline-range-label">Всё видео</div>
-            </div>
-            <div class="timeline-save-row">
-              <span class="muted" id="range-save-status">Диапазон хранится в проекте</span>
-              <button type="button" class="secondary small" id="save-timeline-range">Сохранить диапазон и разметку</button>
+            <div class="analysis-range-footer">
+              <label class="analysis-range-field" for="timeline-start-input">
+                <span>Начало</span>
+                <input type="number" id="timeline-start-input" min="0" step="0.1" value="0"
+                  inputmode="decimal" aria-label="Начало анализа в секундах">
+                <span class="analysis-range-unit">с</span>
+              </label>
+              <label class="analysis-range-field" for="timeline-end-input">
+                <span>Конец</span>
+                <input type="number" id="timeline-end-input" min="1" step="0.1" value="0"
+                  inputmode="decimal" aria-label="Конец анализа в секундах">
+                <span class="analysis-range-unit">с</span>
+              </label>
+              <div class="analysis-range-save">
+                <span id="range-save-status" class="muted" role="status">Диапазон из проекта</span>
+                <button type="button" class="secondary small" id="save-timeline-range"
+                  title="Сохранить диапазон и разметку площадки">Сохранить</button>
+              </div>
             </div>
           </article>
           </section>

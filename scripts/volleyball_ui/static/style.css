@@ -830,3 +830,95 @@ footer{border-top:1px solid var(--border);padding:22px 42px;color:#557073;font-s
  .project-picker{width:min(320px,calc(100% - 105px))}
  .project-settings-menu{left:auto;right:-44px;max-width:calc(100vw - 22px)}
 }
+
+/* Compact range toolbar: only two synchronized numeric boundaries + save. */
+.analysis-media-panel .timeline-input-only{padding:0!important}
+.analysis-range-footer{
+  display:flex;align-items:center;gap:12px;flex-wrap:wrap;
+  margin-top:10px;min-height:40px;
+}
+.analysis-range-field{
+  display:flex;align-items:center;gap:8px;
+  border:1px solid #3b5750;border-radius:9px;
+  min-height:38px;padding:4px 9px;
+  color:#aaccbc;font-size:12px;font-weight:700;
+  background:linear-gradient(140deg,#142623,#10201e);
+}
+.analysis-range-field input{
+  width:98px;min-width:0;min-height:28px;height:28px;
+  padding:3px 6px;border:1px solid #426255;border-radius:6px;
+  background:#192d27;color:#eaf6e9;font-size:12px;
+  text-align:right;font-variant-numeric:tabular-nums;
+}
+.analysis-range-unit{font-weight:500;color:#8fb3a1}
+.analysis-range-save{
+  margin-left:auto;display:flex;align-items:center;gap:11px;
+}
+.analysis-range-save .muted{font-size:11px;color:#89aaa0}
+.analysis-range-save button{min-height:34px;padding:6px 14px;font-size:11px}
+.source-overlay-actions{
+  position:absolute;bottom:11px;left:11px;z-index:9;
+  display:flex;gap:6px;pointer-events:auto;
+}
+.source-overlay-button{
+  min-width:31px;width:31px;height:31px;padding:0;
+  display:grid;place-items:center;
+  background:rgba(15,32,27,.84);
+  border:1px solid #59816a;border-radius:9px;
+  color:#d3efc5;font-size:15px;
+  backdrop-filter:blur(6px);
+}
+.source-overlay-button:hover{border-color:#a6e884;background:#2a493b}
+.workspace-video-player.court-outside-mode .source-overlay-actions{display:none}
+@media(max-width:780px){
+  .analysis-range-footer{gap:8px}
+  .analysis-range-field{flex:1;justify-content:space-between}
+  .analysis-range-field input{width:min(95px,45%)}
+  .analysis-range-save{width:100%;justify-content:space-between}
+}
+/* Physical 80% scale for the complete interface, matching 80% browser zoom. */
+body{zoom:.8}
+/* The project selector and settings icon use approximately half their
+   previous footprint, with type at 80% of its former size. */
+.project-picker{width:185px!important;min-width:0}
+.project-picker-trigger{
+  min-height:32px;height:32px;
+  padding:5px 10px;gap:5px;
+  border-radius:0 0 11px 11px;
+  font-size:10.4px;
+}
+.project-picker-trigger .project-picker-chevron{width:14px;height:14px}
+.project-picker.is-open .project-picker-trigger{border-radius:0 0 9px 9px}
+.project-picker-menu{
+  top:calc(100% + 4px);
+  width:210px;max-width:min(210px,calc(100vw - 28px));
+  padding:7px;gap:5px;
+  border-radius:10px 10px 15px 15px;
+  max-height:min(280px,50vh);
+}
+.project-picker-option{
+  min-height:35px;padding:6px 9px;gap:7px;font-size:9.6px;
+}
+.project-picker-option-glyph{width:20px;height:20px;font-size:11px}
+.project-settings-trigger{
+  top:3px;left:calc(100% + 6px);
+  width:27px;height:27px;
+  border-radius:8px;
+}
+.project-settings-trigger svg{width:16px;height:16px}
+.project-settings-menu{
+  top:37px;left:calc(100% - 125px);
+  width:185px;padding:7px;gap:5px;
+  border-radius:12px;
+}
+.project-settings-menu button{min-height:34px;padding:7px 11px;font-size:10px}
+@media(max-width:680px){
+ .project-picker{width:185px!important}
+ .project-settings-trigger{top:3px;left:calc(100% + 6px);width:27px;height:27px}
+ .project-picker-menu{width:205px;max-width:calc(100vw - 28px)}
+ .project-settings-menu{right:-32px;left:auto}
+ .topbar{padding-top:54px}
+}
+@media(min-width:681px) and (max-width:1200px){
+ .topbar{padding-top:38px}
+}
