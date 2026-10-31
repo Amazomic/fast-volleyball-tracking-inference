@@ -1,5 +1,17 @@
 # Fast Volleyball Ball Tracking -> Vertical Reels
 
+## Volley Studio — browser UI (this fork)
+
+This fork adds a local dashboard for **video selection and analysis parameters**, **analysis progress**, **mapping multiple track IDs to one named player**, **match reports**, and **full-rally highlight rendering**.
+
+- Windows + WSL Ubuntu-25.04: double-click `start-volley-ui.cmd`.
+- WSL terminal in the repository root: `.venv/bin/python -m scripts.volleyball_ui`.
+- Open **http://127.0.0.1:8765** in your browser.
+- Source videos: `project/`; cached analysis, highlights, player names and job logs: `results/`.
+- [Detailed UI guide (Russian)](docs/VOLLEY_STUDIO_UI.md).
+
+The UI runs locally and does **not** upload video to any external service. Identity assignments are user-reviewed mappings, not automatic proof that two track IDs represent the same person.
+
 ## Live demos
 - VPS: [Tracking - ball](https://demo.vb-ai.ru/)
 - Hugging Face: [Tracking - ball](https://huggingface.co/spaces/asigatchov/volleyball-tracking)
@@ -21,7 +33,7 @@ rally apart from a ball handed over for the next serve - see
 
 ## Installation
 ```bash
-git clone https://github.com/asigatchov/fast-volleyball-tracking-inference.git
+git clone https://github.com/Amazomic/fast-volleyball-tracking-inference.git
 cd fast-volleyball-tracking-inference
 uv sync
 ```
