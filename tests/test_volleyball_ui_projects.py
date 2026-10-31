@@ -56,6 +56,18 @@ class ProjectDataTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             projects.update_project(p["id"],ranges={"two.mp4":{"start":0,"end":121}})
 
+    def test_default_project_uses_whole_video_and_preserves_saved_ranges(self):
+        p=projects.create_project("Турнир",["one.mp4","two.mp4"])
+        self.assertEqual(projects.project_ranges(p["id"]), {
+            "one.mp4":{"start":0.0,"end":120.0},
+            "two.mp4":{"start":0.0,"end":120.0}
+        })
+        projects.update_project(p["id"],ranges={"one.mp4":{"start":10,"end":30}})
+        projects.update_project(p["id"],videos=["one.mp4"])
+        self.assertEqual(projects.project_ranges(p["id"]),{"one.mp4":{"start":10.0,"end":30.0}})
+        projects.update_project(p["id"],videos=["one.mp4","two.mp4"])
+        self.assertEqual(projects.project_ranges(p["id"])["two.mp4"],{"start":0.0,"end":120.0})
+
     def test_rejects_unknown_video(self):
         with self.assertRaises(ValueError):
             projects.create_project("bad",["missing.mp4"])

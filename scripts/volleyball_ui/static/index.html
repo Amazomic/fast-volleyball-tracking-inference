@@ -35,13 +35,13 @@
       <form id="new-project-form">
         <div class="project-dialog-head">
           <div><div class="eyebrow">VOLLEY STUDIO / ПРОЕКТ</div><h2 id="project-dialog-title">Новый проект</h2>
-          <p>Укажите название, выберите записи и задайте начало и конец анализа для каждой.</p></div>
+          <p>Укажите название проекта и выберите видео. Настройка анализа будет доступна сразу после создания проекта.</p></div>
           <button type="button" class="icon-button" id="close-project-dialog" aria-label="Закрыть окно">×</button>
         </div>
         <label class="field"><span>Название проекта</span><input id="new-project-name" name="project_name" maxlength="100" autocomplete="off" required></label>
-        <div class="project-dialog-section-head"><h3>Исходные видео</h3><span class="muted">Каталог project/ · время в секундах</span></div>
+        <div class="project-dialog-section-head"><h3>Исходные видео</h3><span class="muted">Каталог project/</span></div>
         <div id="new-project-video-options" class="project-dialog-video-list"></div>
-        <p class="project-dialog-note">По умолчанию анализируется всё выбранное видео. Для отдельного участка измените начало и конец. Добавить новые записи можно через «Изменить видео проекта».</p>
+        <p class="project-dialog-note">Для каждого видео по умолчанию выбран весь файл. После создания проекта откроется вкладка «Видео и анализ»: там можно изменить диапазоны, модель и остальные параметры до запуска.</p>
         <div id="project-dialog-error" class="form-error" role="alert" hidden></div>
         <div class="project-dialog-footer"><span id="project-selected-count" class="muted">Выберите хотя бы одно видео</span>
           <button class="secondary" id="cancel-create-project" type="button">Отмена</button>
@@ -56,7 +56,7 @@
           <p id="active-project-description">Выберите проект или создайте новый, чтобы добавить видеозаписи и задать параметры анализа.</p>
         </div>
         <div id="no-project" class="panel no-project">
-          <h3>Начните с проекта</h3><p>Создайте проект, добавьте одну или несколько записей и задайте границы анализа.</p>
+          <h3>Начните с проекта</h3><p>Создайте проект и выберите видео. Все настройки анализа доступны на следующем экране.</p>
           <button class="primary" data-create-project type="button">+ Создать проект</button>
         </div>
         <div id="project-workspace" hidden>
@@ -95,7 +95,7 @@
         </article>
         <div class="two-column analysis-columns">
           <article class="panel">
-            <div class="panel-heading"><h3>01 / Источник и параметры</h3></div>
+            <div class="panel-heading"><h3>Параметры анализа проекта</h3></div>
             <form id="analysis-form">
               <p class="notice" id="analysis-project-hint">Все видео проекта будут обработаны последовательно. Для каждого используется собственный сохранённый диапазон.</p>
               <div class="form-row"><label class="field"><span>Модель мяча</span><select name="backend"><option value="onnx">ONNX Runtime</option><option value="openvino">OpenVINO</option></select></label>
@@ -114,7 +114,7 @@
           </article>
           <div class="stack analysis-right">
           <article class="panel analysis-preview-panel">
-            <div class="panel-heading"><h3>02 / Предпросмотр видео</h3><span class="muted" id="preview-source-details">Загрузка параметров…</span></div>
+            <div class="panel-heading"><h3>Предпросмотр видео</h3><span class="muted" id="preview-source-details">Загрузка параметров…</span></div>
             <div class="preview-image-grid">
               <div><div class="preview-small-heading">Исходный кадр <span id="source-dims">—</span></div><div class="preview-image-wrap"><img id="source-preview-img" alt="Исходный кадр видео"><span class="preview-placeholder" id="source-preview-placeholder">Выберите кадр</span></div></div>
               <div><div class="preview-small-heading">Кадр анализа <span id="analysis-dims">—</span></div><div class="preview-image-wrap"><img id="analysis-preview-img" alt="Кадр после масштабирования для анализа"><span class="preview-placeholder" id="analysis-preview-placeholder">Выберите кадр</span></div></div>
@@ -123,7 +123,7 @@
             <p class="footnote preview-note">Предпросмотр отдельного кадра из выбранного видео без запуска нейросети. Масштабирование совпадает с настройкой анализа; миниатюры отображаются уменьшенными.</p>
           </article>
           <article class="panel jobs-panel">
-            <div class="panel-heading"><h3>03 / Ход обработки</h3><span id="job-badge" class="status-pill">Нет задачи</span></div>
+            <div class="panel-heading"><h3>Ход обработки</h3><span id="job-badge" class="status-pill">Нет задачи</span></div>
             <div class="job-illustration"><span>⌁</span><div><b id="job-head">Ожидание запуска</b><p id="job-sub">Никакая обработка сейчас не выполняется.</p></div></div>
             <div class="progress-row"><span>Прогресс</span><strong id="job-percent">—</strong></div><div class="progress-track"><div id="job-progress"></div></div>
             <div class="job-actions"><button class="secondary" id="cancel-job" type="button" disabled>Остановить</button><button class="secondary" id="open-report" data-go="report" type="button">Открыть отчёт</button></div>

@@ -194,7 +194,6 @@ function updateDialogSelection() {
   $("#project-selected-count").textContent=picked+" видео выбрано";
   for(const cb of boxes) {
     const row=cb.closest(".dialog-video-row");
-    for(const input of row.querySelectorAll(".dialog-range-input"))input.disabled=!cb.checked;
     row.classList.toggle("is-selected",cb.checked);
   }
 }
@@ -205,11 +204,6 @@ async function fillDialogVideoMeta(name) {
     const meta=await getVideoInfo(name);
     if(!row.isConnected)return;
     row.querySelector(".dialog-duration").textContent=clock(meta.duration_sec)+" · "+meta.width+"×"+meta.height;
-    const start=row.querySelector(".dialog-start"),end=row.querySelector(".dialog-end");
-    start.max=meta.duration_sec;end.max=meta.duration_sec;
-    const range=state.dialogEdit?selectedProject()?.ranges?.[name]:null;
-    start.value=range?.start??0;
-    end.value=range?.end??meta.duration_sec;
     row.dataset.ready="yes";
   }catch(error){
     row.dataset.ready="error";
@@ -228,9 +222,7 @@ async function openProjectDialog(edit=false) {
   $("#new-project-video-options").innerHTML=state.videos.length?state.videos.map(v=>
     '<div class="dialog-video-row" data-video="'+esc(v.name)+'">'+
       '<label class="dialog-video-heading"><input type="checkbox" class="dialog-source-check" value="'+esc(v.name)+'" '+(selected.has(v.name)?"checked":"")+'><span><strong>'+esc(v.name)+'</strong><small class="dialog-duration">Считываем длительность…</small></span></label>'+
-      '<div class="dialog-range-row"><label>Начало, сек. <input type="number" class="dialog-range-input dialog-start" min="0" step="any" value="0"></label>'+
-      '<label>Конец, сек. <input type="number" class="dialog-range-input dialog-end" min="1" step="any" value="0"></label>'+
-      '<button type="button" class="secondary small dialog-full" data-video="'+esc(v.name)+'">Весь файл</button></div></div>'
+      '</div>'
   ).join(""):'<p class="muted">В каталоге project/ пока нет видео. Скопируйте файлы туда и нажмите обновление страницы.</p>';
   dlg.showModal();
   $("#new-project-name").focus();
@@ -249,20 +241,15 @@ async function saveProjectDialog() {
   const fail=msg=>{error.textContent=msg;error.hidden=false;};
   if(!name)return fail("Введите название проекта");
   if(!rows.length)return fail("Выберите хотя бы одно видео");
-  const videos=[],ranges={};
+  const videos=[];
   for(const row of rows){
     const filename=row.dataset.video;
-    if(row.dataset.ready!=="yes")return fail("Не удалось получить параметры видео: "+filename);
-    const start=Number(row.querySelector(".dialog-start").value);
-    const end=Number(row.querySelector(".dialog-end").value);
-    const max=state.infoCache.get(filename).duration_sec;
-    if(!Number.isFinite(start)||!Number.isFinite(end)||start<0||end<=start||
-       end-start<1||end>max+.01)return fail("Некорректные границы для "+filename+" (0–"+max+" сек; не менее 1 сек)");
-    videos.push(filename);ranges[filename]={start,end:Math.min(max,end)};
+    if(row.dataset.ready!=="yes")return fail("Не удалось прочитать видео: "+filename);
+    videos.push(filename);
   }
   state.dialogBusy=true;$("#confirm-project").disabled=true;error.hidden=true;
   try {
-    const payload=state.dialogEdit?{id:p.id,name,videos,ranges}:{name,videos,ranges};
+    const payload=state.dialogEdit?{id:p.id,name,videos}:{name,videos};
     const result=await api(state.dialogEdit?"/api/project-update":"/api/project-create",payload);
     state.project=result.project.id;
     if(!videos.includes(state.video))state.video=videos[0];
@@ -370,12 +357,6 @@ function bind() {
   $("#close-project-dialog").addEventListener("click",closeProjectDialog);
   $("#new-project-video-options").addEventListener("change",e=>{
     if(e.target.matches(".dialog-source-check"))updateDialogSelection();
-  });
-  $("#new-project-video-options").addEventListener("click",e=>{
-    const button=e.target.closest(".dialog-full");
-    if(!button)return;
-    const row=button.closest(".dialog-video-row"),meta=state.infoCache.get(row.dataset.video);
-    if(meta){row.querySelector(".dialog-start").value=0;row.querySelector(".dialog-end").value=meta.duration_sec}
   });
   $$(".nav-button").forEach(b=>b.addEventListener("click",()=>go(b.dataset.view)));
   $$("[data-go]").forEach(b=>b.addEventListener("click",()=>go(b.dataset.go)));
