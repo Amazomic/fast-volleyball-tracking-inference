@@ -8,6 +8,7 @@ from __future__ import annotations
 import threading
 import uuid
 import math
+import unicodedata
 from pathlib import Path
 
 from . import data
@@ -66,9 +67,42 @@ def project_ranges(identifier: str) -> dict:
     return validate_ranges(record["videos"], record.get("ranges", {}))
 
 
-def create_project(name: str, videos: list[str] | None = None, ranges: dict | None = None) -> dict:
-    if not isinstance(name, str) or not 1 <= len(name.strip()) <= 100:
+def normalized_name(name: str) -> str:
+    if not isinstance(name, str):
+        raise ValueError("Название проекта должно быть строкой")
+    clean = " ".join(unicodedata.normalize("NFKC", name).strip().split())
+    if not 1 <= len(clean) <= 100:
         raise ValueError("Название проекта должно содержать от 1 до 100 символов")
+    return clean
+
+
+def _unique_name(projects: list, name: str, exclude_id: str | None = None) -> str:
+    clean = normalized_name(name)
+    if any(p.get("id") != exclude_id and normalized_name(p.get("name", "")).casefold() == clean.casefold()
+           for p in projects):
+        raise ValueError(f"Проект с названием «{clean}» уже существует. Укажите другое название.")
+    return clean
+
+
+def assert_project_video(project_id: str, video: str) -> None:
+    if video not in get_project(project_id)["videos"]:
+        raise ValueError("Это видео не входит в выбранный проект")
+
+
+def project_cache_root(project_id: str) -> Path:
+    return project_dir(project_id) / "analysis"
+
+
+def project_run_root(project_id: str) -> Path:
+    return project_dir(project_id) / "runs"
+
+
+def project_logs_root(project_id: str) -> Path:
+    return project_dir(project_id) / "logs"
+
+
+def create_project(name: str, videos: list[str] | None = None, ranges: dict | None = None) -> dict:
+    clean_name = normalized_name(name)
     videos = videos if videos is not None else []
     checked = validate_videos(videos)
     if not checked:
@@ -76,9 +110,19 @@ def create_project(name: str, videos: list[str] | None = None, ranges: dict | No
     checked_ranges = validate_ranges(checked, ranges)
     with _LOCK:
         projects = _load()
-        record = {"id": uuid.uuid4().hex[:12], "name": name.strip(), "videos": checked, "ranges": checked_ranges}
-        projects.append(record)
-        data.save_json(REGISTER, {"schema": 1, "projects": projects})
+        _unique_name(projects, clean_name)
+        record = {"id": uuid.uuid4().hex[:12], "name": clean_name,
+                  "videos": checked, "ranges": checked_ranges}
+        folder = PROJECTS_DIR / record["id"]
+        folder.mkdir(parents=True, exist_ok=False)
+        try:
+            data.save_json(folder / "project.json", record)
+            projects.append(record)
+            data.save_json(REGISTER, {"schema": 1, "projects": projects})
+        except Exception:
+            (folder / "project.json").unlink(missing_ok=True)
+            folder.rmdir()
+            raise
     return record
 
 
@@ -100,9 +144,7 @@ def update_project(identifier: str, name=None, videos=None, ranges=None) -> dict
         if found is None:
             raise ValueError("Проект не найден")
         if name is not None:
-            if not isinstance(name, str) or not 1 <= len(name.strip()) <= 100:
-                raise ValueError("Название проекта: от 1 до 100 символов")
-            found["name"] = name.strip()
+            found["name"] = _unique_name(projects, name, exclude_id=identifier)
         if videos is not None or ranges is not None:
             selected = validate_videos(videos) if videos is not None else found["videos"]
             if not selected:
@@ -110,6 +152,7 @@ def update_project(identifier: str, name=None, videos=None, ranges=None) -> dict
             existing = {key: value for key, value in found.get("ranges", {}).items() if key in selected}
             found["ranges"] = validate_ranges(selected, ranges if ranges is not None else existing)
             found["videos"] = selected
+        data.save_json(project_dir(identifier) / "project.json", found)
         data.save_json(REGISTER, {"schema": 1, "projects": projects})
         return dict(found)
 
@@ -134,7 +177,7 @@ def project_summary(identifier: str) -> dict:
     p = get_project(identifier)
     output = project_output(identifier)
     return {**p, "ranges": project_ranges(identifier), "analyses": [
-        {"video": name, "analyzed": data.find_cache(name) is not None}
+        {"video": name, "analyzed": data.find_cache(name, identifier) is not None}
         for name in p["videos"]
     ], "highlight_ready": output.is_file() and output.stat().st_size > 0}
 
@@ -172,7 +215,7 @@ def project_report(identifier: str) -> dict:
             group["total_actions"]+=item["total_actions"]
             group["actions"].update(item["actions"])
             group["track_ids"].extend(name+" #"+str(i) for i in item["track_ids"])
-    return {
+    result = {
         "source": p["name"], "project_id": identifier,
         "analyzed": analyzed>0, "analyzed_videos": analyzed,
         "total_videos": len(p["videos"]), "counts": dict(totals),
@@ -182,3 +225,5 @@ def project_report(identifier: str) -> dict:
         } for item in participants.values()),key=lambda x:-x["total_actions"]),
         "sources": sources
     }
+    data.save_json(project_dir(identifier) / "reports" / "summary.json", result)
+    return result

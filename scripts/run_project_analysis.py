@@ -9,7 +9,8 @@ from pathlib import Path
 
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT))
-from scripts.volleyball_ui.projects import project_videos, project_ranges
+from scripts.volleyball_ui.projects import (project_videos, project_ranges,
+    project_cache_root, project_run_root)
 
 def main():
     parser=argparse.ArgumentParser()
@@ -25,6 +26,10 @@ def main():
     args=parser.parse_args()
     videos=project_videos(args.project_id)
     ranges=project_ranges(args.project_id)
+    work=project_cache_root(args.project_id)
+    output=project_run_root(args.project_id)
+    work.mkdir(parents=True, exist_ok=True)
+    output.mkdir(parents=True, exist_ok=True)
     total=len(videos)
     for idx,source in enumerate(videos,1):
         print(f"PROJECT ANALYSIS {idx}/{total}: {source.name}",flush=True)
@@ -36,8 +41,8 @@ def main():
         seg_end=float(segment["end"]) if segment else 0
         seg_length=(round(seg_end-seg_start,3) if segment and seg_end<video_info(source.name)["duration_sec"]-.01 else 0)
         cmd=[sys.executable,"-m","scripts.volleyball_studio",
-             "--input",str(source),"--output",str(ROOT/"results"/"ui_runs"),
-             "--work",str(ROOT/"results"/"analysis"),"--analyze-only",
+              "--input",str(source),"--output",str(output),
+             "--work",str(work),"--analyze-only",
              "--non-interactive","--backend",args.backend,
              "--analysis-width",str(width),"--threads",str(args.threads),
              "--min-rally",str(args.min_rally),"--min-confidence",str(args.min_confidence),

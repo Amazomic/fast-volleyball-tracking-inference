@@ -29,7 +29,7 @@ function go(view) {
   if(!state.project&&view!=="analysis")view="analysis";
   $$(".nav-button").forEach(b => b.classList.toggle("active",b.dataset.view===view));
   $$(".view").forEach(v => v.classList.toggle("active",v.id==="view-"+view));
-  const names={analysis:"Анализ",players:"Игроки",report:"Отчёт проекта",results:"Монтаж"};
+  const names={analysis:"Анализ",players:"Игроки",report:"Отчёт проекта",benchmark:"Бенчмарк",results:"Монтаж"};
   $("#page-title").textContent=names[view] || names.analysis;
 }
 function metric(name,value,sub) {
@@ -66,7 +66,8 @@ function renderReport() {
   ).join("") : '<div class="empty">Пока нет подписанных игроков. Перейдите во вкладку «Игроки и ID».</div>';
 }
 function playerPhotoUrl(id,sample=0) {
-  return "/api/player-photo?video="+encodeURIComponent(state.video)+"&id="+encodeURIComponent(id)+"&sample="+sample;
+  return "/api/player-photo?video="+encodeURIComponent(state.video)+"&id="+encodeURIComponent(id)+
+    "&sample="+sample+"&project_id="+encodeURIComponent(state.project||"");
 }
 function updateChosen() {
   $("#selected-ids").textContent=state.selected.size
@@ -80,7 +81,8 @@ async function renderPlayerPhotos() {
   gallery.innerHTML='<div class="muted">Загрузка фотографий из сохранённых кадров…</div>';
   const cards=await Promise.all(ids.map(async id=>{
     try {
-      const meta=await api("/api/player-photos?video="+encodeURIComponent(video)+"&id="+encodeURIComponent(id));
+      const meta=await api("/api/player-photos?video="+encodeURIComponent(video)+"&id="+encodeURIComponent(id)+
+        "&project_id="+encodeURIComponent(state.project||""));
       if(!meta.samples.length)return '<div class="empty">#'+esc(id)+': фото пока отсутствуют</div>';
       return '<div class="photo-person"><div class="photo-person-head"><strong>Track #'+esc(id)+'</strong><span>'+meta.samples.length+' кадр(а)</span></div><div class="photo-strip">'
         +meta.samples.map(s=>'<a href="'+esc(s.url)+'" target="_blank" rel="noopener" title="Увеличить кадр"><img loading="lazy" src="'+esc(s.url)+'" alt="Игрок, track #'+esc(id)+', кадр '+s.frame+'"><small>'+s.time_sec.toFixed(1)+' сек</small></a>').join("")
@@ -141,7 +143,9 @@ function populatePlayersSelect() {
 function renderSources() {
   const p=selectedProject();
   $("#top-project").innerHTML='<option value="">Выберите проект</option>'+
-    state.projects.map(p=>'<option value="'+esc(p.id)+'">'+esc(p.name)+'</option>').join("");
+    state.projects.map(p=>'<option value="'+esc(p.id)+'">'+esc(p.name)+
+      (state.projects.filter(x=>x.name.toLocaleLowerCase()===p.name.toLocaleLowerCase()).length>1
+       ?' · '+esc(p.id.slice(0,6)):'')+'</option>').join("");
   $("#top-project").value=state.project||"";
   $("#no-project").hidden=!!p;
   $("#project-workspace").hidden=!p;
@@ -167,6 +171,8 @@ function renderSources() {
   $("#analysis-project-hint").textContent=p.videos.length+" видео в проекте. Диапазоны сохраняются отдельно для каждой записи; запуск обработает все выбранные источники.";
   $("#highlights-project-hint").textContent="Монтаж из "+p.videos.length+" видео проекта; полный выбранный розыгрыш не обрезается ради длительности.";
   populatePlayersSelect();
+  $("#benchmark-video").innerHTML=p.videos.map(name=>
+    '<option value="'+esc(name)+'">'+esc(name)+'</option>').join("");
 }
 async function loadProjects() {
   state.projects=(await api("/api/projects")).projects;
@@ -199,7 +205,11 @@ async function openProjectDialog(edit=false) {
   $("#project-dialog-error").hidden=true;
   $("#project-dialog-title").textContent=edit?"Видео и название проекта":"Создать проект";
   $("#confirm-project").textContent=edit?"Сохранить изменения":"Создать проект";
-  $("#new-project-name").value=edit&&p?p.name:todayProjectName();
+  const baseName=todayProjectName();
+  let proposed=baseName, next=2;
+  while(!edit&&state.projects.some(x=>x.name.toLocaleLowerCase()===proposed.toLocaleLowerCase()))
+    proposed=baseName+" ("+(next++)+")";
+  $("#new-project-name").value=edit&&p?p.name:proposed;
   $("#confirm-project").disabled=true;
   $("#project-selected-count").textContent="Поиск доступных видео…";
   $("#new-project-video-options").innerHTML='<p class="muted">Проверяем папку project/…</p>';
@@ -239,6 +249,10 @@ async function saveProjectDialog() {
   const error=$("#project-dialog-error");
   const fail=msg=>{error.textContent=msg;error.hidden=false;};
   if(!name)return fail("Введите название проекта");
+  const identical=state.projects.find(x=>x.id!==(state.dialogEdit?p?.id:null)&&
+    x.name.normalize("NFKC").trim().replace(/\\s+/g," ").toLocaleLowerCase()===
+    name.normalize("NFKC").trim().replace(/\\s+/g," ").toLocaleLowerCase());
+  if(identical)return fail("Проект «"+identical.name+"» уже существует. Введите другое название.");
   if(!rows.length)return fail("Выберите хотя бы одно видео");
   const videos=[];
   for(const row of rows){
@@ -260,7 +274,8 @@ async function saveProjectDialog() {
 async function loadAll() {
   await loadProjects();
   if(selectedProject()){
-    await Promise.all([loadReport(),loadRenders(),window.VolleyballAnalysisUI.setProjectRanges(selectedProject().ranges||{})]);
+    await Promise.all([loadReport(),loadRenders(),loadBenchmarkResults(),
+      window.VolleyballAnalysisUI.setProjectRanges(selectedProject().ranges||{},state.project)]);
     if(state.video)await window.VolleyballAnalysisUI.setVideo(state.video);
   }else{
     state.report=null;state.aggregate=null;state.renders=[];
@@ -310,15 +325,43 @@ async function pollJob() {
   $("#cancel-job").disabled=info.status!=="running";
   $("#job-log").textContent=info.log || "Здесь появятся сообщения pipeline.";
   if(info.status==="running")$("#job-log").scrollTop=$("#job-log").scrollHeight;
+  $("#benchmark-state").textContent=info.kind==="benchmark"
+    ? ({running:"Измерение…",complete:"Готово",failed:"Ошибка",cancelled:"Остановлен"}[info.status]||"Нет замера")
+    : "Нет замера";
+  $("#benchmark-cancel").disabled=info.status!=="running"||info.kind!=="benchmark";
+  $("#benchmark-log").textContent=info.kind==="benchmark"?(info.log||"Подготовка…"):"Здесь появится журнал замера.";
+  $("#benchmark-current").querySelector("b").textContent=info.kind==="benchmark"?
+    (info.status==="running"?"Идёт бенчмарк":info.status==="complete"?"Измерение завершено":"Статус: "+info.status):
+    "Ожидание запуска";
+  $("#benchmark-current").querySelector("p").textContent=info.kind==="benchmark"?
+    (info.stage||info.log.slice(-150)||""):
+    "Выберите видео и режим.";
   if(previous==="running" && info.status!=="running"){
     await Promise.all([loadAll(),loadRenders()]);
+    if(info.kind==="benchmark")await loadBenchmarkResults();
     if(info.status==="failed")alertBox("Обработка завершилась с ошибкой. Посмотрите журнал.");
   }
 }
-async function submitTask(endpoint,payload){
+async function loadBenchmarkResults(){
+  if(!state.project){
+    $("#benchmark-results").innerHTML='<div class="empty">Выберите проект</div>';
+    return;
+  }
+  const results=await api("/api/benchmark-results?project_id="+encodeURIComponent(state.project));
+  const runs=(results.runs||[]).slice().reverse();
+  $("#benchmark-results").innerHTML=runs.length?runs.map(r=>
+    '<div class="benchmark-result"><div><strong>'+esc(r.video)+'</strong><small>'+
+    esc(r.mode==="decode"?"FFmpeg / декодирование":"Нейросети / полный анализ")+
+    ' · '+esc(r.created_at?.slice(0,19)||"")+' · '+esc(r.width)+' px</small></div>'+
+    '<div class="benchmark-numbers"><b>'+Number(r.fps).toFixed(1)+' FPS</b><span>'+
+    Number(r.realtime_multiplier).toFixed(2)+'× realtime</span><span>'+
+    Number(r.wall_sec).toFixed(2)+' с работы</span></div></div>'
+  ).join(""):'<div class="empty">Замеров пока нет.</div>';
+}
+async function submitTask(endpoint,payload,view="analysis"){
   try{
     const j=await api(endpoint,payload);
-    state.jobStatus=j.status;go("analysis");alertBox("");
+    state.jobStatus=j.status;go(view);alertBox("");
     await pollJob();
   }catch(error){alertBox(error.message)}
 }
@@ -341,8 +384,8 @@ function bind() {
     const p=selectedProject();
     state.video=p?.videos[0]||"";
     renderSources();
-    await Promise.all([loadReport(),loadRenders(),
-      window.VolleyballAnalysisUI.setProjectRanges(p?.ranges||{})]);
+    await Promise.all([loadReport(),loadRenders(),loadBenchmarkResults(),
+      window.VolleyballAnalysisUI.setProjectRanges(p?.ranges||{},state.project)]);
     if(state.video)await window.VolleyballAnalysisUI.setVideo(state.video);
   });
   $("#create-project").addEventListener("click",()=>openProjectDialog(false));
@@ -379,6 +422,22 @@ function bind() {
       await submitTask("/api/analyze",params);
     }catch(err){alertBox(err.message)}
   });
+  $("#benchmark-mode").addEventListener("change",e=>{
+    const neural=e.target.value==="pipeline";
+    $("#benchmark-backend-field").hidden=!neural;
+    $("#benchmark-mode-hint").textContent=neural
+      ?"Выполняется свежий короткий анализ включая нейросети; измеряется общая скорость pipeline, не чистый FPS модели."
+      :"Измеряется декодирование и масштабирование FFmpeg, без нейросети.";
+  });
+  $("#benchmark-form").addEventListener("submit",e=>{
+    e.preventDefault();
+    if(!state.project)return alertBox("Сначала выберите проект");
+    const form=Object.fromEntries(new FormData(e.target).entries());
+    form.project_id=state.project;
+    form.video=$("#benchmark-video").value;
+    submitTask("/api/benchmark",form,"benchmark");
+  });
+  $("#benchmark-cancel").addEventListener("click",()=>api("/api/cancel",{}).then(pollJob).catch(err=>alertBox(err.message)));
   $("#highlights-form").addEventListener("submit",e=>{
     e.preventDefault();
     if(!state.project)return alertBox("Сначала создайте проект");
@@ -424,7 +483,10 @@ document.addEventListener("DOMContentLoaded",async()=>{
   window.VolleyballAnalysisUI.init();
   bind();
   const requestedView=new URLSearchParams(window.location.search).get("view");
-  if(["analysis","players","report","results"].includes(requestedView))go(requestedView);
-  try{await loadAll();await pollJob()}catch(e){alertBox(e.message)}
+  try{
+    await loadAll();
+    if(["analysis","players","report","benchmark","results"].includes(requestedView))go(requestedView);
+    await pollJob();
+  }catch(e){alertBox(e.message)}
   window.setInterval(()=>pollJob().catch(e=>console.warn("status",e)),2500);
 });

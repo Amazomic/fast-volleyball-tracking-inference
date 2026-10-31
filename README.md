@@ -2,7 +2,7 @@
 
 ## Volley Studio — browser UI (this fork)
 
-This fork adds a local dashboard for **projects containing one or multiple source videos**, **analysis parameters and color-coded event timelines**, **source/analysis frame previews**, **analysis progress**, **mapping multiple track IDs to one named player**, **match reports**, and **full-rally highlight rendering across all project recordings**.
+This fork adds a local dashboard for **projects containing one or multiple source videos**, **analysis parameters and color-coded event timelines**, **source/analysis frame previews**, **analysis progress**, **mapping multiple track IDs to one named player**, **match reports**, **isolated per-project data**, **performance benchmarking (FFmpeg vs full inference pipeline)**, and **full-rally highlight rendering across all project recordings**.
 
 - Windows + WSL Ubuntu-25.04: double-click `start-volley-ui.cmd`.
 - WSL terminal in the repository root: `.venv/bin/python -m scripts.volleyball_ui`.

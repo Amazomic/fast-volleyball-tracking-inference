@@ -282,3 +282,16 @@ footer{border-top:1px solid var(--border);padding:22px 42px;color:#557073;font-s
  .project-source-list{grid-template-columns:1fr}
  .topbar-controls{justify-content:flex-start}
 }
+
+/* Benchmark - isolated per-project performance runs */
+.benchmark-history{display:grid;gap:10px}
+.benchmark-result{display:flex;align-items:center;justify-content:space-between;gap:20px;padding:14px 17px;
+ border:1px solid #2b423b;border-radius:10px;background:#152522}
+.benchmark-result strong{display:block;font-size:13px;color:#edf5f4;overflow-wrap:anywhere}
+.benchmark-result small{display:block;color:#8daaa2;margin-top:6px;font-size:11px}
+.benchmark-numbers{display:flex;align-items:center;gap:18px;color:#b4c6c0;font-size:12px;white-space:nowrap}
+.benchmark-numbers b{color:var(--green);font-size:17px}
+#benchmark-backend-field[hidden]{display:none}
+#benchmark-cancel{margin-bottom:18px}
+@media(max-width:800px){.benchmark-result{flex-direction:column;align-items:stretch}
+.benchmark-numbers{gap:10px;flex-wrap:wrap}}

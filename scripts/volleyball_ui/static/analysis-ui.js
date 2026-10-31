@@ -1,7 +1,7 @@
 "use strict";
 window.VolleyballAnalysisUI=(()=>{
   const E=x=>document.getElementById(x);
-  let info=null, events={}, video="", start=0,end=0,head=0, token=0,drag=null,timer=null;
+  let info=null, events={}, video="", projectId="", start=0,end=0,head=0, token=0,drag=null,timer=null;
   const ranges=new Map();
   const colors={attack:"attack",block:"block",serve:"serve",dig:"dig",overhead_pass:"pass",low_touch:"other"};
   const types={attack:"Атака",block:"Блок",serve:"Подача",dig:"Приём",overhead_pass:"Передача",low_touch:"Касание"};
@@ -88,7 +88,7 @@ window.VolleyballAnalysisUI=(()=>{
       const load=async p=>{let r=await fetch(p,{cache:"no-store"}),j=await r.json();if(!r.ok)throw Error(j.error);return j};
       const [meta,timeline]=await Promise.all([
         load("/api/video-info?video="+encodeURIComponent(name)),
-        load("/api/timeline?video="+encodeURIComponent(name))]);
+        load("/api/timeline?video="+encodeURIComponent(name)+"&project_id="+encodeURIComponent(projectId))]);
       if(seq!==token)return;
       info=meta;events=timeline;
       const remembered=ranges.get(name);
@@ -104,7 +104,8 @@ window.VolleyballAnalysisUI=(()=>{
     const r=E("match-timeline").getBoundingClientRect();
     return clamp((ev.clientX-r.left)/r.width,0,1)*info.duration_sec;
   }
-  function setProjectRanges(saved={}) {
+  function setProjectRanges(saved={},identifier="") {
+    projectId=identifier;
     ranges.clear();
     if(saved&&typeof saved==="object"){
       for(const [name,r] of Object.entries(saved)){

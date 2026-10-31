@@ -68,6 +68,31 @@ class ProjectDataTests(unittest.TestCase):
         projects.update_project(p["id"],videos=["one.mp4","two.mp4"])
         self.assertEqual(projects.project_ranges(p["id"])["two.mp4"],{"start":0.0,"end":120.0})
 
+    def test_duplicate_names_rejected_and_rename_checked(self):
+        first=projects.create_project("01.11.2026",["one.mp4"])
+        with self.assertRaisesRegex(ValueError,"уже существует"):
+            projects.create_project(" 01.11.2026 ",["two.mp4"])
+        with self.assertRaisesRegex(ValueError,"уже существует"):
+            projects.create_project("01.11.2026",["two.mp4"])
+        second=projects.create_project("Второй",["two.mp4"])
+        with self.assertRaisesRegex(ValueError,"уже существует"):
+            projects.update_project(second["id"],name="01.11.2026")
+        projects.update_project(first["id"],name="01.11.2026")
+        self.assertEqual(len(projects.all_projects()),2)
+
+    def test_project_cache_does_not_see_other_projects(self):
+        first=projects.create_project("A",["one.mp4"])
+        second=projects.create_project("B",["one.mp4"])
+        path=projects.project_cache_root(first["id"])/"unique"/"analysis"
+        path.mkdir(parents=True)
+        (path/"events.json").write_text(json.dumps({
+            "source":str(self.p/"one.mp4"),"events":[{"type":"attack","frame":4}]
+        }),encoding="utf-8")
+        self.assertIsNotNone(data.find_cache("one.mp4",first["id"]))
+        self.assertIsNone(data.find_cache("one.mp4",second["id"]))
+        self.assertFalse(data.report("one.mp4",second["id"])["analyzed"])
+        self.assertTrue(data.report("one.mp4",first["id"])["analyzed"])
+
     def test_rejects_unknown_video(self):
         with self.assertRaises(ValueError):
             projects.create_project("bad",["missing.mp4"])

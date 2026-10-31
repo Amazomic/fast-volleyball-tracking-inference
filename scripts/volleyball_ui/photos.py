@@ -29,12 +29,19 @@ def validate_track_id(value) -> str:
     return text
 
 
-def _index_path(cache: Path) -> Path:
-    return data.RESULTS / "player_photos" / cache.name / "index.json"
+def _photo_base(cache: Path, project_id=None) -> Path:
+    if project_id:
+        from .projects import project_dir
+        return project_dir(project_id) / "player_photos" / cache.name
+    return data.RESULTS / "player_photos" / cache.name
 
 
-def _photo_path(cache: Path, tid: str, sample: int, source_mtime: int) -> Path:
-    return data.RESULTS / "player_photos" / cache.name / f"v{PHOTO_VERSION}_{source_mtime}_{tid}_{sample}.jpg"
+def _index_path(cache: Path, project_id=None) -> Path:
+    return _photo_base(cache, project_id) / "index.json"
+
+
+def _photo_path(cache: Path, tid: str, sample: int, source_mtime: int, project_id=None) -> Path:
+    return _photo_base(cache, project_id) / f"v{PHOTO_VERSION}_{source_mtime}_{tid}_{sample}.jpg"
 
 
 def _analyzer_identity(cache: Path) -> dict:
@@ -111,9 +118,9 @@ def _build_index(cache: Path, stamp: dict) -> dict:
             "source": str(payload.get("video") or ""), "tracks": best}
 
 
-def get_index(cache: Path) -> dict:
+def get_index(cache: Path, project_id=None) -> dict:
     stamp = _analyzer_identity(cache)
-    index_path = _index_path(cache)
+    index_path = _index_path(cache, project_id)
     with INDEX_LOCK:
         existing = _INDEX_MEMORY.get(str(index_path))
         if not (isinstance(existing, dict) and existing.get("stamp") == stamp):
@@ -127,36 +134,36 @@ def get_index(cache: Path) -> dict:
         return index
 
 
-def photos_metadata(video: str, track_id) -> dict:
+def photos_metadata(video: str, track_id, project_id=None) -> dict:
     data.video_path(video)
-    cache = data.find_cache(video)
+    cache = data.find_cache(video, project_id)
     if cache is None:
         raise FileNotFoundError("Видео ещё не проанализировано")
     tid = validate_track_id(track_id)
-    index = get_index(cache)
+    index = get_index(cache, project_id)
     records = index["tracks"].get(tid, [])
     return {"track_id": tid, "video": video, "samples": [
         {"index": i, "frame": entry["frame"],
          "time_sec": round(entry["frame"]/index["fps"], 2),
          "confidence": entry["confidence"],
-         "url": f"/api/player-photo?video={quote(video, safe='')}&id={tid}&sample={i}"}
+          "url": f"/api/player-photo?video={quote(video, safe='')}&id={tid}&sample={i}" + (f"&project_id={project_id}" if project_id else "")}
         for i, entry in enumerate(records)
     ]}
 
 
-def photo_path(video: str, track_id, sample: int = 0) -> Path:
+def photo_path(video: str, track_id, sample: int = 0, project_id=None) -> Path:
     data.video_path(video)
-    cache = data.find_cache(video)
+    cache = data.find_cache(video, project_id)
     if cache is None:
         raise FileNotFoundError("Видео ещё не проанализировано")
     tid = validate_track_id(track_id)
     if not isinstance(sample, int) or not 0 <= sample < SAMPLES:
         raise ValueError("Неверный номер кадра")
-    index = get_index(cache)
+    index = get_index(cache, project_id)
     samples = index["tracks"].get(tid, [])
     if sample >= len(samples):
         raise FileNotFoundError("Для этого ID нет достаточно качественных кадров")
-    target = _photo_path(cache, tid, sample, index["stamp"]["mtime_ns"])
+    target = _photo_path(cache, tid, sample, index["stamp"]["mtime_ns"], project_id)
     if target.is_file() and target.stat().st_size > 0:
         return target
     source = cache / "analysis.mp4"

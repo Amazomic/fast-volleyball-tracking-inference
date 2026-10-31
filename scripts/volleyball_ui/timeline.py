@@ -24,9 +24,9 @@ def event_time(e: dict, fps: float, offset: float) -> float | None:
         return None
 
 
-def timeline(video: str) -> dict:
+def timeline(video: str, project_id=None) -> dict:
     data.video_path(video)
-    cache = data.find_cache(video)
+    cache = data.find_cache(video, project_id)
     if not cache:
         return {"analyzed": False, "rallies": [], "actions": [], "notes": "Нет результатов анализа"}
     payload = data.read_json(cache / "analysis/events.json", {})

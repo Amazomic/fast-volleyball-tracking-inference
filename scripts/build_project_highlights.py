@@ -17,17 +17,14 @@ from build_match_highlights import render
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from scripts.volleyball_ui.projects import project_output, project_videos, project_dir
+from scripts.volleyball_ui.data import find_cache
 
-def locate_cache(source: Path) -> Path:
-    base = ROOT / "results" / "analysis"
-    for folder in sorted(base.iterdir(), key=lambda p:p.stat().st_mtime, reverse=True):
-        ev = folder / "analysis" / "events.json"
-        if not (ev.is_file() and (folder/"ranking.json").is_file() and (folder/"analysis.mp4").is_file()):
-            continue
-        payload=json.loads(ev.read_text(encoding="utf-8"))
-        if Path(str(payload.get("source","")).replace("\\","/")).name == source.name:
-            return folder
-    raise FileNotFoundError("Сначала проанализируйте видео: "+source.name)
+def locate_cache(source: Path, project_id: str) -> Path:
+    cache = find_cache(source.name, project_id)
+    if not cache or not (cache / "ranking.json").is_file() or not (cache / "analysis.mp4").is_file():
+        raise FileNotFoundError("Нет полного результата анализа проекта для: "+source.name)
+    return cache
+
 
 def main():
     parser=argparse.ArgumentParser()
@@ -42,7 +39,7 @@ def main():
     groups=[]
     caches={}
     for src in videos:
-        cache=locate_cache(src)
+        cache=locate_cache(src,args.project_id)
         caches[src.name]=cache
         ranking=json.loads((cache/"ranking.json").read_text(encoding="utf-8"))
         for group in load_groups(cache,ranking):

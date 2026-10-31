@@ -15,6 +15,7 @@
       <button class="nav-button active" data-view="analysis"><span class="nav-icon">▶</span> Анализ</button>
       <button class="nav-button" data-view="players"><span class="nav-icon">♧</span> Игроки</button>
       <button class="nav-button" data-view="report"><span class="nav-icon">▥</span> Отчёт</button>
+      <button class="nav-button" data-view="benchmark"><span class="nav-icon">g</span> Бенчмарк</button>
       <button class="nav-button" data-view="results"><span class="nav-icon">▣</span> Монтаж</button>
     </nav>
     <div class="sidebar-bottom">
@@ -170,6 +171,53 @@
           <article class="panel"><div class="panel-heading"><h3>Действия по типам</h3></div><div id="report-bars" class="event-bars"></div></article>
           <article class="panel"><div class="panel-heading"><h3>Игроки с объединёнными ID</h3><button class="text-link" data-go="players">Изменить ID →</button></div><div id="report-people"></div></article>
         </div>
+      </section>
+      <section id="view-benchmark" class="view">
+        <div class="section-intro"><h2>Бенчмарк скорости</h2>
+          <p>Измеряйте производительность на коротком участке видео без изменения результатов основного анализа. Все замеры хранятся отдельно внутри выбранного проекта.</p></div>
+        <div class="two-column analysis-columns">
+          <article class="panel">
+            <div class="panel-heading"><h3>Параметры замера</h3></div>
+            <form id="benchmark-form">
+              <label class="field"><span>Видео проекта</span><select id="benchmark-video" required></select></label>
+              <label class="field"><span>Тип бенчмарка</span>
+                <select name="mode" id="benchmark-mode">
+                  <option value="decode">Декодирование и масштабирование (FFmpeg)</option>
+                  <option value="pipeline">Полный анализ (нейросети + обработка)</option>
+                </select>
+              </label>
+              <p class="footnote" id="benchmark-mode-hint">Измеряется скорость декодирования и подготовки 30 кадров/с. Это не FPS нейросети.</p>
+              <div class="form-row">
+                <label class="field"><span>Начало, сек.</span><input name="start" type="number" min="0" step="1" value="0"></label>
+                <label class="field"><span>Длительность теста, сек.</span>
+                  <select name="duration"><option value="5">5</option><option value="15" selected>15</option><option value="30">30</option><option value="60">60</option></select>
+                </label>
+              </div>
+              <div class="form-row">
+                <label class="field"><span>Ширина анализа</span><select name="analysis_width"><option value="auto">Автоматически</option><option value="720">720 px</option><option value="1080">1080 px</option><option value="1280">1280 px</option></select></label>
+                <label class="field"><span>CPU-потоки</span><input name="threads" type="number" min="1" max="32" step="1" value="8"></label>
+              </div>
+              <label class="field" id="benchmark-backend-field" hidden><span>Движок нейросети</span>
+                <select name="backend"><option value="onnx">ONNX Runtime</option><option value="openvino">OpenVINO</option></select>
+              </label>
+              <p class="footnote">Полный тест анализирует новый короткий участок в изолированном каталоге без общего кэша и включает время запуска моделей. Он может потребовать больше времени, чем декодирование.</p>
+              <button class="primary wide" type="submit">Запустить бенчмарк ↗</button>
+            </form>
+          </article>
+          <article class="panel">
+            <div class="panel-heading"><h3>Текущий замер</h3><span id="benchmark-state" class="status-pill">Нет замера</span></div>
+            <div id="benchmark-current" class="job-illustration">
+              <span>⌁</span><div><b>Ожидание запуска</b><p>Выберите видео и параметры слева.</p></div>
+            </div>
+            <button id="benchmark-cancel" class="secondary" type="button" disabled>Остановить</button>
+            <div class="console-label space-top">ЖУРНАЛ ЗАМЕРА</div>
+            <pre class="terminal" id="benchmark-log">Здесь появится результат измерения скорости.</pre>
+          </article>
+        </div>
+        <article class="panel space-top">
+          <div class="panel-heading"><h3>История замеров проекта</h3><span class="muted">FPS · ускорение относительно реального времени</span></div>
+          <div id="benchmark-results" class="benchmark-history"><div class="empty">Замеров пока нет.</div></div>
+        </article>
       </section>
       <section id="view-results" class="view">
         <div class="section-intro"><h2>Монтаж проекта</h2><p>Самые зрелищные полные розыгрыши из всех записей проекта в одном итоговом ролике.</p></div>

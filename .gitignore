@@ -29,3 +29,63 @@ studio_doctor.*
 # Local media, analysis, athlete identities and job logs (never commit personal video data)
 /results/
 /project/
+
+# IDE/editor and local OS metadata
+.vscode/
+.idea/
+*.code-workspace
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Python caches, environments and test tooling
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.nox/
+.coverage
+.coverage.*
+htmlcov/
+*.prof
+*.pstats
+.env
+.env.*
+!.env.example
+venv/
+env/
+
+# JavaScript tooling cache (UI is served directly; no node_modules in git)
+node_modules/
+.npm/
+.pnpm-store/
+.cache/
+
+# Temporary logs, profiling and locally rendered media
+*.log
+*.log.*
+*.tmp
+*.temp
+*.swp
+*.swo
+*.bak
+*.orig
+*.pid
+*.trace
+*.cpuprofile
+*.heapsnapshot
+*.mkv
+*.mov
+*.avi
+*.webm
+*.wav
+*.aac
+*.flac
+*.m4a
+
+# Generated local inference/test outputs
+/output/
+/outputs/
+/benchmarks/
+/tmp/
+/temp/

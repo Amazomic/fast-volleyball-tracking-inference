@@ -19,8 +19,11 @@ from urllib.parse import parse_qs, unquote, urlsplit
 from .data import RESULTS, ROOT, assign, find_cache, list_videos, report, unassign, video_path, video_renders
 from .preview import preview_frame, target_width, video_info
 from .timeline import timeline
-from .projects import all_projects, create_project, update_project, get_project, project_videos, project_summary, project_output, project_report
+from .projects import (all_projects, create_project, update_project, get_project,
+                       project_videos, project_summary, project_output, project_report,
+                       project_logs_root)
 from .photos import photo_path, photos_metadata
+from .data import read_json
 
 PUBLIC = Path(__file__).with_name("static")
 RUN_DIR = RESULTS / "ui_runs"
@@ -103,12 +106,39 @@ def start_job(kind: str, options: dict) -> dict:
             if project_sources:
                 cmd = [sys.executable, str(ROOT / "scripts" / "run_project_analysis.py"),
                        "--project-id", project_id] + cmd[cmd.index("--backend"):]
+        elif kind == "benchmark":
+            if not project_id:
+                raise ValueError("Для бенчмарка сначала выберите проект")
+            if not video_name or video_name not in [p.name for p in project_sources]:
+                raise ValueError("Выберите исходное видео из проекта")
+            mode = options.get("mode", "decode")
+            if mode not in ("decode", "pipeline"):
+                raise ValueError("Неизвестный режим бенчмарка")
+            duration = float(options.get("duration", 15))
+            start = float(options.get("start", 0))
+            width = options.get("analysis_width", "auto")
+            backend = options.get("backend", "onnx")
+            threads = int(options.get("threads", 8))
+            info = video_info(video_name)
+            if not (2 <= duration <= 120 and 0 <= start < info["duration_sec"] and
+                    info["duration_sec"] - start >= 2):
+                raise ValueError("Выберите участок длительностью 2–120 секунд")
+            target_width(info, width)
+            if backend not in ("onnx", "openvino") or not 1 <= threads <= 32:
+                raise ValueError("Некорректный движок или число потоков")
+            cmd = [
+                sys.executable, str(ROOT / "scripts" / "benchmark_project.py"),
+                "--project-id", project_id, "--video", video_name,
+                "--mode", mode, "--duration", str(duration),
+                "--start", str(start), "--analysis-width", str(width),
+                "--backend", backend, "--threads", str(threads),
+            ]
         elif kind == "highlights":
             duration = float(options.get("duration", 120))
             if not 10 <= duration <= 600:
                 raise ValueError("Длина ролика: от 10 до 600 секунд")
             if project_sources:
-                missing = [p.name for p in project_sources if not find_cache(p.name)]
+                missing = [p.name for p in project_sources if not find_cache(p.name, project_id)]
                 if missing:
                     raise ValueError("Сначала проанализируйте все видео: " + ", ".join(missing))
                 cmd = [sys.executable, str(ROOT / "scripts" / "build_project_highlights.py"),
@@ -120,9 +150,10 @@ def start_job(kind: str, options: dict) -> dict:
                        "--video", str(source), "--duration", str(duration)]
         else:
             raise ValueError("Неизвестный тип задачи")
-        RUN_DIR.mkdir(parents=True, exist_ok=True)
+        logs = project_logs_root(project_id) if project_id else RUN_DIR
+        logs.mkdir(parents=True, exist_ok=True)
         job_id = uuid.uuid4().hex[:10]
-        log_file = RUN_DIR / (job_id + ".log")
+        log_file = logs / (job_id + ".log")
         # Only one UI process: a user, not arbitrary paths or shell text,
         # selects a known video and validated flags. No shell=True.
         log_handle = log_file.open("w", encoding="utf-8")
@@ -215,12 +246,17 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"projects": [project_summary(p["id"]) for p in all_projects()]})
             if route == "/api/project-report":
                 return self._json(project_report(query.get("id", [""])[0]))
+            if route == "/api/benchmark-results":
+                project_id = query.get("project_id", [""])[0]
+                from .projects import project_dir
+                result = read_json(project_dir(project_id) / "benchmarks" / "history.json", {"runs": []})
+                return self._json({"runs": result.get("runs", [])[-30:]})
             if route == "/api/report":
                 return self._json(report(query.get("video", [""])[0], query.get("project_id", [None])[0]))
             if route == "/api/video-info":
                 return self._json(video_info(query.get("video", [""])[0]))
             if route == "/api/timeline":
-                return self._json(timeline(query.get("video", [""])[0]))
+                return self._json(timeline(query.get("video", [""])[0], query.get("project_id", [None])[0]))
             if route == "/api/video-preview":
                 img = preview_frame(query.get("video", [""])[0],
                                     query.get("time", ["0"])[0],
@@ -228,9 +264,10 @@ class Handler(BaseHTTPRequestHandler):
                                     query.get("width", ["auto"])[0])
                 return self._file(img, "image/jpeg")
             if route == "/api/player-photos":
-                return self._json(photos_metadata(query.get("video", [""])[0], query.get("id", [""])[0]))
+                return self._json(photos_metadata(query.get("video", [""])[0], query.get("id", [""])[0], query.get("project_id", [None])[0]))
             if route == "/api/player-photo":
-                source = photo_path(query.get("video", [""])[0], query.get("id", [""])[0], int(query.get("sample", ["0"])[0]))
+                source = photo_path(query.get("video", [""])[0], query.get("id", [""])[0],
+                                    int(query.get("sample", ["0"])[0]), query.get("project_id", [None])[0])
                 return self._file(source, "image/jpeg")
             if route == "/api/renders":
                 return self._json({"videos": video_renders()})
@@ -283,6 +320,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(start_job("analyze", body))
             if route == "/api/highlights":
                 return self._json(start_job("highlights", body))
+            if route == "/api/benchmark":
+                return self._json(start_job("benchmark", body))
             if route == "/api/cancel":
                 return self._json(cancel_job())
             if route == "/api/assign":
