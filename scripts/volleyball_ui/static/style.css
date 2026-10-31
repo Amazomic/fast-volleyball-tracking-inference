@@ -428,3 +428,26 @@ footer{border-top:1px solid var(--border);padding:22px 42px;color:#557073;font-s
  .timeline-set-buttons{gap:8px}
  .timeline-set-buttons .muted{width:100%;margin:3px 0 0}
  .timeline-input-only .timeline-controls label{display:flex;align-items:center;gap:6px}}
+
+/* Analysis setup: source player, source selection and trim range share one card. */
+.analysis-media-panel{padding:clamp(16px,1.9vw,26px);margin:0 0 20px}
+.analysis-media-panel .workspace-video-layout{margin:0;gap:22px}
+.analysis-media-panel .workspace-video-main{
+  border:0;border-radius:0;background:transparent;padding:0;min-width:0;
+}
+.analysis-media-panel .workspace-video-sidebar{
+  border:0;border-left:1px solid #314840;border-radius:0;background:transparent;
+  padding:0 0 0 20px;min-height:0
+}
+.analysis-media-panel .workspace-video-sidebar .project-source-list{margin-bottom:0}
+.analysis-media-panel .timeline-input-only{
+  border:0;border-top:1px solid #314840;border-radius:0;background:transparent;
+  padding:20px 0 0;margin:20px 0 0
+}
+.analysis-media-panel .timeline-input-only .panel-heading{margin-bottom:13px}
+@media(max-width:780px){
+  .analysis-media-panel .workspace-video-sidebar{
+    border-left:0;border-top:1px solid #314840;padding:15px 0 0
+  }
+  .analysis-media-panel .timeline-input-only{margin-top:16px;padding-top:16px}
+}
