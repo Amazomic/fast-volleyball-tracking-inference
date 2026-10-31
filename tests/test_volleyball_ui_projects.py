@@ -22,6 +22,7 @@ class ProjectDataTests(unittest.TestCase):
         self.patches=[
             patch.object(data,"PROJECT",self.p),patch.object(data,"RESULTS",self.out),
             patch.object(data,"IDS_FILE",self.out/"player_identities.json"),
+            patch("scripts.volleyball_ui.preview.video_info",return_value={"duration_sec":120.0}),
             patch.object(projects,"PROJECTS_DIR",self.out/"projects"),
             patch.object(projects,"REGISTER",self.out/"projects"/"projects.json"),
         ]
@@ -42,6 +43,18 @@ class ProjectDataTests(unittest.TestCase):
         self.assertEqual(len(data.groups_for("one.mp4",a["id"])),1)
         self.assertEqual(data.groups_for("one.mp4",b["id"]),[])
         self.assertEqual(data.groups_for("one.mp4"),[])
+
+    def test_create_project_stores_video_ranges(self):
+        p=projects.create_project("01.11.2026",["one.mp4","two.mp4"],{
+            "one.mp4":{"start":10,"end":45},
+            "two.mp4":{"start":20,"end":119}
+        })
+        self.assertEqual(projects.project_ranges(p["id"])["one.mp4"],{"start":10.0,"end":45.0})
+        self.assertEqual(projects.project_ranges(p["id"])["two.mp4"],{"start":20.0,"end":119.0})
+        with self.assertRaises(ValueError):
+            projects.create_project("bad",["one.mp4"],{"one.mp4":{"start":45,"end":12}})
+        with self.assertRaises(ValueError):
+            projects.update_project(p["id"],ranges={"two.mp4":{"start":0,"end":121}})
 
     def test_rejects_unknown_video(self):
         with self.assertRaises(ValueError):

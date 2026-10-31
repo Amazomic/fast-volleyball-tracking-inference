@@ -40,6 +40,7 @@ window.VolleyballAnalysisUI=(()=>{
     if(side==="start")start=clamp(v,0,Math.max(0,end-1));
     else end=clamp(v,Math.min(info.duration_sec,start+1),info.duration_sec);
     redrawRange();
+    E("range-save-status").textContent="Диапазон изменён — сохраните перед запуском";
   }
   function paint(){
     if(!info)return;
@@ -103,13 +104,27 @@ window.VolleyballAnalysisUI=(()=>{
     const r=E("match-timeline").getBoundingClientRect();
     return clamp((ev.clientX-r.left)/r.width,0,1)*info.duration_sec;
   }
+  function setProjectRanges(saved={}) {
+    ranges.clear();
+    if(saved&&typeof saved==="object"){
+      for(const [name,r] of Object.entries(saved)){
+        if(r&&Number.isFinite(Number(r.start))&&Number.isFinite(Number(r.end)))
+          ranges.set(name,{start:Number(r.start),end:Number(r.end)});
+      }
+    }
+    // Avoid writing previous project's open frame into the newly selected project.
+    info=null;video="";
+  }
+  function currentRange(){
+    return info?{start:Math.round(start*1000)/1000,end:Math.round(end*1000)/1000}:null;
+  }
   function init(){
     E("manual-width-enabled").addEventListener("change",e=>{
       E("analysis-width").disabled=!e.target.checked;updateSize();preview();
     });
     E("analysis-width").addEventListener("change",()=>{updateSize();preview()});
     E("refresh-preview").addEventListener("click",preview);
-    E("timeline-reset").addEventListener("click",()=>{if(info){start=0;end=info.duration_sec;redrawRange()}});
+    E("timeline-reset").addEventListener("click",()=>{if(info){start=0;end=info.duration_sec;redrawRange();E("range-save-status").textContent="Диапазон изменён — сохраните перед запуском"}});
     E("timeline-start-input").addEventListener("change",e=>boundary("start",e.target.value));
     E("timeline-end-input").addEventListener("change",e=>boundary("end",e.target.value));
     const timeline=E("match-timeline");
@@ -144,5 +159,5 @@ window.VolleyballAnalysisUI=(()=>{
       analysis_start:Math.round(start*100)/100,analysis_seconds:duration,
       ranges:Object.fromEntries(Array.from(ranges.entries()).map(([key,v])=>[key,{start:v.start,end:v.end}]))};
   }
-  return {init,setVideo,params};
+  return {init,setVideo,params,setProjectRanges,currentRange};
 })();

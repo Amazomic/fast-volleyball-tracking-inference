@@ -12,11 +12,10 @@
     <div class="brand"><span class="brand-logo">V</span><span><b>VOLLEY<span class="accent">STUDIO</span></b><small>AI Match Workspace</small></span></div>
     <div class="nav-caption">РАБОЧЕЕ ПРОСТРАНСТВО</div>
     <nav class="nav">
-      <button class="nav-button active" data-view="dashboard"><span class="nav-icon">◈</span> Обзор</button>
-      <button class="nav-button" data-view="analysis"><span class="nav-icon">▶</span> Анализ видео</button>
-      <button class="nav-button" data-view="players"><span class="nav-icon">♧</span> Игроки и ID</button>
+      <button class="nav-button active" data-view="analysis"><span class="nav-icon">▶</span> Видео и анализ</button>
+      <button class="nav-button" data-view="players"><span class="nav-icon">♧</span> Игроки</button>
       <button class="nav-button" data-view="report"><span class="nav-icon">▥</span> Отчёт</button>
-      <button class="nav-button" data-view="results"><span class="nav-icon">▣</span> Готовые ролики</button>
+      <button class="nav-button" data-view="results"><span class="nav-icon">▣</span> Монтаж</button>
     </nav>
     <div class="sidebar-bottom">
       <div class="sidebar-note"><span class="pulse"></span>Локальный сервер в WSL<br><small>Результаты сохраняются в /results</small></div>
@@ -25,60 +24,47 @@
   </aside>
   <main class="main">
     <header class="topbar">
-      <div><div class="eyebrow">MATCH INTELLIGENCE / WORKSPACE</div><h1 id="page-title">Обзор матча</h1></div>
+      <div><div class="eyebrow">MATCH INTELLIGENCE / WORKSPACE</div><h1 id="page-title">Видео и анализ</h1></div>
       <div class="topbar-controls">
-        <span class="selected-label">ПРОЕКТ</span><select id="top-project" aria-label="Выбрать проект"><option value="">Без проекта</option></select>
-        <span class="selected-label">ВИДЕО</span><select id="top-video" aria-label="Видео для просмотра"></select>
+        <span class="selected-label">ПРОЕКТ</span><select id="top-project" aria-label="Выбрать проект"><option value="">Выберите проект</option></select>
         <button class="icon-button" id="refresh" title="Обновить данные">↻</button>
-        <div class="topbar-create-area">
-          <button class="primary" id="create-project" type="button" aria-expanded="false" aria-controls="new-project-form">+ Создать проект</button>
-          <form id="new-project-form" class="project-create-form" hidden>
-            <label class="field" for="new-project-name"><span>Название проекта</span><input id="new-project-name" name="project_name" maxlength="100" autocomplete="off" required></label>
-            <div class="project-create-actions">
-              <button class="primary" type="submit">Создать</button>
-              <button class="secondary" id="cancel-create-project" type="button">Отмена</button>
-            </div>
-          </form>
-        </div>
+        <button class="primary" id="create-project" type="button">+ Создать проект</button>
       </div>
     </header>
+    <dialog id="project-dialog" class="project-dialog" aria-labelledby="project-dialog-title">
+      <form id="new-project-form">
+        <div class="project-dialog-head">
+          <div><div class="eyebrow">VOLLEY STUDIO / ПРОЕКТ</div><h2 id="project-dialog-title">Новый проект</h2>
+          <p>Укажите название, выберите записи и задайте начало и конец анализа для каждой.</p></div>
+          <button type="button" class="icon-button" id="close-project-dialog" aria-label="Закрыть окно">×</button>
+        </div>
+        <label class="field"><span>Название проекта</span><input id="new-project-name" name="project_name" maxlength="100" autocomplete="off" required></label>
+        <div class="project-dialog-section-head"><h3>Исходные видео</h3><span class="muted">Каталог project/ · время в секундах</span></div>
+        <div id="new-project-video-options" class="project-dialog-video-list"></div>
+        <p class="project-dialog-note">По умолчанию анализируется всё выбранное видео. Для отдельного участка измените начало и конец. Добавить новые записи можно через «Изменить видео проекта».</p>
+        <div id="project-dialog-error" class="form-error" role="alert" hidden></div>
+        <div class="project-dialog-footer"><span id="project-selected-count" class="muted">Выберите хотя бы одно видео</span>
+          <button class="secondary" id="cancel-create-project" type="button">Отмена</button>
+          <button class="primary" id="confirm-project" type="submit">Создать проект</button>
+        </div>
+      </form>
+    </dialog>
     <div class="content">
       <div id="alerts" role="status"></div>
-      <section id="view-dashboard" class="view active">
-        <div class="hero">
-          <div>
-            <div class="hero-kicker"><span class="dot"></span> VIDEO ANALYTICS SUITE</div>
-            <h2>Матч под контролем.<br><span>Данные без повторного анализа.</span></h2>
-            <p>Траектории мяча, игровые события, идентификация спортсменов и подборки лучших моментов — в одном месте.</p>
-            <div class="hero-actions"><button class="primary" data-go="analysis">Начать анализ <span>↗</span></button><button class="secondary" data-go="report">Посмотреть отчёт</button></div>
-          </div>
-          <div class="hero-art" aria-hidden="true"><div class="orb orb-1"></div><div class="orb orb-2"></div><div class="ring ring-a"></div><div class="ring ring-b"></div><div class="hero-ball">●</div></div>
+      <section id="view-analysis" class="view active">
+        <div class="section-intro"><h2 id="active-project-name">Видео проекта</h2>
+          <p id="active-project-description">Выберите проект или создайте новый, чтобы добавить видеозаписи и задать параметры анализа.</p>
         </div>
-        <article class="panel project-panel">
-          <div class="panel-heading"><h3>Проект и исходные видео</h3><span class="muted" id="project-summary">Выберите или создайте проект</span></div>
-          <div class="project-layout">
-            <div><div class="project-videos-title">Видео из каталога project/</div>
-              <div class="project-video-options" id="project-video-options">Список загружается…</div>
-              <div class="project-buttons"><button class="secondary" id="save-project-videos" type="button">Сохранить видео проекта</button><span id="project-save-status" class="muted"></span></div>
-            </div>
-          </div>
-          <p class="footnote">Добавьте одно или несколько видео. Анализ каждого выполняется отдельно, а лучшие розыгрыши для итогового ролика выбираются из всех файлов проекта.</p>
-        </article>
-        <div class="section-head"><h3>Сводка по выбранному видео</h3><span id="cache-status" class="hint"></span></div>
-        <div id="metrics" class="metric-grid"></div>
-        <div class="two-column">
-          <article class="panel">
-            <div class="panel-heading"><h3>Обнаруженные события</h3><span class="muted">Эвристические метки</span></div>
-            <div id="event-bars" class="event-bars"></div>
-          </article>
-          <article class="panel">
-            <div class="panel-heading"><h3>Недавние результаты</h3><button class="text-link" data-go="results">Все файлы →</button></div>
-            <div id="recent-renders" class="file-list"></div>
-          </article>
+        <div id="no-project" class="panel no-project">
+          <h3>Начните с проекта</h3><p>Создайте проект, добавьте одну или несколько записей и задайте границы анализа.</p>
+          <button class="primary" data-create-project type="button">+ Создать проект</button>
         </div>
-      </section>
-      <section id="view-analysis" class="view">
-        <div class="section-intro"><h2>Анализ нового видео</h2><p>Выберите исходный файл и параметры. Кэш предыдущих вычислений будет использован, если настройки совпадают.</p></div>
+        <div id="project-workspace" hidden>
+          <div class="section-head source-head"><h3>Исходные видео <span id="source-count" class="muted"></span></h3>
+             <button class="secondary small" id="edit-project-videos" type="button">Изменить видео проекта</button>
+          </div>
+          <div id="project-source-list" class="project-source-list"></div>
+          <div class="section-head source-head"><h3>Выбранное видео <span id="current-source-name" class="muted"></span></h3></div>
         <article class="panel timeline-panel">
           <div class="panel-heading"><h3>Временная шкала матча</h3><span class="muted" id="timeline-status">Загрузка событий…</span></div>
           <div class="timeline-legend">
@@ -103,14 +89,15 @@
             <button class="secondary small" type="button" id="timeline-reset">Весь матч</button>
             <div class="timeline-selection-label" id="timeline-range-label">Будет обработано всё видео</div>
           </div>
-          <p class="footnote timeline-explanation">Перетаскивайте границы для выбора участка анализа. Для проекта с несколькими видео переключайте их сверху и выбирайте диапазон отдельно для каждого; невыбранные видео анализируются полностью. Нажмите на метку действия, чтобы посмотреть кадр. События определены моделью приблизительно.</p>
+          <div class="timeline-save-row"><span class="muted" id="range-save-status">Диапазон сохранён в проекте</span>
+            <button type="button" class="secondary small" id="save-timeline-range">Сохранить диапазон</button></div>
+          <p class="footnote timeline-explanation">Перетащите начало и конец или задайте секунды вручную. Нажмите на метку для предпросмотра. Сохраните диапазон перед анализом. Все события модели приблизительны.</p>
         </article>
         <div class="two-column analysis-columns">
           <article class="panel">
             <div class="panel-heading"><h3>01 / Источник и параметры</h3></div>
             <form id="analysis-form">
-              <p id="analysis-project-hint" class="notice">Выберите проект на верхней панели, чтобы анализировать все его видео последовательно.</p>
-              <label class="field"><span>Исходное видео</span><select id="analysis-video" required></select></label>
+              <p class="notice" id="analysis-project-hint">Все видео проекта будут обработаны последовательно. Для каждого используется собственный сохранённый диапазон.</p>
               <div class="form-row"><label class="field"><span>Модель мяча</span><select name="backend"><option value="onnx">ONNX Runtime</option><option value="openvino">OpenVINO</option></select></label>
                 <div class="field"><span>Размер кадра для анализа</span><div class="auto-size"><b>Автоматически</b><span id="auto-size-value">Определяется по видео</span></div></div></div>
               <details id="analysis-advanced" class="advanced-settings"><summary>Дополнительные настройки размера кадра</summary>
@@ -144,9 +131,11 @@
           </article>
           </div>
         </div>
+        </div><!-- project-workspace -->
       </section>
       <section id="view-players" class="view">
-        <div class="section-intro"><h2>Игроки и идентификаторы</h2><p>Сравнивайте кадры из видео по track ID, выбирайте совпадающих игроков и объединяйте их под одним именем. Фото показывают детекцию трекера, а не подтверждают личность.</p></div>
+        <div class="section-intro"><h2>Игроки и идентификаторы</h2><p>Track ID относятся к конкретной записи. Выберите видео проекта, сравнивайте фотографии и объединяйте повторные ID одного спортсмена.</p></div>
+        <label class="field player-video-selector"><span>Запись проекта</span><select id="players-video" aria-label="Видео для распознавания игроков"></select></label>
         <div class="two-column players-columns">
           <article class="panel">
             <div class="panel-heading"><h3>Найденные track ID</h3><span class="muted" id="raw-count"></span></div>
@@ -175,7 +164,7 @@
         </div>
       </section>
       <section id="view-report" class="view">
-        <div class="section-intro"><h2>Отчёт по матчу</h2><p>Сводка игровых действий и агрегированная статистика по именованным игрокам.</p></div>
+        <div class="section-intro"><h2>Отчёт проекта</h2><p>Общая статистика по всем обработанным видео выбранного проекта.</p></div>
         <div id="report-notice" class="notice"></div>
         <div id="report-metrics" class="metric-grid"></div>
         <div class="two-column">
@@ -184,17 +173,17 @@
         </div>
       </section>
       <section id="view-results" class="view">
-        <div class="section-intro"><h2>Ролики и подборки</h2><p>Готовые файлы из каталога results. Новый ролик собирается из сохранённых данных без запуска нейросетей.</p></div>
+        <div class="section-intro"><h2>Монтаж проекта</h2><p>Самые зрелищные полные розыгрыши из всех записей проекта в одном итоговом ролике.</p></div>
         <div class="two-column analysis-columns">
           <article class="panel"><div class="panel-heading"><h3>Новая подборка</h3></div>
             <form id="highlights-form">
-              <p id="highlights-project-hint" class="notice">Когда выбран проект, лучшие розыгрыши будут собраны из всех его видео.</p>
-              <label class="field"><span>Источник</span><select id="highlight-video"></select></label>
+              <p id="highlights-project-hint" class="notice">Для монтажа используются все видео выбранного проекта.</p>
+
               <label class="field"><span>Желаемая длительность, секунд</span><input name="duration" type="number" min="10" max="600" step="10" value="120"></label>
               <p class="footnote">Приоритет — зрелищные полноценные розыгрыши, поэтому итоговая длительность может отличаться от заданной. Границы розыгрышей определяются эвристически.</p>
               <button class="primary wide" type="submit">Собрать лучшие моменты <span>↗</span></button>
             </form>
-            <div class="panel-heading space-top"><h3>Готовые MP4</h3></div><div id="all-renders" class="file-list"></div>
+            <div class="panel-heading space-top"><h3>Готовые MP4 проекта</h3></div><div id="all-renders" class="file-list"></div>
           </article>
           <article class="panel preview-panel"><div class="panel-heading"><h3>Просмотр</h3></div>
             <div class="preview-stage"><video id="preview-player" controls playsinline preload="metadata"></video><div id="preview-empty" class="empty-video">Выберите MP4 из списка слева</div></div>

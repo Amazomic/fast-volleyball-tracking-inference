@@ -103,19 +103,6 @@ def start_job(kind: str, options: dict) -> dict:
             if project_sources:
                 cmd = [sys.executable, str(ROOT / "scripts" / "run_project_analysis.py"),
                        "--project-id", project_id] + cmd[cmd.index("--backend"):]
-                user_ranges = options.get("ranges", {})
-                if not isinstance(user_ranges, dict) or len(user_ranges) > 30:
-                    raise ValueError("Некорректные диапазоны проекта")
-                for name, segment in user_ranges.items():
-                    if name not in [p.name for p in project_sources] or not isinstance(segment, dict):
-                        raise ValueError("Диапазон не принадлежит выбранному проекту")
-                    try:
-                        begin, finish = float(segment["start"]), float(segment["end"])
-                        if not (0 <= begin < finish <= video_info(name)["duration_sec"] + 0.01):
-                            raise ValueError("Некорректные границы анализа")
-                    except (KeyError, TypeError, OverflowError):
-                        raise ValueError("Некорректные границы анализа") from None
-                cmd += ["--ranges-json", json.dumps(user_ranges)]
         elif kind == "highlights":
             duration = float(options.get("duration", 120))
             if not 10 <= duration <= 600:
@@ -289,9 +276,9 @@ class Handler(BaseHTTPRequestHandler):
         try:
             body = self._read_body()
             if route == "/api/project-create":
-                return self._json({"project": create_project(body.get("name"), body.get("videos", []))})
+                return self._json({"project": create_project(body.get("name"), body.get("videos", []), body.get("ranges"))})
             if route == "/api/project-update":
-                return self._json({"project": update_project(body.get("id"), body.get("name"), body.get("videos"))})
+                return self._json({"project": update_project(body.get("id"), body.get("name"), body.get("videos"), body.get("ranges"))})
             if route == "/api/analyze":
                 return self._json(start_job("analyze", body))
             if route == "/api/highlights":

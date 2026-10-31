@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 import argparse
-import json
 import subprocess
 import sys
 from pathlib import Path
 
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT))
-from scripts.volleyball_ui.projects import project_videos
+from scripts.volleyball_ui.projects import project_videos, project_ranges
 
 def main():
     parser=argparse.ArgumentParser()
@@ -23,15 +22,13 @@ def main():
     parser.add_argument("--analysis-start",type=float,default=0)
     parser.add_argument("--analysis-seconds",type=float,default=0)
     parser.add_argument("--beach",action="store_true")
-    parser.add_argument("--ranges-json",default="{}")
     args=parser.parse_args()
     videos=project_videos(args.project_id)
-    ranges=json.loads(args.ranges_json)
+    ranges=project_ranges(args.project_id)
     total=len(videos)
     for idx,source in enumerate(videos,1):
         print(f"PROJECT ANALYSIS {idx}/{total}: {source.name}",flush=True)
-        # Width "auto" is calculated by the HTTP endpoint based on project first
-        # video; here apply per-video auto resolution to avoid upscaling.
+        # A separate automatic width is selected for each source video.
         from scripts.volleyball_ui.preview import target_width,video_info
         width=target_width(video_info(source.name),"auto") if args.analysis_width==0 else args.analysis_width
         segment=ranges.get(source.name)
