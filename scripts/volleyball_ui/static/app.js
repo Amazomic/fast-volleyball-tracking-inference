@@ -1,0 +1,232 @@
+"use strict";
+
+const $ = (selector) => document.querySelector(selector);
+const $$ = (selector) => Array.from(document.querySelectorAll(selector));
+const state = {videos: [], video: "", report: null, renders: [], selected: new Set(), limit: 60, jobStatus: "idle"};
+const label = {attack:"Атаки", block:"Блоки", serve:"Подачи", dig:"Приёмы", overhead_pass:"Верхние передачи", low_touch:"Другие касания"};
+const eventOrder = ["attack", "block", "serve", "dig", "overhead_pass", "low_touch"];
+
+function esc(value) {
+  return String(value ?? "").replace(/[&<>"']/g, ch => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[ch]));
+}
+async function api(url, payload) {
+  const opts = payload === undefined ? {cache:"no-store"} : {
+    method:"POST", headers:{"Content-Type":"application/json"},
+    body:JSON.stringify(payload), cache:"no-store"
+  };
+  const response = await fetch(url, opts);
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || "Ошибка запроса");
+  return data;
+}
+function alertBox(message) {
+  $("#alerts").textContent = message || "";
+  if (message) window.scrollTo({top:0,behavior:"smooth"});
+}
+function go(view) {
+  $$(".nav-button").forEach(b => b.classList.toggle("active",b.dataset.view===view));
+  $$(".view").forEach(v => v.classList.toggle("active",v.id==="view-"+view));
+  const names={dashboard:"Обзор матча",analysis:"Анализ видео",players:"Игроки и ID",report:"Отчёт по матчу",results:"Готовые ролики"};
+  $("#page-title").textContent=names[view] || names.dashboard;
+}
+function metric(name,value,sub) {
+  return '<div class="metric"><div class="metric-name">'+esc(name)+'</div><div class="metric-num">'+esc(value)+'</div><div class="metric-sub">'+esc(sub)+'</div></div>';
+}
+function barRows(counts) {
+  if (!counts || !Object.values(counts).some(Boolean)) return '<div class="empty">Пока нет событий. Запустите анализ.</div>';
+  const max=Math.max(1,...eventOrder.map(k=>counts[k]||0));
+  return eventOrder.map(k=>{
+    const count=counts[k]||0;
+    const pct=Math.round(count/max*100);
+    return '<div class="bar-item"><div class="bar-label"><span>'+esc(label[k])+'</span><strong>'+count+'</strong></div><div class="bar-track"><div class="bar-fill" style="width:'+pct+'%"></div></div></div>';
+  }).join("");
+}
+function renderDashboard() {
+  const r=state.report || {};
+  const c=r.counts||{};
+  $("#cache-status").textContent=r.analyzed?"Анализ сохранён • "+r.cache_id:"Нет завершённого анализа";
+  $("#metrics").innerHTML=[
+    metric("Фрагменты розыгрышей",r.rallies??"—","Эвристические границы"),
+    metric("Обнаруженные атаки",c.attack??"—","По сохранённым событиям"),
+    metric("Track ID",r.track_count??"—","Не уникальные спортсмены"),
+    metric("Названные игроки",r.groups?.length??0,"Объединённые ID")
+  ].join("");
+  $("#event-bars").innerHTML=barRows(c);
+  $("#recent-renders").innerHTML=renderFiles(state.renders.slice(0,3));
+}
+function renderFiles(files) {
+  if (!files || !files.length) return '<div class="empty">Пока нет готовых роликов</div>';
+  return files.map(f=>'<button type="button" class="file-row render-file" data-file="'+esc(f.name)+'"><span class="file-icon">▣</span><span class="file-info"><strong>'+esc(f.name)+'</strong><small>MP4 · '+esc(f.size_mb)+' МБ</small></span><span class="file-arrow">↗</span></button>').join("");
+}
+function renderReport() {
+  const r=state.report||{};
+  const c=r.counts||{};
+  $("#report-notice").textContent=r.analyzed
+    ? "Статистика приблизительная: один спортсмен может получить несколько track ID. Нулевое значение не доказывает отсутствие действия. "+
+       (r.court_available?"Разметка площадки найдена.":"Разметка площадки отсутствует: подачи и блоки могут не распознаваться.")
+    : "Для этого видео пока нет завершённого анализа. Перейдите в «Анализ видео».";
+  $("#report-metrics").innerHTML=[
+    metric("Фрагменты игры",r.rallies??"—","Не подтверждённые очки"),
+    metric("Атаки",c.attack??"—","Распознанные"),
+    metric("Приёмы",c.dig??"—","Распознанные"),
+    metric("Передачи",c.overhead_pass??"—","Распознанные")
+  ].join("");
+  $("#report-bars").innerHTML=barRows(c);
+  $("#report-people").innerHTML=r.groups?.length ? r.groups.map(g=>
+    '<div class="person-card"><div class="person-line"><strong>'+esc(g.name)+'</strong><span class="person-count">'+g.total_actions+' действий</span></div><small>Track ID: '+esc(g.track_ids.join(", "))+'</small><small>Атаки '+(g.actions.attack||0)+' · Приёмы '+(g.actions.dig||0)+' · Передачи '+(g.actions.overhead_pass||0)+'</small></div>'
+  ).join("") : '<div class="empty">Пока нет подписанных игроков. Перейдите во вкладку «Игроки и ID».</div>';
+}
+function associatedMap() {
+  const map=new Map();
+  (state.report?.groups||[]).forEach(g=>g.track_ids.forEach(id=>map.set(String(id),g.name)));
+  return map;
+}
+function renderPlayers() {
+  const r=state.report||{}, raw=r.raw||[], groups=r.groups||[];
+  const q=$("#track-search").value.trim().toLowerCase();
+  const association=associatedMap();
+  const matched=raw.filter(p=>String(p.player_track_id).includes(q) || (association.get(String(p.player_track_id))||"").toLowerCase().includes(q));
+  const shown=matched.slice(0,state.limit);
+  $("#raw-count").textContent=raw.length+" ID";
+  $("#raw-players").innerHTML=shown.map(p=>{
+    const id=String(p.player_track_id);
+    return '<tr><td><input type="checkbox" class="row-select" data-id="'+esc(id)+'" '+(state.selected.has(id)?"checked":"")+'></td><td><strong>#'+esc(id)+'</strong></td><td>'+(p.attack||0)+'</td><td>'+(p.dig||0)+'</td><td>'+(p.overhead_pass||0)+'</td><td>'+(association.has(id)?'<span class="tag">'+esc(association.get(id))+'</span>':'<span class="muted">—</span>')+'</td></tr>';
+  }).join("") || '<tr><td colspan="6" class="empty">Нет совпадений</td></tr>';
+  $("#table-hint").textContent="Показано "+shown.length+" из "+matched.length+" ID";
+  $("#show-more").disabled=state.limit>=matched.length;
+  $("#selected-ids").textContent=state.selected.size?"Выбраны ID: "+Array.from(state.selected).join(", "):"ID не выбраны";
+  $("#groups-count").textContent=groups.length+" игроков";
+  $("#named-list").innerHTML=groups.map(g=>
+    '<div class="person-card"><div class="person-line"><strong>'+esc(g.name)+'</strong><span class="person-count">'+g.total_actions+'</span></div><small>'+esc(g.track_ids.join(", "))+'</small></div>'
+  ).join("")||'<div class="empty">Выберите ID и присвойте имя</div>';
+  $("#known-names").innerHTML=groups.map(g=>'<option value="'+esc(g.name)+'"></option>').join("");
+}
+function renderRenders() {
+  $("#all-renders").innerHTML=renderFiles(state.renders);
+}
+function fillSelect(selector) {
+  const sel=$(selector);
+  const current=sel.value||state.video;
+  sel.innerHTML=state.videos.map(v=>
+    '<option value="'+esc(v.name)+'">'+esc(v.name)+(v.analyzed?" ✓":"")+'</option>'
+  ).join("");
+  sel.value=state.videos.some(v=>v.name===current)?current:state.video;
+}
+async function loadAll() {
+  const videos=await api("/api/videos");
+  state.videos=videos.videos;
+  if (!state.videos.length) {
+    alertBox("В папке project нет видео. Добавьте файл MP4 и обновите страницу.");
+    return;
+  }
+  if(!state.videos.some(v=>v.name===state.video))state.video=state.videos[0].name;
+  ["#top-video","#analysis-video","#highlight-video"].forEach(fillSelect);
+  await Promise.all([loadReport(),loadRenders()]);
+  alertBox("");
+}
+async function loadReport() {
+  if (!state.video) return;
+  state.report=await api("/api/report?video="+encodeURIComponent(state.video));
+  state.selected.clear();
+  renderDashboard();renderReport();renderPlayers();
+}
+async function loadRenders() {
+  state.renders=(await api("/api/renders")).videos;
+  renderRenders();renderDashboard();
+}
+async function pollJob() {
+  const info=await api("/api/job");
+  const previous=state.jobStatus;
+  state.jobStatus=info.status;
+  $("#job-badge").textContent={
+    idle:"Нет задачи",running:"Выполняется",complete:"Завершено",failed:"Ошибка",cancelled:"Остановлено"
+  }[info.status]||info.status;
+  $("#job-head").textContent=info.status==="running"?"Обработка выполняется":info.status==="complete"?"Задача завершена":info.status==="failed"?"Ошибка обработки":info.status==="cancelled"?"Обработка остановлена":"Готово к запуску";
+  $("#job-sub").textContent=info.stage || (info.kind==="highlights"?"Сборка лучших моментов":info.kind==="analyze"?"Анализ мяча и игроков":"Выберите видео и параметры.");
+  $("#job-percent").textContent=info.progress==null?(info.status==="complete"?"100%":"—"):String(info.progress)+"%";
+  $("#job-progress").style.width=String(info.progress==null?(info.status==="complete"?100:0):info.progress)+"%";
+  $("#cancel-job").disabled=info.status!=="running";
+  $("#job-log").textContent=info.log || "Здесь появятся сообщения pipeline.";
+  if(info.status==="running")$("#job-log").scrollTop=$("#job-log").scrollHeight;
+  if(previous==="running" && info.status!=="running"){
+    await Promise.all([loadAll(),loadRenders()]);
+    if(info.status==="failed")alertBox("Обработка завершилась с ошибкой. Посмотрите журнал.");
+  }
+}
+async function submitTask(endpoint,payload){
+  try{
+    const j=await api(endpoint,payload);
+    state.jobStatus=j.status;go("analysis");alertBox("");
+    await pollJob();
+  }catch(error){alertBox(error.message)}
+}
+async function assignSelected(remove=false) {
+  const ids=Array.from(state.selected);
+  if(!ids.length){alertBox("Сначала выберите хотя бы один track ID.");return}
+  const name=$("#player-name").value.trim();
+  if(!remove && !name){alertBox("Укажите имя игрока.");return}
+  try {
+    await api(remove?"/api/unassign":"/api/assign",{video:state.video,ids,name});
+    await loadReport();
+    $("#player-name").value=name;
+  } catch(error){alertBox(error.message)}
+}
+function bind() {
+  $$(".nav-button").forEach(b=>b.addEventListener("click",()=>go(b.dataset.view)));
+  $$("[data-go]").forEach(b=>b.addEventListener("click",()=>go(b.dataset.go)));
+  $("#top-video").addEventListener("change",async e=>{
+    state.video=e.target.value;fillSelect("#analysis-video");fillSelect("#highlight-video");
+    try{await loadReport()}catch(e){alertBox(e.message)}
+  });
+  $("#analysis-video").addEventListener("change",e=>{
+    state.video=e.target.value;fillSelect("#top-video");fillSelect("#highlight-video");loadReport().catch(e=>alertBox(e.message));
+  });
+  $("#highlight-video").addEventListener("change",e=>{
+    state.video=e.target.value;fillSelect("#top-video");fillSelect("#analysis-video");loadReport().catch(x=>alertBox(x.message));
+  });
+  $("#refresh").addEventListener("click",()=>loadAll().catch(e=>alertBox(e.message)));
+  $("#analysis-form").addEventListener("submit",e=>{
+    e.preventDefault();
+    const form=e.target;
+    const params=Object.fromEntries(new FormData(form).entries());
+    params.video=$("#analysis-video").value;
+    params.beach=form.querySelector('[name="beach"]').checked;
+    submitTask("/api/analyze",params);
+  });
+  $("#highlights-form").addEventListener("submit",e=>{
+    e.preventDefault();
+    submitTask("/api/highlights",{video:$("#highlight-video").value,duration:Number(e.target.elements.duration.value)});
+  });
+  $("#cancel-job").addEventListener("click",()=>api("/api/cancel",{}).then(pollJob).catch(e=>alertBox(e.message)));
+  $("#track-search").addEventListener("input",()=>{state.limit=60;renderPlayers()});
+  $("#show-more").addEventListener("click",()=>{state.limit+=100;renderPlayers()});
+  $("#raw-players").addEventListener("change",e=>{
+    if(!e.target.classList.contains("row-select"))return;
+    const id=e.target.dataset.id;
+    if(e.target.checked)state.selected.add(id);else state.selected.delete(id);
+    $("#selected-ids").textContent=state.selected.size?"Выбраны ID: "+Array.from(state.selected).join(", "):"ID не выбраны";
+  });
+  $("#select-all-ids").addEventListener("change",e=>{
+    $$(".row-select").forEach(check=>{check.checked=e.target.checked;if(e.target.checked)state.selected.add(check.dataset.id);else state.selected.delete(check.dataset.id)});
+    renderPlayers();
+  });
+  $("#assign-ids").addEventListener("click",()=>assignSelected());
+  $("#unassign-ids").addEventListener("click",()=>assignSelected(true));
+  document.body.addEventListener("click",e=>{
+    const btn=e.target.closest(".render-file");
+    if(!btn)return;
+    const name=btn.dataset.file;
+    const player=$("#preview-player");
+    player.src="/media/"+encodeURIComponent(name);
+    player.style.display="block";
+    $("#preview-empty").style.display="none";
+    $("#preview-title").textContent=name;
+    go("results");
+    player.load();
+  });
+}
+document.addEventListener("DOMContentLoaded",async()=>{
+  bind();
+  try{await loadAll();await pollJob()}catch(e){alertBox(e.message)}
+  window.setInterval(()=>pollJob().catch(e=>console.warn("status",e)),2500);
+});
