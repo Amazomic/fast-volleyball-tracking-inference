@@ -147,6 +147,38 @@ function populatePlayersSelect() {
   select.innerHTML=p.videos.map(name=>'<option value="'+esc(name)+'">'+esc(name)+'</option>').join("");
   if(p.videos.includes(state.video))select.value=state.video;
 }
+function renderProjectPicker() {
+  const current=selectedProject();
+  $("#project-picker-name").textContent=current?.name||"Выберите проект";
+  const menu=$("#project-picker-menu");
+  menu.innerHTML=state.projects.length?state.projects.map((p,i)=>{
+    const duplicate=state.projects.filter(x=>x.name.toLocaleLowerCase()===p.name.toLocaleLowerCase()).length>1;
+    const caption=p.name+(duplicate?" · "+p.id.slice(0,6):"");
+    return '<button type="button" class="project-picker-option'+(p.id===state.project?' is-selected':'')+
+      '" role="option" id="project-picker-option-'+i+'" data-project-id="'+esc(p.id)+
+      '" aria-selected="'+(p.id===state.project)+'" title="'+esc(caption)+'">'+
+      '<span class="project-picker-option-glyph">'+(p.id===state.project?'✓':'▣')+'</span>'+
+      '<span class="project-picker-option-name">'+esc(caption)+'</span>'+
+      '</button>';
+  }).join(""):'<div class="project-picker-empty">Пока нет проектов</div>';
+}
+function closeProjectPicker(returnFocus=false){
+  $("#project-picker-menu").hidden=true;
+  $("#project-picker-trigger").setAttribute("aria-expanded","false");
+  $("#project-picker").classList.remove("is-open");
+  if(returnFocus)$("#project-picker-trigger").focus();
+}
+function openProjectPicker(focusOption=false){
+  if(!state.projects.length)return;
+  const menu=$("#project-picker-menu");
+  menu.hidden=false;
+  $("#project-picker-trigger").setAttribute("aria-expanded","true");
+  $("#project-picker").classList.add("is-open");
+  if(focusOption){
+    const target=menu.querySelector('[aria-selected="true"]')||menu.querySelector('[role="option"]');
+    target?.focus();
+  }
+}
 function renderSources() {
   const p=selectedProject();
   $("#top-project").innerHTML='<option value="">Выберите проект</option>'+
@@ -154,6 +186,7 @@ function renderSources() {
       (state.projects.filter(x=>x.name.toLocaleLowerCase()===p.name.toLocaleLowerCase()).length>1
        ?' · '+esc(p.id.slice(0,6)):'')+'</option>').join("");
   $("#top-project").value=state.project||"";
+  renderProjectPicker();
   $("#no-project").hidden=!!p;
   $("#project-workspace").hidden=!p;
   for(const btn of $$(".nav-button"))btn.disabled=!p&&btn.dataset.view!=="analysis";
@@ -422,6 +455,45 @@ async function assignSelected(remove=false) {
   } catch(error){alertBox(error.message)}
 }
 function bind() {
+  $("#project-picker-trigger").addEventListener("click",()=>{
+    const expanded=$("#project-picker-trigger").getAttribute("aria-expanded")==="true";
+    if(expanded)closeProjectPicker();
+    else openProjectPicker();
+  });
+  $("#project-picker-trigger").addEventListener("keydown",e=>{
+    if(["ArrowDown","ArrowUp","Enter"," "].includes(e.key)){
+      e.preventDefault();
+      openProjectPicker(true);
+    }else if(e.key==="Escape")closeProjectPicker();
+  });
+  $("#project-picker-menu").addEventListener("click",e=>{
+    const option=e.target.closest("[data-project-id]");
+    if(!option)return;
+    const id=option.dataset.projectId;
+    closeProjectPicker(true);
+    if(state.project!==id){
+      $("#top-project").value=id;
+      $("#top-project").dispatchEvent(new Event("change",{bubbles:true}));
+    }
+  });
+  $("#project-picker-menu").addEventListener("keydown",e=>{
+    const options=[...$("#project-picker-menu").querySelectorAll('[role="option"]')];
+    const index=options.indexOf(document.activeElement);
+    if(e.key==="Escape"){
+      e.preventDefault();closeProjectPicker(true);
+    }else if(["ArrowDown","ArrowUp","Home","End"].includes(e.key)){
+      e.preventDefault();
+      const next=e.key==="Home"?0:e.key==="End"?options.length-1:
+        (index+(e.key==="ArrowUp"?-1:1)+options.length)%options.length;
+      options[next]?.focus();
+    }
+  });
+  document.addEventListener("pointerdown",e=>{
+    if(!e.target.closest("#project-picker"))closeProjectPicker();
+  });
+  document.addEventListener("focusin",e=>{
+    if(!e.target.closest("#project-picker"))closeProjectPicker();
+  });
   $("#top-project").addEventListener("change",async e=>{
     state.project=e.target.value;
     const p=selectedProject();

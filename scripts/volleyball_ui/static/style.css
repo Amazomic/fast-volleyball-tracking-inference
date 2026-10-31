@@ -612,3 +612,96 @@ footer{border-top:1px solid var(--border);padding:22px 42px;color:#557073;font-s
 @media(max-width:780px){
  .result-video-main .result-player-wrap{height:auto;min-height:0}
 }
+
+/* Header project selector: top-attached centered tab + softly graduated pill menu. */
+.topbar{position:relative;isolation:isolate}
+.topbar-controls{margin-left:auto}
+.project-picker{
+  position:absolute;z-index:110;top:0;left:50%;transform:translateX(-50%);
+  width:clamp(230px,30%,350px);min-width:0;
+  font-family:'DM Sans',sans-serif;
+}
+.project-picker-native{
+  position:absolute!important;width:1px!important;height:1px!important;
+  padding:0!important;border:0!important;opacity:0!important;
+  pointer-events:none!important;clip-path:inset(50%);
+}
+.project-picker-trigger{
+  width:100%;min-height:56px;
+  display:flex;justify-content:space-between;align-items:center;gap:14px;
+  padding:15px 20px;
+  border:1px solid #4e715b;border-top:0;
+  border-radius:0 0 18px 18px;
+  color:#edfff0;
+  background:
+    radial-gradient(ellipse at 13% -10%,rgba(161,242,111,.2),transparent 58%),
+    linear-gradient(126deg,#244032 0%,#1b342e 50%,#122823 100%);
+  box-shadow:0 9px 27px #020b0a70,inset 0 1px #c0f7a020;
+  font-weight:800;font-size:13px;letter-spacing:.008em;
+  text-align:left;
+  transition:border-color .18s,box-shadow .18s,background .18s;
+}
+.project-picker-trigger:hover,.project-picker.is-open .project-picker-trigger{
+  border-color:#a3e877;
+  box-shadow:0 12px 30px #020b0a9c,0 0 0 1px #a3e87730;
+}
+.project-picker.is-open .project-picker-trigger{border-radius:0 0 13px 13px}
+.project-picker-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.project-picker-chevron{flex:none;color:#b7ec97;transition:transform .18s}
+.project-picker.is-open .project-picker-chevron{transform:rotate(180deg)}
+.project-picker-menu{
+  position:absolute;top:calc(100% + 7px);left:50%;transform:translateX(-50%);
+  width:max(100%,285px);max-width:min(410px,calc(100vw - 28px));
+  max-height:min(360px,58vh);overflow-y:auto;overscroll-behavior:contain;
+  padding:11px;display:flex;flex-direction:column;gap:7px;
+  border:1px solid #577e65;border-top-color:#81b378;
+  border-radius:14px 14px 22px 22px;
+  background:
+    radial-gradient(ellipse at 50% -15%,rgba(132,225,125,.18),transparent 65%),
+    linear-gradient(163deg,rgba(32,61,50,.98),rgba(14,32,31,.99) 80%);
+  box-shadow:0 20px 55px #000b,inset 0 1px #a5eaa030;
+  backdrop-filter:blur(18px);
+}
+.project-picker-menu[hidden]{display:none!important}
+.project-picker-option{
+  width:100%;min-height:48px;padding:11px 14px;
+  border:1px solid #496b577c;
+  border-radius:999px;
+  display:flex;align-items:center;gap:12px;
+  color:#d9eae3;text-align:left;font-weight:700;font-size:12px;
+  background:linear-gradient(130deg,#29453a 0%,#1b342e 53%,#172c2a 100%);
+  box-shadow:inset 0 1px #a4e6a014,0 3px 12px #0002;
+  transition:background .18s,border-color .18s,transform .18s,box-shadow .18s;
+}
+.project-picker-option:hover,.project-picker-option:focus-visible{
+  border-color:#a2e77d;
+  background:linear-gradient(120deg,#41684b 0%,#2b5541 45%,#244f45 100%);
+  box-shadow:0 4px 15px #0e17154d,inset 0 1px #c5f0a53a;
+}
+.project-picker-option:active{transform:scale(.99)}
+.project-picker-option.is-selected{
+  color:#edffe6;border-color:#a0e86a;
+  background:linear-gradient(115deg,#3d6538 0%,#2f563d 47%,#245042 100%);
+}
+.project-picker-option-glyph{
+  flex:none;display:grid;place-items:center;
+  width:27px;height:27px;border-radius:50%;
+  background:linear-gradient(155deg,#91d9713b,#c4f99b08);
+  color:#b8ed95;font-size:15px;
+}
+.project-picker-option-name{overflow-wrap:anywhere}
+.project-picker-empty{font-size:12px;padding:16px;text-align:center;color:#a1b8ab}
+.project-picker-menu::-webkit-scrollbar{width:7px}
+.project-picker-menu::-webkit-scrollbar-thumb{border-radius:8px;background:#52745d}
+@media(max-width:1200px){
+  .project-picker{width:clamp(210px,31%,310px)}
+  .topbar{padding-top:70px}
+}
+@media(max-width:680px){
+  .topbar{padding-top:80px}
+  .project-picker{width:min(350px,calc(100% - 30px))}
+  .project-picker-menu{width:100%}
+}
+@media(prefers-reduced-motion:reduce){
+ .project-picker-trigger,.project-picker-chevron,.project-picker-option{transition:none}
+}
