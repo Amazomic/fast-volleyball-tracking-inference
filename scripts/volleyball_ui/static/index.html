@@ -30,6 +30,16 @@
         <span class="selected-label">ПРОЕКТ</span><select id="top-project" aria-label="Выбрать проект"><option value="">Без проекта</option></select>
         <span class="selected-label">ВИДЕО</span><select id="top-video" aria-label="Видео для просмотра"></select>
         <button class="icon-button" id="refresh" title="Обновить данные">↻</button>
+        <div class="topbar-create-area">
+          <button class="primary" id="create-project" type="button" aria-expanded="false" aria-controls="new-project-form">+ Создать проект</button>
+          <form id="new-project-form" class="project-create-form" hidden>
+            <label class="field" for="new-project-name"><span>Название проекта</span><input id="new-project-name" name="project_name" maxlength="100" autocomplete="off" required></label>
+            <div class="project-create-actions">
+              <button class="primary" type="submit">Создать</button>
+              <button class="secondary" id="cancel-create-project" type="button">Отмена</button>
+            </div>
+          </form>
+        </div>
       </div>
     </header>
     <div class="content">
@@ -47,8 +57,6 @@
         <article class="panel project-panel">
           <div class="panel-heading"><h3>Проект и исходные видео</h3><span class="muted" id="project-summary">Выберите или создайте проект</span></div>
           <div class="project-layout">
-            <div><label class="field"><span>Название нового проекта</span><input id="new-project-name" placeholder="Например: Турнир 31 октября"></label>
-              <button class="primary" id="create-project" type="button">Создать проект</button></div>
             <div><div class="project-videos-title">Видео из каталога project/</div>
               <div class="project-video-options" id="project-video-options">Список загружается…</div>
               <div class="project-buttons"><button class="secondary" id="save-project-videos" type="button">Сохранить видео проекта</button><span id="project-save-status" class="muted"></span></div>

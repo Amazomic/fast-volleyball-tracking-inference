@@ -170,6 +170,23 @@ async function loadProjects() {
   if(p?.videos.length&&!p.videos.includes(state.video))state.video=p.videos[0];
   drawProjectControls();
 }
+function todayProjectName(date=new Date()) {
+  const day=String(date.getDate()).padStart(2,"0");
+  const month=String(date.getMonth()+1).padStart(2,"0");
+  return day+"."+month+"."+date.getFullYear();
+}
+function showProjectForm() {
+  if(!$("#new-project-form").hidden){hideProjectForm();return;}
+  $("#new-project-name").value=todayProjectName();
+  $("#create-project").setAttribute("aria-expanded","true");
+  $("#new-project-form").hidden=false;
+  $("#new-project-name").focus();
+  $("#new-project-name").select();
+}
+function hideProjectForm() {
+  $("#new-project-form").hidden=true;
+  $("#create-project").setAttribute("aria-expanded","false");
+}
 async function createNewProject() {
   const name=$("#new-project-name").value.trim();
   if(!name){alertBox("Введите название проекта");return}
@@ -178,6 +195,7 @@ async function createNewProject() {
   try{
     const result=await api("/api/project-create",{name,videos:selected});
     state.project=result.project.id;
+    hideProjectForm();
     $("#new-project-name").value="";
     await loadAll();
     $("#project-save-status").textContent="Проект создан";
@@ -270,7 +288,23 @@ function bind() {
     ["#top-video","#analysis-video","#highlight-video"].forEach(fillSelect);
     try{await Promise.all([loadReport(),loadRenders()])}catch(error){alertBox(error.message)}
   });
-  $("#create-project").addEventListener("click",createNewProject);
+  $("#create-project").addEventListener("click",showProjectForm);
+  $("#new-project-form").addEventListener("submit",e=>{
+    e.preventDefault();
+    createNewProject();
+  });
+  $("#cancel-create-project").addEventListener("click",()=>{
+    hideProjectForm();
+    $("#create-project").focus();
+  });
+  document.addEventListener("pointerdown",e=>{
+    if(!$("#new-project-form").hidden && !e.target.closest(".topbar-create-area")){
+      hideProjectForm();
+    }
+  });
+  $("#new-project-form").addEventListener("keydown",e=>{
+    if(e.key==="Escape"){e.preventDefault();hideProjectForm();}
+  });
   $("#save-project-videos").addEventListener("click",saveProjectVideos);
   $$(".nav-button").forEach(b=>b.addEventListener("click",()=>go(b.dataset.view)));
   $$("[data-go]").forEach(b=>b.addEventListener("click",()=>go(b.dataset.go)));
