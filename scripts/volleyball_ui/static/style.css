@@ -401,3 +401,30 @@ footer{border-top:1px solid var(--border);padding:22px 42px;color:#557073;font-s
  .result-rally-list{max-height:320px}
  .analysis-run-status{margin:10px 0 0}
 }
+
+/* One timeline: native video controls are intentionally disabled on Analysis only. */
+#source-video-player{cursor:pointer}
+.analysis-play-controls{display:flex;align-items:center;gap:11px;margin:0 0 14px}
+.analysis-play-button{width:49px;min-width:49px;height:42px;padding:0;font-size:18px;color:var(--green)}
+.analysis-play-time{font:700 13px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace;
+  font-variant-numeric:tabular-nums;color:#d8efe2;min-width:182px}
+#source-mute-toggle{margin-left:auto;min-width:44px;padding:7px 9px}
+.timeline-input-only .timeline-canvas{height:54px;touch-action:none;cursor:ew-resize;overflow:visible}
+.timeline-input-only .timeline-selected-range{background:#9fef5636;border-color:#b6f68287;border-style:solid}
+.timeline-input-only .timeline-handle{height:64px;top:-5px;width:16px}
+.timeline-input-only .timeline-handle::after{top:-1px;height:16px;border-radius:3px}
+.timeline-playhead-control{position:absolute;left:0;top:-7px;height:68px;width:24px;
+  transform:translateX(-50%);border:0;border-radius:0;padding:0;background:transparent;
+  cursor:ew-resize;touch-action:none;z-index:10;outline-offset:1px}
+.timeline-playhead-control::before{content:"";position:absolute;top:7px;bottom:7px;left:11px;
+  width:3px;border-radius:2px;background:#f9faf5;box-shadow:0 0 7px #000b}
+.timeline-playhead-control::after{content:"";position:absolute;top:0;left:4px;width:17px;height:15px;
+  background:#f9faf5;border-radius:4px 4px 2px 2px;box-shadow:0 1px 6px #0008}
+.timeline-playhead-control:hover::before,.timeline-playhead-control:focus-visible::before{background:#fff;box-shadow:0 0 9px #fff9}
+.timeline-set-buttons{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:15px 0 0}
+.timeline-set-buttons .muted{margin-left:8px}
+.timeline-input-only .timeline-controls{margin-top:16px}
+@media(max-width:800px){.analysis-play-time{min-width:0;font-size:11px}
+ .timeline-set-buttons{gap:8px}
+ .timeline-set-buttons .muted{width:100%;margin:3px 0 0}
+ .timeline-input-only .timeline-controls label{display:flex;align-items:center;gap:6px}}

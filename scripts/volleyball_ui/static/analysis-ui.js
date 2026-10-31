@@ -1,18 +1,29 @@
 "use strict";
-/* Analysis workspace deliberately has NO results/events rendering. */
+/* One unified timeline for source playback, scrubbing and analysis range selection. */
 window.VolleyballAnalysisUI=(()=>{
   const E=id=>document.getElementById(id);
   const player=()=>E("source-video-player");
-  const clamp=(v,min,max)=>Math.max(min,Math.min(max,v));
-  const stamp=s=>{
-    s=Math.max(0,Math.round(s));
-    return [Math.floor(s/3600),Math.floor(s%3600/60),s%60].map(x=>String(x).padStart(2,"0")).join(":");
+  const clamp=(value,min,max)=>Math.min(max,Math.max(min,value));
+  const stamp=value=>{
+    const seconds=Math.max(0,Math.floor(Number(value)||0));
+    return [Math.floor(seconds/3600),Math.floor(seconds%3600/60),seconds%60]
+      .map(n=>String(n).padStart(2,"0")).join(":");
   };
-  let meta=null,video="",projectId="",start=0,end=0,current=0,drag=null,loadSeq=0;
+  let meta=null,video="",projectId="",start=0,end=0,current=0;
+  let loadSeq=0,drag=null,scrubTimer=null;
   const ranges=new Map();
   const pct=t=>meta?.duration_sec?100*clamp(t,0,meta.duration_sec)/meta.duration_sec:0;
   const width=()=>E("manual-width-enabled").checked?Number(E("analysis-width").value):meta?.auto_width;
 
+  function updatePlayButton(){
+    const playing=!!(player().src&&!player().paused);
+    const button=E("source-play-toggle");
+    button.textContent=playing?"❚❚":"▶";
+    button.setAttribute("aria-label",playing?"Пауза":"Воспроизвести");
+    const mute=E("source-mute-toggle");
+    mute.textContent=player().muted?"🔇":"🔊";
+    mute.setAttribute("aria-label",player().muted?"Включить звук":"Выключить звук");
+  }
   function renderRange(){
     if(!meta)return;
     const left=pct(start),right=pct(end);
@@ -21,11 +32,17 @@ window.VolleyballAnalysisUI=(()=>{
     E("timeline-start-handle").style.left=left+"%";
     E("timeline-end-handle").style.left=right+"%";
     E("timeline-playhead").style.left=pct(current)+"%";
-    E("timeline-start-input").value=String(Math.round(start));
-    E("timeline-end-input").value=String(Math.round(end));
-    E("timeline-range-label").textContent=stamp(start)+" — "+stamp(end)+" · "+stamp(end-start);
-    E("timeline-status").textContent="Время просмотра "+stamp(current);
+    for(const [id,value] of [["timeline-start-input",start],["timeline-end-input",end]]){
+      const input=E(id);
+      if(document.activeElement!==input)input.value=String(Math.round(value*10)/10);
+    }
+    E("timeline-range-label").textContent=stamp(start)+" — "+stamp(end)+" · "+stamp(end-start)+" для анализа";
+    E("timeline-status").textContent=stamp(current)+" / "+stamp(meta.duration_sec);
+    E("timeline-playhead").setAttribute("aria-valuetext",stamp(current));
     ranges.set(video,{start,end});
+  }
+  function markUnsaved(){
+    E("range-save-status").textContent="Диапазон изменён — сохраните перед анализом";
   }
   function showWidth(){
     if(!meta)return;
@@ -40,41 +57,107 @@ window.VolleyballAnalysisUI=(()=>{
       " → перед нейросетью: "+w+"×"+h+" пикселей. "+(w>meta.width?
         "Масштабирование вверх не добавляет деталей.":"Высота сохраняет пропорции.");
   }
-  function markUnsaved(){
-    E("range-save-status").textContent="Изменено — сохраните диапазон";
-  }
-  function boundary(side,value){
+  function boundary(side,value,adjustOther=false){
     if(!meta||!Number.isFinite(Number(value)))return;
-    const t=Number(value);
-    if(side==="start")start=clamp(t,0,Math.max(0,end-1));
-    else end=clamp(t,Math.min(start+1,meta.duration_sec),meta.duration_sec);
-    renderRange();markUnsaved();
-  }
-  function seek(t){
-    if(!meta)return;
-    current=clamp(Number(t)||0,0,Math.max(0,meta.duration_sec-.05));
-    const v=player();
-    if(v.src) {
-      try{v.currentTime=current}catch(_){}
+    const t=Number(value),duration=meta.duration_sec;
+    if(side==="start"){
+      if(adjustOther){
+        start=clamp(t,0,Math.max(0,duration-1));
+        if(start>=end)end=Math.min(duration,start+1);
+      }else start=clamp(t,0,Math.max(0,end-1));
+    }else{
+      if(adjustOther){
+        end=clamp(t,1,duration);
+        if(end<=start)start=Math.max(0,end-1);
+      }else end=clamp(t,Math.min(duration,start+1),duration);
     }
     renderRange();
+    markUnsaved();
+  }
+  function cancelScheduledSeek(){
+    if(scrubTimer!==null){clearTimeout(scrubTimer);scrubTimer=null;}
+  }
+  function seek(time,final=false){
+    if(!meta)return;
+    current=clamp(Number(time)||0,0,Math.max(0,meta.duration_sec-.05));
+    renderRange();
+    cancelScheduledSeek();
+    if(final)performSeek();
+    else scrubTimer=setTimeout(()=>{scrubTimer=null;performSeek();},100);
+  }
+  function performSeek(){
+    if(meta&&player().src&&player().readyState>0){
+      try{player().currentTime=current;}catch(_){}
+    }
+  }
+  function atPointer(e){
+    const rect=E("match-timeline").getBoundingClientRect();
+    return clamp((e.clientX-rect.left)/Math.max(1,rect.width),0,1)*meta.duration_sec;
+  }
+  function beginDrag(e,type,target){
+    if(!meta||e.button!==0)return;
+    e.preventDefault();e.stopPropagation();
+    const wasPlaying=type==="playhead"&&!player().paused;
+    if(wasPlaying)player().pause();
+    drag={type,pointer:e.pointerId,target,wasPlaying};
+    target.setPointerCapture(e.pointerId);
+    moveDrag(e);
+  }
+  function moveDrag(e){
+    if(!drag||e.pointerId!==drag.pointer||!meta)return;
+    const t=atPointer(e);
+    if(drag.type==="playhead")seek(t);
+    else boundary(drag.type,t);
+  }
+  function endDrag(e){
+    if(!drag||e.pointerId!==drag.pointer)return;
+    const previous=drag;
+    moveDrag(e);
+    drag=null;
+    if(previous.type==="playhead"){
+      seek(atPointer(e),true);
+      if(previous.wasPlaying)player().play().catch(()=>{});
+    }
+    if(previous.target.hasPointerCapture(e.pointerId))
+      previous.target.releasePointerCapture(e.pointerId);
+  }
+  function attachDrag(target,type){
+    target.addEventListener("pointerdown",e=>beginDrag(e,type,target));
+    target.addEventListener("pointermove",moveDrag);
+    target.addEventListener("pointerup",endDrag);
+    target.addEventListener("pointercancel",endDrag);
+    target.addEventListener("keydown",e=>{
+      if(!meta||!["ArrowLeft","ArrowRight"].includes(e.key))return;
+      e.preventDefault();
+      const delta=(e.key==="ArrowLeft"?-1:1)*(e.shiftKey?5:1);
+      if(type==="playhead")seek(current+delta,true);
+      else boundary(type,(type==="start"?start:end)+delta);
+    });
+  }
+  function togglePlayback(){
+    const v=player();
+    if(!meta||!v.src)return;
+    if(v.paused)v.play().catch(()=>{
+      E("source-playback-note").textContent="Не удалось воспроизвести этот видеоформат в браузере.";
+    });
+    else v.pause();
   }
   async function setVideo(name){
     if(!name)return;
     const request=++loadSeq;
     if(meta&&video)ranges.set(video,{start,end});
-    video=name;meta=null;current=0;
+    video=name;meta=null;current=0;drag=null;cancelScheduledSeek();
     const v=player();
-    v.pause();v.removeAttribute("src");v.load();
+    v.pause();v.removeAttribute("src");v.load();updatePlayButton();
     E("source-video-placeholder").hidden=false;
     E("source-video-placeholder").textContent="Открываем видео…";
     E("preview-source-details").textContent="Читаем параметры файла…";
-    E("source-playback-note").textContent="Шкала позволяет выделить часть для анализа.";
+    E("source-playback-note").textContent="Белая линия — позиция просмотра; зелёные — границы анализа.";
     try{
       const get=async(path)=>{
-        const resp=await fetch(path,{cache:"no-store"});
-        const data=await resp.json();
-        if(!resp.ok)throw Error(data.error||"Ошибка доступа к видео");
+        const response=await fetch(path,{cache:"no-store"});
+        const data=await response.json();
+        if(!response.ok)throw Error(data.error||"Ошибка доступа к видео");
         return data;
       };
       const q="project_id="+encodeURIComponent(projectId)+"&video="+encodeURIComponent(name);
@@ -90,22 +173,22 @@ window.VolleyballAnalysisUI=(()=>{
       E("timeline-start-input").max=info.duration_sec;
       E("timeline-end-input").max=info.duration_sec;
       E("preview-source-details").textContent=name+" · "+info.width+"×"+info.height+" · "+stamp(info.duration_sec);
-      E("timeline-ticks").innerHTML=[0,.25,.5,.75,1].map(n=>"<span>"+stamp(n*info.duration_sec)+"</span>").join("");
-      const url=playback.preview_url;
+      E("timeline-ticks").innerHTML=[0,.25,.5,.75,1]
+        .map(n=>"<span>"+stamp(n*info.duration_sec)+"</span>").join("");
       v.poster=playback.poster_url;
-      v.src=url;
+      v.src=playback.preview_url;
       v.load();
-      // Show an actual frame instead of a black player on first opening.
       v.addEventListener("loadedmetadata",()=>{
-        if(request===loadSeq && v.currentTime<.2 && meta)
-          v.currentTime=Math.min(Math.max(start,2),Math.max(0,meta.duration_sec-.2));
+        if(request!==loadSeq||!meta)return;
+        if(v.currentTime<.2)
+          seek(Math.min(Math.max(start,2),Math.max(0,meta.duration_sec-.2)),true);
       },{once:true});
       E("source-video-placeholder").hidden=true;
       E("source-playback-note").textContent=playback.browser_preview==="normalized"
-        ?"Воспроизводится совместимая H.264-копия исходного матча. Исходное видео не изменяется."
-        :"Воспроизводится оригинал. Если браузер не поддерживает кодек, используйте предпросмотр кадра или установите системный декодер.";
+        ?"Используется совместимая копия H.264; оригинал не меняется. Перемотка — только на шкале под видео."
+        :"Используется оригинал. Если браузер не поддерживает кодек, для просмотра потребуется совместимый формат.";
       current=clamp(start,0,info.duration_sec);
-      showWidth();renderRange();
+      showWidth();renderRange();updatePlayButton();
       E("range-save-status").textContent="Диапазон загружен из проекта";
     }catch(err){
       if(request!==loadSeq)return;
@@ -120,45 +203,50 @@ window.VolleyballAnalysisUI=(()=>{
     });
     E("analysis-width").addEventListener("change",showWidth);
     E("timeline-reset").addEventListener("click",()=>{
-      if(!meta)return;start=0;end=meta.duration_sec;renderRange();markUnsaved();
+      if(!meta)return;
+      start=0;end=meta.duration_sec;renderRange();markUnsaved();
     });
-    E("timeline-start-input").addEventListener("change",e=>boundary("start",e.target.value));
-    E("timeline-end-input").addEventListener("change",e=>boundary("end",e.target.value));
+    E("timeline-set-start").addEventListener("click",()=>boundary("start",current,true));
+    E("timeline-set-end").addEventListener("click",()=>boundary("end",current,true));
+    E("timeline-start-input").addEventListener("change",e=>boundary("start",e.target.value,true));
+    E("timeline-end-input").addEventListener("change",e=>boundary("end",e.target.value,true));
     const timebar=E("match-timeline");
-    const position=e=>{
-      const box=timebar.getBoundingClientRect();
-      return clamp((e.clientX-box.left)/box.width,0,1)*meta.duration_sec;
-    };
-    timebar.addEventListener("click",e=>{
-      if(meta&&!e.target.closest(".timeline-handle"))seek(position(e));
+    attachDrag(timebar,"playhead");
+    attachDrag(E("timeline-playhead"),"playhead");
+    attachDrag(E("timeline-start-handle"),"start");
+    attachDrag(E("timeline-end-handle"),"end");
+    E("source-play-toggle").addEventListener("click",togglePlayback);
+    E("source-mute-toggle").addEventListener("click",()=>{
+      player().muted=!player().muted;updatePlayButton();
     });
-    for(const [side,id] of [["start","timeline-start-handle"],["end","timeline-end-handle"]]){
-      const h=E(id);
-      h.addEventListener("pointerdown",e=>{
-        if(!meta)return;
-        e.preventDefault();e.stopPropagation();
-        drag=side;h.setPointerCapture(e.pointerId);
-      });
-      h.addEventListener("pointermove",e=>{if(drag===side)boundary(side,position(e))});
-      for(const action of ["pointerup","pointercancel","lostpointercapture"])
-        h.addEventListener(action,()=>{if(drag===side)drag=null});
-      h.addEventListener("keydown",e=>{
-        if(!meta||!["ArrowLeft","ArrowRight"].includes(e.key))return;
-        e.preventDefault();
-        boundary(side,(side==="start"?start:end)+(e.key==="ArrowLeft"?-1:1));
-      });
-    }
+    player().addEventListener("click",togglePlayback);
+    player().addEventListener("play",updatePlayButton);
+    player().addEventListener("pause",updatePlayButton);
+    player().addEventListener("volumechange",updatePlayButton);
     player().addEventListener("timeupdate",()=>{
-      if(meta){current=player().currentTime;renderRange();}
+      if(meta&&!drag){
+        current=player().currentTime;
+        renderRange();
+      }
     });
     player().addEventListener("error",()=>{
       if(meta)E("source-playback-note").textContent=
-        "Браузер не смог воспроизвести кодек видео. Можно продолжать настройку диапазона по времени; для просмотра необходима совместимая H.264-копия.";
+        "Браузер не поддерживает кодек этого видео. Диапазон можно задавать вручную.";
     });
+    document.addEventListener("keydown",e=>{
+      if(!E("view-analysis").classList.contains("active")||!meta)return;
+      if(e.target.closest("input,textarea,select,button,[contenteditable]"))return;
+      if(e.code==="Space"){e.preventDefault();togglePlayback();}
+      else if(e.key==="ArrowRight"||e.key==="ArrowLeft"){
+        e.preventDefault();seek(current+(e.key==="ArrowRight"?1:-1)*(e.shiftKey?5:1),true);
+      }
+    });
+    updatePlayButton();
   }
   function setProjectRanges(saved={},identifier=""){
-    ++loadSeq;
-    projectId=identifier;video="";meta=null;ranges.clear();
+    ++loadSeq;cancelScheduledSeek();
+    projectId=identifier;video="";meta=null;ranges.clear();drag=null;
+    player().pause();
     for(const [name,range] of Object.entries(saved||{})){
       if(range&&Number.isFinite(range.start)&&Number.isFinite(range.end))
         ranges.set(name,{start:range.start,end:range.end});

@@ -68,7 +68,7 @@
                 <span id="preview-source-details" class="muted">Выберите исходное видео</span>
               </div>
               <div class="workspace-video-player">
-                <video id="source-video-player" controls playsinline preload="metadata"></video>
+                <video id="source-video-player" playsinline preload="metadata" aria-label="Просмотр исходного видео"></video>
                 <span id="source-video-placeholder">Загрузка видео…</span>
               </div>
               <p class="footnote" id="source-playback-note">
@@ -84,16 +84,28 @@
             </aside>
           </div>
           <article class="panel timeline-panel timeline-input-only">
-            <div class="panel-heading"><h3>Диапазон для анализа</h3><span class="muted" id="timeline-status">Выберите участок записи</span></div>
-            <div class="timeline-canvas" id="match-timeline" aria-label="Шкала выбора участка видео">
+            <div class="panel-heading"><h3>Время и диапазон анализа</h3>
+              <span class="muted">Перетаскивайте белую линию для перемотки</span></div>
+            <div class="analysis-play-controls">
+              <button type="button" id="source-play-toggle" class="secondary analysis-play-button" aria-label="Воспроизвести" title="Воспроизвести / пауза (Пробел)">▶</button>
+              <span id="timeline-status" class="analysis-play-time" aria-live="off">00:00:00 / 00:00:00</span>
+              <button type="button" id="source-mute-toggle" class="secondary small" aria-label="Выключить звук" title="Включить / выключить звук">🔊</button>
+            </div>
+            <div class="timeline-canvas" id="match-timeline" aria-label="Единая шкала воспроизведения и выбора диапазона видео">
               <div id="timeline-selected-range" class="timeline-selected-range"></div>
-              <div id="timeline-playhead" class="timeline-playhead"></div>
+              <button type="button" id="timeline-playhead" class="timeline-playhead-control"
+                aria-label="Текущая позиция видео — перетащите для перемотки" title="Перетащите для перемотки"></button>
               <button type="button" id="timeline-start-handle" class="timeline-handle start-handle"
                 aria-label="Передвинуть начало анализа" title="Начало диапазона"></button>
               <button type="button" id="timeline-end-handle" class="timeline-handle end-handle"
                 aria-label="Передвинуть конец анализа" title="Конец диапазона"></button>
             </div>
             <div class="timeline-ticks" id="timeline-ticks"></div>
+            <div class="timeline-set-buttons">
+              <button class="secondary small" id="timeline-set-start" type="button">Начало = текущий кадр</button>
+              <button class="secondary small" id="timeline-set-end" type="button">Конец = текущий кадр</button>
+              <span class="muted">Зелёные линии тоже можно перетаскивать</span>
+            </div>
             <div class="timeline-controls">
               <label>Начало <input type="number" id="timeline-start-input" min="0" step="1" value="0"> сек.</label>
               <label>Конец <input type="number" id="timeline-end-input" min="1" step="1" value="0"> сек.</label>
