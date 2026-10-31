@@ -68,35 +68,16 @@
                 <h3>Видео для анализа</h3>
                 <span id="preview-source-details" class="muted">Выберите исходное видео</span>
               </div>
-              <div class="court-compact-toolbar" aria-label="Режим разметки площадки">
-                <label class="court-toolbar-mode">Режим
-                  <select id="court-mode-select" aria-label="Режим разметки">
-                    <option value="view">Просмотр</option>
-                    <option value="visible">Точка в кадре</option>
-                    <option value="outside">Точка за кадром</option>
-                    <option value="unknown">Неизвестная точка</option>
-                  </select>
-                </label>
-                <label class="court-toolbar-point" id="court-point-wrap" hidden>Точка
-                  <select id="court-point-select" aria-label="Точка площадки">
-                    <option value="0">1 · Ближний левый</option>
-                    <option value="1">2 · Дальний левый</option>
-                    <option value="2">3 · Дальний правый</option>
-                    <option value="3">4 · Ближний правый</option>
-                    <option value="4">5 · Середина слева</option>
-                    <option value="5">6 · Середина справа</option>
-                    <option value="6">7 · Сетка слева</option>
-                    <option value="7">8 · Сетка справа</option>
-                  </select>
-                </label>
-                <button type="button" id="court-mark-unknown" class="secondary small" hidden>Отметить неизвестной</button>
-                <button type="button" id="court-undo" class="secondary small" title="Отменить последнюю правку" hidden>↶</button>
-                <button type="button" id="court-clear" class="secondary small" hidden>Сброс</button>
-                <span class="court-toolbar-status" id="court-progress">Площадка не размечена</span>
+              <div class="court-simple-toolbar" aria-label="Разметка площадки">
+                <button type="button" id="court-toggle" class="secondary small">Разметить площадку</button>
+                <button type="button" id="court-skip" class="secondary small" hidden>Пропустить точку</button>
+                <button type="button" id="court-undo" class="secondary small" hidden title="Отменить последнюю точку">↶ Назад</button>
+                <button type="button" id="court-clear" class="secondary small" hidden>Сбросить</button>
+                <span id="court-progress" class="court-toolbar-status">Разметка не обязательна</span>
               </div>
-              <div class="court-inline-hint" id="court-instruction" hidden>
-                <span id="court-point-prompt">Точка 1 из 8</span>
-                <span id="court-mode-hint"></span>
+              <div id="court-instruction" class="court-inline-hint" hidden>
+                <strong id="court-point-prompt">Точка 1/8</strong>
+                <span>Нажмите на изображение или рядом с ним. Положение определяется автоматически.</span>
               </div>
               <div class="workspace-video-player">
                 <video id="source-video-player" playsinline preload="metadata" aria-label="Просмотр исходного видео"></video>

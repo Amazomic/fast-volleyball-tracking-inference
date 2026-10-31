@@ -12,6 +12,13 @@ window.VolleyballResultsUI=(()=>{
   let project="",source="",data=null,segment=null,loadId=0,playing=false,rafId=null;
   let totalDuration=0,offset=0;
 
+  function fitResultVideo(){
+    const player=v(),container=E("view-analysis-results").querySelector(".result-video-main");
+    if(!container||!player.videoWidth||!player.videoHeight)return;
+    const h=Math.min(window.innerHeight*.70,780);
+    container.style.setProperty("--result-display-width",h*player.videoWidth/player.videoHeight+"px");
+    container.style.setProperty("--result-aspect",player.videoWidth+"/"+player.videoHeight);
+  }
   const mediaTime=t=>Math.max(0,t-offset);
   const sourceTime=t=>t+offset;
   const percent=t=>Math.max(0,Math.min(100,(t-offset)*100/Math.max(1,totalDuration)));
@@ -187,6 +194,8 @@ window.VolleyballResultsUI=(()=>{
       const b=e.target.closest("[data-rally]");
       if(b)selectRally(Number(b.dataset.rally));
     });
+    v().addEventListener("loadedmetadata",fitResultVideo);
+    window.addEventListener("resize",fitResultVideo);
     v().addEventListener("timeupdate",()=>{enforceEnd();updateOverlay()});
     v().addEventListener("seeked",updateOverlay);
     v().addEventListener("play",()=>{

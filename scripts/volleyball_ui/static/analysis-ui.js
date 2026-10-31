@@ -14,6 +14,16 @@ window.VolleyballAnalysisUI=(()=>{
   const ranges=new Map();
   const pct=t=>meta?.duration_sec?100*clamp(t,0,meta.duration_sec)/meta.duration_sec:0;
   const width=()=>E("manual-width-enabled").checked?Number(E("analysis-width").value):meta?.auto_width;
+  function fitSourceFrame(){
+    if(!meta)return;
+    const main=document.querySelector(".workspace-video-main");
+    if(!main)return;
+    // Fit the actual display orientation, not the full horizontal workspace.
+    const maxHeight=Math.min(window.innerHeight*.70,780);
+    const fitWidth=maxHeight*meta.width/meta.height;
+    main.style.setProperty("--source-display-width",Math.max(1,fitWidth)+"px");
+    main.style.setProperty("--source-aspect",meta.width+"/"+meta.height);
+  }
 
   function updatePlayButton(){
     const playing=!!(player().src&&!player().paused);
@@ -167,6 +177,7 @@ window.VolleyballAnalysisUI=(()=>{
       ]);
       if(request!==loadSeq)return;
       meta=info;
+      fitSourceFrame();
       if(window.VolleyballCourtUI)
         await window.VolleyballCourtUI.setVideo(projectId,name,info);
       if(request!==loadSeq)return;
@@ -222,7 +233,7 @@ window.VolleyballAnalysisUI=(()=>{
     E("source-mute-toggle").addEventListener("click",()=>{
       player().muted=!player().muted;updatePlayButton();
     });
-    player().addEventListener("click",togglePlayback);
+    player().addEventListener("click",()=>{if(!window.VolleyballCourtUI?.isEditing())togglePlayback();});
     player().addEventListener("play",updatePlayButton);
     player().addEventListener("pause",updatePlayButton);
     player().addEventListener("volumechange",updatePlayButton);
@@ -232,6 +243,7 @@ window.VolleyballAnalysisUI=(()=>{
         renderRange();
       }
     });
+    window.addEventListener("resize",fitSourceFrame);
     player().addEventListener("error",()=>{
       if(meta)E("source-playback-note").textContent=
         "Браузер не поддерживает кодек этого видео. Диапазон можно задавать вручную.";
