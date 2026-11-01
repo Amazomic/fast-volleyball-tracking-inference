@@ -9,7 +9,7 @@ window.VolleyballCourtUI=(()=>{
     "Сетка слева","Сетка справа"];
   const LINKS=[[0,4],[4,1],[1,2],[2,5],[5,3],[3,0],[4,5],[4,6],[6,7],[7,5]];
   let meta=null,projectId="",video="",saved=null,points=Array(8).fill(null),
-      editing=false,dirty=false,index=0,frameSec=0,seq=0,drag=null,history=[];
+      editing=false,dirty=false,index=0,frameSec=0,seq=0,drag=null,history=[],revision=0;
   const overlay=()=>E("court-overlay"),player=()=>E("source-video-player");
   const known=p=>p&&p.status!=="unknown"&&Number.isFinite(p.x)&&Number.isFinite(p.y);
   const copy=()=>points.map(p=>p?{...p}:null);
@@ -28,7 +28,7 @@ window.VolleyballCourtUI=(()=>{
     E("court-clear").hidden=!editing;
     E("court-instruction").hidden=!editing;
     E("court-point-prompt").textContent=count===8?
-      "Все 8 точек отмечены — сохраните разметку":
+      "Все 8 точек отмечены — сохраняется автоматически":
       "Точка "+(index+1)+"/8: "+LABELS[index];
     E("court-progress").textContent=editing?
       (count+"/8"+(dirty?" · не сохранено":"")):
@@ -112,7 +112,10 @@ window.VolleyballCourtUI=(()=>{
     // Already fully annotated: cycle through existing points for correction.
     index=(index+1)%8;
   }
-  function markDirty(){dirty=true;frameSec=player().currentTime;}
+  function markDirty(){
+    dirty=true;revision++;frameSec=player().currentTime;
+    window.VolleyballAutoSave?.schedule(900);
+  }
   function toggle(){
     if(!meta)return;
     if(!editing){
@@ -165,20 +168,20 @@ window.VolleyballCourtUI=(()=>{
     E("court-skip").addEventListener("click",skip);
     E("court-undo").addEventListener("click",()=>{
       if(!history.length)return;
-      points=history.pop();dirty=true;
+      points=history.pop();markDirty();
       index=points.findIndex(p=>!p);
       if(index<0)index=0;
       render();
     });
     E("court-clear").addEventListener("click",()=>{
       if(!editing)return;
-      remember();points=Array(8).fill(null);index=0;dirty=true;render();
+      remember();points=Array(8).fill(null);index=0;markDirty();render();
     });
     player().addEventListener("timeupdate",()=>{if(!editing&&meta)render();});
   }
   async function setVideo(id,name,info){
     const token=++seq;
-    projectId=id;video=name;meta=info;editing=false;dirty=false;saved=null;
+    revision++;projectId=id;video=name;meta=info;editing=false;dirty=false;saved=null;
     points=Array(8).fill(null);history=[];index=0;render();
     if(!id||!name)return;
     try{
@@ -215,8 +218,14 @@ window.VolleyballCourtUI=(()=>{
     frameSec=saved?.frame_sec||0;dirty=false;history=[];editing=false;index=0;render();
   }
   function reset(){
-    ++seq;meta=null;video="";projectId="";saved=null;points=Array(8).fill(null);
+    ++seq;revision++;meta=null;video="";projectId="";saved=null;points=Array(8).fill(null);
     editing=false;dirty=false;history=[];index=0;render();
   }
-  return{init,setVideo,snapshot,markSaved,reset,isEditing:()=>editing,refreshGeometry:render};
+  function acceptSaved(court,expectedRevision){
+    if(expectedRevision!==revision)return;
+    saved=court||null;dirty=false;
+    render(); // no interruption of current 8-point editor
+  }
+  return{init,setVideo,snapshot,markSaved,acceptSaved,revision:()=>revision,
+    reset,isEditing:()=>editing,refreshGeometry:render};
 })();

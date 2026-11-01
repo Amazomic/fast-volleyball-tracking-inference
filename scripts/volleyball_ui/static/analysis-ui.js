@@ -63,7 +63,8 @@ window.VolleyballAnalysisUI=(()=>{
     ranges.set(video,{start,end});
   }
   function markUnsaved(){
-    E("range-save-status").textContent="Диапазон изменён — сохраните перед анализом";
+    E("range-save-status").textContent="Настройки сохраняются автоматически";
+    window.VolleyballAutoSave?.schedule(750);
   }
   function showWidth(){
     if(!meta)return;
@@ -298,11 +299,13 @@ window.VolleyballAnalysisUI=(()=>{
   function currentRange(){
     return meta?{start:Math.round(start*1000)/1000,end:Math.round(end*1000)/1000}:null;
   }
+  function activeVideo(){return video;}
+  function activeProject(){return projectId;}
   function params(){
     if(!meta)throw Error("Дождитесь загрузки видео");
     const w=width();
     if(!Number.isInteger(w)||w<320||w>1920||w%2)throw Error("Некорректная ширина кадра");
     return {analysis_width:E("manual-width-enabled").checked?w:"auto"};
   }
-  return {init,setVideo,setProjectRanges,currentRange,params};
+  return {init,setVideo,setProjectRanges,currentRange,activeVideo,activeProject,params};
 })();

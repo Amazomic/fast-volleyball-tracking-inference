@@ -145,3 +145,10 @@ def project_context(project_id: str):
                 all(s != "unknown" for s in statuses[:4]),
         })
     return {"project_id": project_id, "videos": videos}
+
+
+def reset_context(project_id: str, video: str):
+    """Reset only one member recording to its full duration, without court calibration."""
+    assert_project_video(project_id, video)
+    full = {"start": 0.0, "end": video_info(video)["duration_sec"]}
+    return save_context(project_id, video, full, clear_court=True)

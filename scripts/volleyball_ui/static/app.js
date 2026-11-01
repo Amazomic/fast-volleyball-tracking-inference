@@ -222,6 +222,8 @@ async function loadProjects() {
 }
 async function selectSource(name) {
   if(!selectedProject()?.videos.includes(name))return;
+  if(state.video===name)return;
+  await window.VolleyballAutoSave.flush();
   state.video=name;
   renderSources();
   populatePlayersSelect();
@@ -361,7 +363,10 @@ function displayAnalysisContext(){
         "Без разметки площадки";
       return '<div class="analysis-context-row"><span class="context-video">'+esc(name)+'</span>'+
         '<span class="context-range">'+esc(period)+'</span>'+
-        '<span class="context-court '+(item?.court_saved?"is-saved":"is-missing")+'">'+court+'</span></div>';
+        '<span class="context-court '+(item?.court_saved?"is-saved":"is-missing")+'">'+court+'</span>'+
+        '<button type="button" class="context-reset-button" data-reset-context="'+esc(name)+
+        '" aria-label="Сбросить диапазон и разметку для '+esc(name)+
+        '" title="Сбросить контекст этого видео">×</button></div>';
     }).join("");
 }
 async function refreshAnalysisContext(){
@@ -370,22 +375,103 @@ async function refreshAnalysisContext(){
   displayAnalysisContext();
 }
 async function saveCurrentRange(){
-  const p=selectedProject();
-  if(!p)return;
-  const range=window.VolleyballAnalysisUI.currentRange();
-  if(!range)throw Error("Диапазон не загружен");
-  const draft=window.VolleyballCourtUI.snapshot();
+  const project=selectedProject();
   const active=state.video;
-  $("#range-save-status").textContent="Сохраняем диапазон и разметку…";
-  const updated=await api("/api/analysis-context",{
-    project_id:p.id,video:active,range,court:draft.court,clear_court:draft.clear_court
+  if(!project||window.VolleyballAnalysisUI.activeProject()!==project.id||
+    window.VolleyballAnalysisUI.activeVideo()!==active)return;
+  const range=window.VolleyballAnalysisUI.currentRange();
+  if(!range)return;
+  const courtUI=window.VolleyballCourtUI;
+  const revision=courtUI.revision();
+  const draft=courtUI.snapshot();
+  const result=await api("/api/analysis-context",{
+    project_id:project.id,video:active,range,court:draft.court,clear_court:draft.clear_court
   });
-  p.ranges={...p.ranges,[active]:updated.range};
-  window.VolleyballCourtUI.markSaved(updated.court);
-  $("#range-save-status").textContent="Сохранено · "+clock(range.start)+"–"+clock(range.end)+
-    (updated.court?" · площадка размечена":" · без разметки");
-  await refreshAnalysisContext();
-  renderSources();
+  project.ranges={...project.ranges,[active]:result.range};
+  // A response may arrive after another edit. Never discard that edit.
+  if(state.project===project.id&&state.video===active){
+    courtUI.acceptSaved(result.court,revision);
+    $("#range-save-status").textContent="Изменения сохранены автоматически";
+    $("#autosave-error").hidden=true;
+    renderSources();
+    await refreshAnalysisContext();
+  }
+}
+// Serialized, debounced writes: a video is never switched before its latest
+// unsaved range and annotation have been flushed to the project.
+window.VolleyballAutoSave=(()=>{
+  let timer=null;
+  let pending=false;
+  let queue=Promise.resolve();
+  let changed=0;
+  const status=()=>$("#range-save-status");
+  function schedule(delay=750){
+    changed++;
+    pending=true;
+    if(timer!==null)clearTimeout(timer);
+    timer=setTimeout(()=>{timer=null;flush().catch(console.warn);},delay);
+  }
+  function flush(){
+    if(timer!==null){clearTimeout(timer);timer=null;}
+    if(!pending)return queue;
+    pending=false;
+    const version=changed;
+    queue=queue.catch(()=>{}).then(async()=>{
+      try{
+        await saveCurrentRange();
+        if(version===changed){
+          $("#autosave-error").hidden=true;
+          status().textContent="Сохранено автоматически";
+        }
+      }catch(error){
+        if(version===changed){
+          const el=$("#autosave-error");
+          el.textContent="Не удалось сохранить: "+error.message;el.hidden=false;
+          status().textContent=el.textContent;
+          pending=true;
+        }
+        throw error;
+      }
+    });
+    return queue;
+  }
+  // Pending write is obsolete when explicitly resetting the same recording.
+  async function idleAndCancel(){
+    if(timer!==null){clearTimeout(timer);timer=null;}
+    pending=false;
+    changed++;
+    await queue.catch(()=>{});
+  }
+  return {schedule,flush,idleAndCancel};
+})();
+async function resetVideoContext(name){
+  const project=selectedProject();
+  if(!project||!project.videos.includes(name))return;
+  const button=$$(".context-reset-button").find(x=>x.dataset.resetContext===name);
+  if(button)button.disabled=true;
+  try{
+    if(state.video===name)await window.VolleyballAutoSave.idleAndCancel();
+    else await window.VolleyballAutoSave.flush();
+    const reset=await api("/api/analysis-context-reset",{
+      project_id:project.id,video:name
+    });
+    project.ranges={...project.ranges,[name]:reset.range};
+    if(state.project===project.id){
+      await refreshAnalysisContext();
+      renderSources();
+      if(state.video===name){
+        window.VolleyballAnalysisUI.setProjectRanges(project.ranges,project.id);
+        await window.VolleyballAnalysisUI.setVideo(name);
+      }
+    }
+  }catch(error){
+    const el=$("#autosave-error");
+    el.textContent="Ошибка сброса: "+error.message;
+    el.hidden=false;
+    throw error;
+  }finally{
+    if(button)button.disabled=false;
+  }
 }
 async function pollJob() {
   const info=await api("/api/job");
@@ -594,6 +680,7 @@ function bind() {
     if(!e.target.closest("#project-settings-trigger,#project-settings-menu"))closeSettingsMenu();
   });
   $("#top-project").addEventListener("change",async e=>{
+    await window.VolleyballAutoSave.flush();
     state.project=e.target.value;
     const p=selectedProject();
     state.video=p?.videos[0]||"";
@@ -618,13 +705,17 @@ function bind() {
     const button=e.target.closest("[data-source]");
     if(button)selectSource(button.dataset.source).catch(err=>alertBox(err.message));
   });
-  $("#players-video").addEventListener("change",e=>{
+  $("#players-video").addEventListener("change",async e=>{
+    await window.VolleyballAutoSave.flush();
     state.video=e.target.value;
     renderSources();
     loadReport().catch(err=>alertBox(err.message));
     window.VolleyballAnalysisUI.setVideo(state.video);
   });
-  $("#save-timeline-range").addEventListener("click",()=>saveCurrentRange().catch(err=>alertBox(err.message)));
+  $("#analysis-context-summary").addEventListener("click",e=>{
+    const button=e.target.closest("[data-reset-context]");
+    if(button)resetVideoContext(button.dataset.resetContext).catch(err=>console.warn(err));
+  });
   $("#analysis-form").addEventListener("submit",async e=>{
     e.preventDefault();
     if(!state.project)return alertBox("Сначала создайте проект");
@@ -633,7 +724,7 @@ function bind() {
     params.project_id=state.project;
     try {
       Object.assign(params,window.VolleyballAnalysisUI.params());
-      await saveCurrentRange();
+      await window.VolleyballAutoSave.flush();
       await submitTask("/api/analyze",params,"analysis-results");
     }catch(err){alertBox(err.message)}
   });

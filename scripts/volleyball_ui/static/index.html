@@ -172,25 +172,14 @@
                 aria-label="Передвинуть конец анализа" title="Конец диапазона"></button>
             </div>
             <div class="timeline-ticks" id="timeline-ticks"></div>
-            <div class="analysis-range-footer">
-              <label class="analysis-range-field" for="timeline-start-input">
-                <span>Начало</span>
-                <input type="number" id="timeline-start-input" min="0" step="0.1" value="0"
-                  inputmode="decimal" aria-label="Начало анализа в секундах">
-                <span class="analysis-range-unit">с</span>
-              </label>
-              <label class="analysis-range-field" for="timeline-end-input">
-                <span>Конец</span>
-                <input type="number" id="timeline-end-input" min="1" step="0.1" value="0"
-                  inputmode="decimal" aria-label="Конец анализа в секундах">
-                <span class="analysis-range-unit">с</span>
-              </label>
-              <div class="analysis-range-save">
-                <span id="range-save-status" class="muted" role="status">Диапазон из проекта</span>
-                <button type="button" class="secondary small" id="save-timeline-range"
-                  title="Сохранить диапазон и разметку площадки">Сохранить</button>
-              </div>
+            <div class="analysis-range-footer" aria-label="Границы анализа в секундах">
+              <input type="number" id="timeline-start-input" min="0" step="0.1" value="0"
+                inputmode="decimal" aria-label="Начало анализа в секундах" title="Начало анализа в секундах">
+              <input type="number" id="timeline-end-input" min="1" step="0.1" value="0"
+                inputmode="decimal" aria-label="Конец анализа в секундах" title="Конец анализа в секундах">
+              <span id="autosave-error" class="autosave-error" hidden role="alert"></span>
             </div>
+            <span id="range-save-status" class="sr-only" role="status" aria-live="polite"></span>
           </article>
           </section>
           <article class="panel analysis-settings-panel">

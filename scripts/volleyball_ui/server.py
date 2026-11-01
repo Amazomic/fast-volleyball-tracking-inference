@@ -18,7 +18,7 @@ from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 from .data import RESULTS, ROOT, assign, find_cache, list_videos, report, unassign, video_path, video_renders
 from .preview import preview_frame, target_width, video_info
-from .court import get_court, save_context, project_context
+from .court import get_court, save_context, project_context, reset_context
 from .timeline import timeline
 from .projects import (all_projects, create_project, update_project, get_project,
                        project_videos, project_summary, project_output, project_report,
@@ -406,6 +406,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(save_context(
                     body.get("project_id"), body.get("video"), body.get("range"),
                     body.get("court"), body.get("clear_court", False)))
+            if route == "/api/analysis-context-reset":
+                return self._json(reset_context(body.get("project_id"), body.get("video")))
             if route == "/api/analyze":
                 return self._json(start_job("analyze", body))
             if route == "/api/highlights":

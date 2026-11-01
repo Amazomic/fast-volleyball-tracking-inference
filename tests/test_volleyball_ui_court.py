@@ -54,6 +54,35 @@ class ProjectCourtTests(unittest.TestCase):
         self.assertTrue(court.project_context(self.a["id"])["videos"][0]["court_saved"])
         self.assertFalse(court.project_context(self.b["id"])["videos"][0]["court_saved"])
 
+    def test_reset_context_restores_full_video_without_touching_other_videos(self):
+        saved = court.save_context(self.a["id"], "game.mp4", {"start":12,"end":45},
+                                   court=self.sample())
+        self.assertTrue(saved["court"])
+        other = court.save_context(self.b["id"], "game.mp4", {"start":20,"end":80},
+                                   court=self.sample())
+        cleared = court.reset_context(self.a["id"], "game.mp4")
+        self.assertEqual(cleared["range"], {"start":0.0,"end":120.0})
+        self.assertIsNone(cleared["court"])
+        self.assertFalse(court.court_path(self.a["id"], "game.mp4").exists())
+        self.assertEqual(court.get_court(self.b["id"], "game.mp4"), other["court"])
+        self.assertEqual(projects.project_ranges(self.b["id"])["game.mp4"],
+                         {"start":20.0,"end":80.0})
+
+    def test_reset_one_video_preserves_another_in_same_project(self):
+        other_video = self.tmp.name + "/project/second.mp4"
+        Path(other_video).write_bytes(b"fake")
+        pair = projects.create_project("Две записи", ["game.mp4", "second.mp4"])
+        court.save_context(pair["id"],"game.mp4",{"start":10,"end":60},
+                           court=self.sample())
+        court.save_context(pair["id"],"second.mp4",{"start":25,"end":70},
+                           court=self.sample())
+        court.reset_context(pair["id"],"game.mp4")
+        ctx = court.project_context(pair["id"])["videos"]
+        self.assertEqual(ctx[0]["range"], {"start":0.0,"end":120.0})
+        self.assertFalse(ctx[0]["court_saved"])
+        self.assertEqual(ctx[1]["range"], {"start":25.0,"end":70.0})
+        self.assertTrue(ctx[1]["court_saved"])
+
     def test_save_range_without_overwriting_saved_court(self):
         court.save_context(self.a["id"],"game.mp4",{"start":0,"end":120},court=self.sample())
         court.save_context(self.a["id"],"game.mp4",{"start":20,"end":90})
