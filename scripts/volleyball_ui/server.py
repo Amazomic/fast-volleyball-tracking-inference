@@ -128,29 +128,24 @@ def start_job(kind: str, options: dict) -> dict:
         elif kind == "benchmark":
             if not project_id:
                 raise ValueError("Для бенчмарка сначала выберите проект")
-            if not video_name or video_name not in [p.name for p in project_sources]:
-                raise ValueError("Выберите исходное видео из проекта")
-            mode = options.get("mode", "decode")
-            if mode not in ("decode", "pipeline"):
-                raise ValueError("Неизвестный режим бенчмарка")
-            duration = float(options.get("duration", 15))
-            start = float(options.get("start", 0))
-            width = options.get("analysis_width", "auto")
-            backend = options.get("backend", "onnx")
+            from scripts.benchmark_project import available_models
+            backend = options.get("backend","onnx-cpu")
+            model = options.get("model","VballNetV4c_seq9_grayscale_20260908_213829.onnx")
             threads = int(options.get("threads", 8))
-            info = video_info(video_name)
-            if not (2 <= duration <= 120 and 0 <= start < info["duration_sec"] and
-                    info["duration_sec"] - start >= 2):
-                raise ValueError("Выберите участок длительностью 2–120 секунд")
-            target_width(info, width)
-            if backend not in ("onnx", "onnx-cpu", "openvino") or not 1 <= threads <= 32:
-                raise ValueError("Некорректный движок или число потоков")
+            warmup = int(options.get("warmup",10))
+            runs = int(options.get("runs",60))
+            repeats = int(options.get("repeats",3))
+            if backend not in ("onnx","onnx-cpu","openvino"):
+                raise ValueError("Неизвестный нейросетевой движок")
+            if model != "all" and model not in available_models():
+                raise ValueError("Выберите установленную модель VballNet")
+            if not (1<=threads<=32 and 0<=warmup<=30 and 5<=runs<=300 and 1<=repeats<=5):
+                raise ValueError("Потоки 1–32, прогрев 0–30, измерения 5–300, повторы 1–5")
             cmd = [
                 sys.executable, str(ROOT / "scripts" / "benchmark_project.py"),
-                "--project-id", project_id, "--video", video_name,
-                "--mode", mode, "--duration", str(duration),
-                "--start", str(start), "--analysis-width", str(width),
-                "--backend", backend, "--threads", str(threads),
+                "--project-id",project_id,"--model",model,"--backend",backend,
+                "--threads",str(threads),"--warmup",str(warmup),
+                "--runs",str(runs),"--repeats",str(repeats),
             ]
         elif kind == "highlights":
             duration = float(options.get("duration", 120))
@@ -276,6 +271,11 @@ class Handler(BaseHTTPRequestHandler):
             if route == "/api/court":
                 return self._json({"court": get_court(
                     query.get("project_id", [""])[0], query.get("video", [""])[0])})
+            if route == "/api/benchmark-models":
+                from scripts.benchmark_project import available_models
+                return self._json({"models": available_models(),
+                                   "backends": ["onnx-cpu","onnx","openvino"],
+                                   "defaults": {"warmup":10,"runs":60,"repeats":3}})
             if route == "/api/benchmark-results":
                 project_id = query.get("project_id", [""])[0]
                 from .projects import project_dir

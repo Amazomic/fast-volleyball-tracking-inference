@@ -48,6 +48,8 @@ def parse_args():
     parser.add_argument("--visualize", action="store_true", help="Show visualization")
     parser.add_argument("--only_csv", action="store_true", help="Save only CSV")
     parser.add_argument("--device", type=str, default="GPU", help="CPU, GPU, AUTO")
+    parser.add_argument("--num-threads", type=int, default=0,
+                        help="Number of CPU inference threads, 0 uses OpenVINO default")
     parser.add_argument("--threshold", type=float, default=0.5, help="Confidence threshold")
     parser.add_argument(
         "--rotate",
@@ -87,7 +89,7 @@ def infer_model_params(model_path):
     }
 
 
-def load_model(model_path, device="CPU"):
+def load_model(model_path, device="CPU", num_threads=0):
     path = Path(model_path)
     if not path.exists():
         raise FileNotFoundError(f"Модель не найдена: {path}")
@@ -127,7 +129,8 @@ def load_model(model_path, device="CPU"):
         print(f"Динамическая форма — фиксируем на {expected_shape}")
         model.reshape({input_layer.any_name: expected_shape})
 
-    compiled_model = core.compile_model(model=model, device_name=device)
+    config={"INFERENCE_NUM_THREADS":int(num_threads)} if device.upper()=="CPU" and num_threads>0 else {}
+    compiled_model = core.compile_model(model=model, device_name=device, config=config)
     input_layer = compiled_model.input(0)
     output_layer = compiled_model.output(0)
 
@@ -506,7 +509,8 @@ def render_prediction(
 
 def main():
     args = parse_args()
-    compiled_model, _, output_layer, model_params = load_model(args.model_xml, device=args.device)
+    compiled_model, _, output_layer, model_params = load_model(
+        args.model_xml, device=args.device, num_threads=args.num_threads)
 
     cap, orig_width, orig_height, fps, total = initialize_video(args.video_path)
     frame_width, frame_height = rotated_dimensions(orig_width, orig_height, args.rotate)

@@ -306,49 +306,60 @@
         </div>
       </section>
       <section id="view-benchmark" class="view">
-        <div class="section-intro"><h2>Бенчмарк скорости</h2>
-          <p>Измеряйте производительность на коротком участке видео без изменения результатов основного анализа. Все замеры хранятся отдельно внутри выбранного проекта.</p></div>
+        <div class="section-intro"><h2>Бенчмарк нейросетей</h2>
+          <p>Сравнение скорости моделей VballNet по методике исходного репозитория:
+          синтетический тензор, прогрев, серия измерений и медиана FPS. Без FFmpeg и анализа видео.</p>
+        </div>
         <div class="two-column analysis-columns">
           <article class="panel">
             <div class="panel-heading"><h3>Параметры замера</h3></div>
             <form id="benchmark-form">
-              <label class="field"><span>Видео проекта</span><select id="benchmark-video" required></select></label>
-              <label class="field"><span>Тип бенчмарка</span>
-                <select name="mode" id="benchmark-mode">
-                  <option value="decode">Декодирование и масштабирование (FFmpeg)</option>
-                  <option value="pipeline">Полный анализ (нейросети + обработка)</option>
+              <label class="field"><span>Модель</span>
+                <select name="model" id="benchmark-model" required>
+                  <option value="VballNetV4c_seq9_grayscale_20260908_213829.onnx">VballNetV4c · основная модель</option>
+                  <option value="all">Все установленные модели VballNet</option>
                 </select>
               </label>
-              <p class="footnote" id="benchmark-mode-hint">Измеряется скорость декодирования и подготовки 30 кадров/с. Это не FPS нейросети.</p>
-              <div class="form-row">
-                <label class="field"><span>Начало, сек.</span><input name="start" type="number" min="0" step="1" value="0"></label>
-                <label class="field"><span>Длительность теста, сек.</span>
-                  <select name="duration"><option value="5">5</option><option value="15" selected>15</option><option value="30">30</option><option value="60">60</option></select>
-                </label>
-              </div>
-              <div class="form-row">
-                <label class="field"><span>Ширина анализа</span><select name="analysis_width"><option value="auto">Автоматически</option><option value="720">720 px</option><option value="1080">1080 px</option><option value="1280">1280 px</option></select></label>
-                <label class="field"><span>CPU-потоки</span><input name="threads" type="number" min="1" max="32" step="1" value="8"></label>
-              </div>
-              <label class="field" id="benchmark-backend-field" hidden><span>Движок нейросети</span>
-                <select name="backend"><option value="onnx">ONNX Runtime — CUDA (GPU)</option><option value="onnx-cpu">ONNX Runtime — CPU</option><option value="openvino">OpenVINO — CPU</option></select>
+              <label class="field"><span>Движок вычислений</span>
+                <select name="backend" id="benchmark-backend">
+                  <option value="onnx-cpu">ONNX Runtime — CPU</option>
+                  <option value="onnx">ONNX Runtime — CUDA (GPU)</option>
+                  <option value="openvino">OpenVINO — CPU</option>
+                </select>
               </label>
-              <p class="footnote">Полный тест анализирует новый короткий участок в изолированном каталоге без общего кэша и включает время запуска моделей. Он может потребовать больше времени, чем декодирование.</p>
-              <button class="primary wide" type="submit">Запустить бенчмарк ↗</button>
+              <label class="field" id="benchmark-cpu-threads"><span>Потоки CPU</span>
+                <input name="threads" type="number" min="1" max="32" step="1" value="8">
+              </label>
+              <div class="form-row">
+                <label class="field"><span>Прогревов</span>
+                  <input name="warmup" type="number" min="0" max="30" step="1" value="10"></label>
+                <label class="field"><span>Измерений на повтор</span>
+                  <input name="runs" type="number" min="5" max="300" step="1" value="60"></label>
+              </div>
+              <label class="field"><span>Независимых повторов</span>
+                <input name="repeats" type="number" min="1" max="5" step="1" value="3">
+              </label>
+              <p class="footnote">Значения по умолчанию — 10 прогревов, 60 измерений и 3 повтора, как в
+              <code>scripts/bench_inference_fps.py</code>. FPS = кадров на один вызов / медианная задержка вызова.
+              В каждом повторе модель загружается заново. Декодирование видео и постобработка не учитываются.</p>
+              <button class="primary wide" type="submit">Измерить скорость модели</button>
             </form>
           </article>
           <article class="panel">
             <div class="panel-heading"><h3>Текущий замер</h3><span id="benchmark-state" class="status-pill">Нет замера</span></div>
             <div id="benchmark-current" class="job-illustration">
-              <span>⌁</span><div><b>Ожидание запуска</b><p>Выберите видео и параметры слева.</p></div>
+              <span>⌁</span><div><b>Ожидание запуска</b><p>Выберите модель, движок и параметры.</p></div>
             </div>
+            <div class="progress-row"><span>Прогресс измерения</span><strong id="benchmark-percent">—</strong></div>
+            <div class="progress-track"><div id="benchmark-progress"></div></div>
             <button id="benchmark-cancel" class="secondary" type="button" disabled>Остановить</button>
             <div class="console-label space-top">ЖУРНАЛ ЗАМЕРА</div>
-            <pre class="terminal" id="benchmark-log">Здесь появится результат измерения скорости.</pre>
+            <pre class="terminal" id="benchmark-log">Здесь появятся результаты тестов.</pre>
           </article>
         </div>
         <article class="panel space-top">
-          <div class="panel-heading"><h3>История замеров проекта</h3><span class="muted">FPS · ускорение относительно реального времени</span></div>
+          <div class="panel-heading"><h3>Результаты моделей</h3>
+            <span class="muted">Медианный FPS · задержка модели · движок · настройки</span></div>
           <div id="benchmark-results" class="benchmark-history"><div class="empty">Замеров пока нет.</div></div>
         </article>
       </section>

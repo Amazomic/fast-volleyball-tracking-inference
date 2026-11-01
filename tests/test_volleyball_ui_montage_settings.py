@@ -57,6 +57,27 @@ class MontageCommandTests(unittest.TestCase):
         self.assertEqual(cmd[cmd.index("--backend")+1],"onnx-cpu")
         self.assertEqual(cmd[cmd.index("--threads")+1],"10")
 
+    def test_benchmark_runs_upstream_synthetic_inference_only(self):
+        result=server.start_job("benchmark",{
+            "project_id":"abc",
+            "model":"VballNetV4c_seq9_grayscale_20260908_213829.onnx",
+            "backend":"onnx-cpu","threads":10,
+            "warmup":10,"runs":60,"repeats":3
+        })
+        self.assertEqual(result,{"status":"done"})
+        cmd=server.JOB["command"]
+        self.assertIn("benchmark_project.py",str(cmd))
+        self.assertEqual(cmd[cmd.index("--backend")+1],"onnx-cpu")
+        self.assertEqual(cmd[cmd.index("--threads")+1],"10")
+        self.assertEqual(cmd[cmd.index("--runs")+1],"60")
+        self.assertNotIn("--mode",cmd)
+        self.assertNotIn("--video",cmd)
+        self.assertNotIn("--analysis-width",cmd)
+        with self.assertRaises(ValueError):
+            server.start_job("benchmark",{
+                "project_id":"abc","model":"../private-model.onnx","backend":"onnx-cpu"
+            })
+
     def test_montage_receives_filters_without_neural_pipeline(self):
         result = server.start_job("highlights", {
             "project_id":"abc","duration":120,"min_rally":4,

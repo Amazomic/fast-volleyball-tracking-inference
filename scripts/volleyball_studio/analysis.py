@@ -78,7 +78,7 @@ def analyze(source, work, args):
         script = "inference_openvino_seq_gray_v2.py" if args.backend == "openvino" else "inference_onnx_seq_gray_v2.py"
         command = [sys.executable, ROOT / "src" / script, "--video_path", inference_input, "--output_dir", folder / "ball", "--only_csv"]
         command += (["--model_xml", ROOT / "ov/VballNetV4c_seq9_grayscale_20260908_213829.xml",
-                     "--device", "CPU"] if args.backend == "openvino" else
+                     "--device", "CPU", "--num-threads", str(args.threads)] if args.backend == "openvino" else
                     ["--model_path", model,
                      "--device", "cpu" if args.backend=="onnx-cpu" else "cuda",
                      "--num-threads", str(args.threads)])

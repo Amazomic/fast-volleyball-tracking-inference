@@ -210,8 +210,6 @@ function renderSources() {
       " видео проекта. Параметры применяются ко всем файлам, временные диапазоны настраиваются отдельно.";
   $("#highlights-project-hint").textContent="Монтаж из "+p.videos.length+" видео проекта; полный выбранный розыгрыш не обрезается ради длительности.";
   populatePlayersSelect();
-  $("#benchmark-video").innerHTML=p.videos.map(name=>
-    '<option value="'+esc(name)+'">'+esc(name)+'</option>').join("");
 }
 async function loadProjects() {
   state.projects=(await api("/api/projects")).projects;
@@ -533,6 +531,10 @@ async function pollJob() {
     ? ({running:"Измерение…",complete:"Готово",failed:"Ошибка",cancelled:"Остановлен"}[info.status]||"Нет замера")
     : "Нет замера";
   $("#benchmark-cancel").disabled=info.status!=="running"||info.kind!=="benchmark";
+  const benchmarkPercent=info.kind==="benchmark"?
+    (info.progress==null?(info.status==="complete"?100:0):Number(info.progress)):0;
+  $("#benchmark-percent").textContent=info.kind==="benchmark"?benchmarkPercent.toFixed(1)+"%":"—";
+  $("#benchmark-progress").style.width=Math.min(100,Math.max(0,benchmarkPercent))+"%";
   $("#benchmark-log").textContent=info.kind==="benchmark"?(info.log||"Подготовка…"):"Здесь появится журнал замера.";
   $("#benchmark-current").querySelector("b").textContent=info.kind==="benchmark"?
     (info.status==="running"?"Идёт бенчмарк":info.status==="complete"?"Измерение завершено":"Статус: "+info.status):
@@ -546,6 +548,28 @@ async function pollJob() {
     if(info.status==="failed")alertBox("Обработка завершилась с ошибкой. Журнал находится во вкладке «Анализ».");
   }
 }
+async function loadBenchmarkModels(){
+  const data=await api("/api/benchmark-models");
+  const dropdown=$("#benchmark-model");
+  const chosen=dropdown.value;
+  dropdown.replaceChildren();
+  for(const model of data.models||[]){
+    const option=document.createElement("option");
+    option.value=model;option.textContent=model;
+    dropdown.appendChild(option);
+  }
+  if((data.models||[]).length>1){
+    const all=document.createElement("option");
+    all.value="all";all.textContent="Все установленные модели VballNet";
+    dropdown.appendChild(all);
+  }
+  if([...dropdown.options].some(x=>x.value===chosen))dropdown.value=chosen;
+}
+function updateBenchmarkDevice(){
+  const cpu=$("#benchmark-backend").value!=="onnx";
+  $("#benchmark-cpu-threads").hidden=!cpu;
+  $("#benchmark-cpu-threads input").disabled=!cpu;
+}
 async function loadBenchmarkResults(){
   if(!state.project){
     $("#benchmark-results").innerHTML='<div class="empty">Выберите проект</div>';
@@ -553,14 +577,22 @@ async function loadBenchmarkResults(){
   }
   const results=await api("/api/benchmark-results?project_id="+encodeURIComponent(state.project));
   const runs=(results.runs||[]).slice().reverse();
-  $("#benchmark-results").innerHTML=runs.length?runs.map(r=>
-    '<div class="benchmark-result"><div><strong>'+esc(r.video)+'</strong><small>'+
-    esc(r.mode==="decode"?"FFmpeg / декодирование":"Нейросети / полный анализ")+
-    ' · '+esc(r.created_at?.slice(0,19)||"")+' · '+esc(r.width)+' px</small></div>'+
-    '<div class="benchmark-numbers"><b>'+Number(r.fps).toFixed(1)+' FPS</b><span>'+
-    Number(r.realtime_multiplier).toFixed(2)+'× realtime</span><span>'+
-    Number(r.wall_sec).toFixed(2)+' с работы</span></div></div>'
-  ).join(""):'<div class="empty">Замеров пока нет.</div>';
+  $("#benchmark-results").innerHTML=runs.map(r=>{
+    if(r.mode!=="inference")return ""; // exclude pre-fix FFmpeg/pipeline timings
+    const title=esc(r.model||"Модель");
+    const runtime={"onnx":"CUDA","onnx-cpu":"ONNX CPU","openvino":"OpenVINO CPU"}[r.backend]||r.backend;
+    const threads=Number(r.threads);
+    const unit=threads%100>=11&&threads%100<=14?"потоков":
+      threads%10===1?"поток":threads%10>=2&&threads%10<=4?"потока":"потоков";
+    const settings=esc(runtime)+" · "+(r.threads==null?"GPU":threads+" "+unit)+
+      " · "+r.warmup+"/"+r.runs+"/"+r.repeats+" прогрев/измерения/повторы";
+    const fps=Number(r.fps).toFixed(1);
+    const latency=Number(r.latency_ms).toFixed(3);
+    return '<div class="benchmark-result"><div><strong>'+title+'</strong><small>'+
+      settings+' · '+esc(r.created_at?.slice(0,19)||"")+'</small></div>'+
+      '<div class="benchmark-numbers"><b>'+fps+' FPS</b><span>'+latency+
+      ' мс на вызов</span><span>'+r.seq+' кадров на вызов</span></div></div>';
+  }).filter(Boolean).join("")||'<div class="empty">Пока нет замеров нейросетей</div>';
 }
 async function submitTask(endpoint,payload,view="analysis"){
   try{
@@ -782,19 +814,13 @@ function bind() {
       if(!job.hidden)job.scrollIntoView({behavior:"smooth",block:"start"});
     }catch(err){alertBox(err.message)}
   });
-  $("#benchmark-mode").addEventListener("change",e=>{
-    const neural=e.target.value==="pipeline";
-    $("#benchmark-backend-field").hidden=!neural;
-    $("#benchmark-mode-hint").textContent=neural
-      ?"Выполняется свежий короткий анализ включая нейросети; измеряется общая скорость pipeline, не чистый FPS модели."
-      :"Измеряется декодирование и масштабирование FFmpeg, без нейросети.";
-  });
+  $("#benchmark-backend").addEventListener("change",updateBenchmarkDevice);
+  updateBenchmarkDevice();
   $("#benchmark-form").addEventListener("submit",e=>{
     e.preventDefault();
     if(!state.project)return alertBox("Сначала выберите проект");
     const form=Object.fromEntries(new FormData(e.target).entries());
     form.project_id=state.project;
-    form.video=$("#benchmark-video").value;
     submitTask("/api/benchmark",form,"benchmark");
   });
   $("#benchmark-cancel").addEventListener("click",()=>api("/api/cancel",{}).then(pollJob).catch(err=>alertBox(err.message)));
@@ -852,6 +878,7 @@ document.addEventListener("DOMContentLoaded",async()=>{
   const requestedView=new URLSearchParams(window.location.search).get("view");
   try{
     await loadAll();
+    await loadBenchmarkModels();
     if(["analysis","analysis-results","players","report","benchmark","results"].includes(requestedView))go(requestedView);
     await pollJob();
   }catch(e){alertBox(e.message)}
