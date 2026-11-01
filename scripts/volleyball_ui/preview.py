@@ -59,6 +59,7 @@ def _read_info(path: str, size: int, mtime_ns: int) -> dict:
         "width": display_width, "height": display_height, "rotation": rotation,
         "coded_width": coded_width, "coded_height": coded_height,
         "duration_sec": round(duration, 3), "auto_width": auto_width,
+        "codec": stream.get("codec_name", "unknown"),
     }
 
 
@@ -68,16 +69,8 @@ def video_info(video: str) -> dict:
     info = dict(_read_info(str(source.resolve()), stat.st_size, stat.st_mtime_ns))
     info["video"] = video
     info["auto_height"] = output_height(info, info["auto_width"])
-    cache = data.find_cache(video)
-    if cache:
-        analysis = cache / "analysis.mp4"
-        if analysis.is_file():
-            try:
-                info["cached_analysis_width"] = int(_read_info(
-                    str(analysis.resolve()), analysis.stat().st_size,
-                    analysis.stat().st_mtime_ns)["width"])
-            except (ValueError, RuntimeError, KeyError):
-                pass
+    # Browser playback must never probe huge analysis artifacts or depend
+    # on project-specific processing. Source metadata is sufficient.
     return info
 
 

@@ -10,6 +10,15 @@ This fork adds a local dashboard for **projects containing one or multiple sourc
 - Source videos: `project/`; cached analysis, highlights, player names and job logs: `results/`.
 - [Detailed UI guide (Russian)](docs/VOLLEY_STUDIO_UI.md).
 
+**Video formats:** Drop recordings into `project/` and add them to a project.
+**No pre-conversion is required.** The server reads local files with FFmpeg.
+Browser-compatible H.264 MP4 is served directly. For HEVC/H.265 and other
+supported codecs that a browser cannot play, Volley Studio converts only the
+requested short playback segments (18 seconds each) to H.264 on demand.
+The whole match is **not** preprocessed; original files are not changed.
+Short segments are shared between projects and evicted above a 160 MB cache
+budget. Input format/container still needs to be readable by local FFmpeg.
+
 The UI runs locally and does **not** upload video to any external service. Identity assignments are user-reviewed mappings, not automatic proof that two track IDs represent the same person.
 
 ## Live demos

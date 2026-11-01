@@ -19,6 +19,7 @@ from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 from .data import RESULTS, ROOT, assign, find_cache, list_videos, report, unassign, video_path, video_renders
 from .preview import preview_frame, target_width, video_info
+from .playback import SEGMENT_SECONDS, get_segment
 from .court import get_court, save_context, project_context, reset_context
 from .timeline import timeline
 from .projects import (all_projects, create_project, update_project, get_project,
@@ -289,26 +290,33 @@ class Handler(BaseHTTPRequestHandler):
                 assert_project_video(project_id, name)
                 original = video_path(name)
                 info = video_info(name)
-                cache = find_cache(name, project_id)
-                normalized = cache / "analysis.mp4" if cache else None
-                payload = read_json(cache / "analysis/events.json", {}) if cache else {}
-                offset = float(payload.get("analysis_offset_sec") or 0)
-                # An existing complete H264 analysis is a browser-compatible preview.
-                # Partial analyses must not masquerade as the complete source.
-                use_normalized = bool(normalized and normalized.is_file() and
-                    offset == 0 and normalized.stat().st_size > 0 and
-                    abs(video_info(name)["duration_sec"] - _normalized_duration(normalized)) < 3.0)
+                # The preview never requires project analysis or an existing
+                # normalized full-length copy. Directly serve browser-native
+                # codecs, otherwise encode only requested short portions.
+                native = info.get("codec") in ("h264", "vp8", "vp9", "av1")
                 return self._json({
                     "video": name, "duration_sec": info["duration_sec"],
-                    "media_url": "/api/video-media?project_id=" + project_id + "&video=" + quote(name),
-                    "browser_preview": "normalized" if use_normalized else "original",
-                    "preview_url": ("/api/analysis-media?project_id=" + project_id + "&video=" + quote(name)
-                                    if use_normalized else
-                                    "/api/video-media?project_id=" + project_id + "&video=" + quote(name)),
-                    "fallback_warning": ("" if use_normalized else
-                         "Формат оригинала может не поддерживать воспроизведение в браузере."),
-                    "poster_url": "/api/video-preview?video=" + quote(name) + "&time=2&mode=source"
+                    "media_url": "/api/video-media?project_id=" + quote(project_id) +
+                                 "&video=" + quote(name),
+                    "browser_preview": "original" if native else "segments",
+                    "segment_seconds": SEGMENT_SECONDS,
+                    "preview_url": ("/api/video-media?project_id=" + quote(project_id) +
+                                    "&video=" + quote(name)) if native else None,
+                    "fallback_warning": "" if native else
+                         "Быстрый просмотр по коротким фрагментам исходного видео.",
+                    "poster_url": "/api/video-preview?video=" + quote(name) +
+                                  "&time=2&mode=source"
                 })
+            if route == "/api/video-segment":
+                project_id, name = query.get("project_id", [""])[0], query.get("video", [""])[0]
+                assert_project_video(project_id, name)
+                try:
+                    start_sec = int(query.get("start", ["0"])[0])
+                except ValueError as exc:
+                    raise ValueError("Некорректная позиция воспроизведения") from exc
+                length = video_info(name)["duration_sec"]
+                segment = get_segment(name, start_sec, length)
+                return self._file(segment, "video/mp4", allow_ranges=True)
             if route == "/api/analysis-view":
                 project_id, name = query.get("project_id", [""])[0], query.get("video", [""])[0]
                 assert_project_video(project_id, name)

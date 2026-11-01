@@ -11,6 +11,8 @@ window.VolleyballAnalysisUI=(()=>{
   };
   let meta=null,video="",projectId="",start=0,end=0,current=0;
   let loadSeq=0,drag=null,scrubTimer=null;
+  let playbackMode="original",segmentSeconds=18,segmentStart=0,segmentToken=0;
+  let prefetchTarget=null;
   const ranges=new Map();
   const pct=t=>meta?.duration_sec?100*clamp(t,0,meta.duration_sec)/meta.duration_sec:0;
   const width=()=>E("manual-width-enabled").checked?Number(E("analysis-width").value):meta?.auto_width;
@@ -105,10 +107,52 @@ window.VolleyballAnalysisUI=(()=>{
     renderRange();
     cancelScheduledSeek();
     if(final)performSeek();
-    else scrubTimer=setTimeout(()=>{scrubTimer=null;performSeek();},100);
+    else if(!(playbackMode==="segments"&&drag?.type==="playhead"))
+      scrubTimer=setTimeout(()=>{scrubTimer=null;performSeek();},160);
+  }
+  function segmentUrl(startAt){
+    return "/api/video-segment?project_id="+encodeURIComponent(projectId)+
+      "&video="+encodeURIComponent(video)+"&start="+startAt;
+  }
+  function alignedStart(time){
+    return Math.floor(Math.max(0,time)/segmentSeconds)*segmentSeconds;
+  }
+  function loadSegmentAt(time,resume=false){
+    if(!meta||playbackMode!=="segments")return;
+    const v=player(),startAt=alignedStart(time);
+    const token=++segmentToken,request=loadSeq;
+    segmentStart=startAt;prefetchTarget=null;
+    v.pause();
+    v.src=segmentUrl(startAt);
+    v.load();
+    v.addEventListener("loadedmetadata",()=>{
+      if(request!==loadSeq||token!==segmentToken||playbackMode!=="segments")return;
+      const local=clamp(time-startAt,0,Math.max(0,v.duration-.075));
+      if(local>.02)try{v.currentTime=local;}catch(_){}
+      current=time;renderRange();
+      if(resume)v.play().catch(()=>{});
+    },{once:true});
+    updatePlayButton();
+  }
+  function prefetchSegment(){
+    if(!meta||playbackMode!=="segments")return;
+    const next=segmentStart+segmentSeconds;
+    if(next>=meta.duration_sec||prefetchTarget===next)return;
+    prefetchTarget=next;
+    fetch(segmentUrl(next),{cache:"force-cache"})
+      .then(response=>{if(!response.ok)throw Error("Next segment unavailable");})
+      .catch(()=>{if(prefetchTarget===next)prefetchTarget=null;});
   }
   function performSeek(){
-    if(meta&&player().src&&player().readyState>0){
+    if(!meta)return;
+    if(playbackMode==="segments"){
+      if(!player().src||alignedStart(current)!==segmentStart){
+        loadSegmentAt(current,!player().paused);
+      }else if(player().readyState>0){
+        try{player().currentTime=clamp(current-segmentStart,0,
+          Math.max(0,player().duration-.075));}catch(_){}
+      }
+    }else if(player().src&&player().readyState>0){
       try{player().currentTime=current;}catch(_){}
     }
   }
@@ -160,7 +204,8 @@ window.VolleyballAnalysisUI=(()=>{
     const v=player();
     if(!meta||!v.src)return;
     if(v.paused)v.play().catch(()=>{
-      E("source-playback-note").textContent="Не удалось воспроизвести этот видеоформат в браузере.";
+      E("source-playback-note").textContent=
+        "Не удалось начать просмотр. Попробуйте переместить позицию на шкале.";
     });
     else v.pause();
   }
@@ -169,6 +214,7 @@ window.VolleyballAnalysisUI=(()=>{
     const request=++loadSeq;
     if(meta&&video)ranges.set(video,{start,end});
     video=name;meta=null;current=0;drag=null;cancelScheduledSeek();
+    segmentToken++;segmentStart=0;prefetchTarget=null;playbackMode="original";
     const v=player();
     v.pause();v.removeAttribute("src");v.load();updatePlayButton();
     E("source-video-placeholder").hidden=false;
@@ -203,17 +249,23 @@ window.VolleyballAnalysisUI=(()=>{
       E("timeline-ticks").innerHTML=[0,.25,.5,.75,1]
         .map(n=>"<span>"+stamp(n*info.duration_sec)+"</span>").join("");
       v.poster=playback.poster_url;
-      v.src=playback.preview_url;
-      v.load();
-      v.addEventListener("loadedmetadata",()=>{
-        if(request!==loadSeq||!meta)return;
-        if(v.currentTime<.2)
-          seek(Math.min(Math.max(start,2),Math.max(0,meta.duration_sec-.2)),true);
-      },{once:true});
+      playbackMode=playback.browser_preview==="segments"?"segments":"original";
+      segmentSeconds=Number(playback.segment_seconds)||18;
+      if(playbackMode==="segments"){
+        loadSegmentAt(start,false);
+      }else{
+        v.src=playback.preview_url;
+        v.load();
+        v.addEventListener("loadedmetadata",()=>{
+          if(request!==loadSeq||!meta)return;
+          if(v.currentTime<.2)
+            seek(Math.min(start,Math.max(0,meta.duration_sec-.2)),true);
+        },{once:true});
+      }
       E("source-video-placeholder").hidden=true;
-      E("source-playback-note").textContent=playback.browser_preview==="normalized"
-        ?"Используется совместимая копия H.264; оригинал не меняется. Перемотка — только на шкале под видео."
-        :"Используется оригинал. Если браузер не поддерживает кодек, для просмотра потребуется совместимый формат.";
+      E("source-playback-note").textContent=playbackMode==="segments"
+        ?"Видео открывается напрямую из локальной папки: по мере просмотра подгружаются только нужные короткие участки. Полная копия не создаётся."
+        :"Используется оригинальный файл без перекодирования.";
       current=clamp(start,0,info.duration_sec);
       showWidth();renderRange();updatePlayButton();
       E("range-save-status").textContent="Диапазон загружен из проекта";
@@ -263,8 +315,19 @@ window.VolleyballAnalysisUI=(()=>{
     player().addEventListener("volumechange",updatePlayButton);
     player().addEventListener("timeupdate",()=>{
       if(meta&&!drag){
-        current=player().currentTime;
+        current=playbackMode==="segments"?
+          Math.min(meta.duration_sec,segmentStart+player().currentTime):
+          player().currentTime;
         renderRange();
+        if(playbackMode==="segments"&&
+          Number.isFinite(player().duration)&&
+          player().duration-player().currentTime<7)prefetchSegment();
+      }
+    });
+    player().addEventListener("ended",()=>{
+      if(meta&&playbackMode==="segments"&&
+         segmentStart+segmentSeconds<meta.duration_sec-.05){
+        loadSegmentAt(segmentStart+segmentSeconds,true);
       }
     });
     window.addEventListener("resize",fitSourceFrame);
@@ -290,6 +353,7 @@ window.VolleyballAnalysisUI=(()=>{
     ++loadSeq;cancelScheduledSeek();
     if(window.VolleyballCourtUI)window.VolleyballCourtUI.reset();
     projectId=identifier;video="";meta=null;ranges.clear();drag=null;
+    segmentToken++;segmentStart=0;prefetchTarget=null;playbackMode="original";
     player().pause();
     for(const [name,range] of Object.entries(saved||{})){
       if(range&&Number.isFinite(range.start)&&Number.isFinite(range.end))
