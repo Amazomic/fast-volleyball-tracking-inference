@@ -42,6 +42,10 @@ window.VolleyballAnalysisUI=(()=>{
     E("timeline-start-handle").style.left=left+"%";
     E("timeline-end-handle").style.left=right+"%";
     E("timeline-playhead").style.left=pct(current)+"%";
+    E("timeline-start-handle").classList.toggle("is-at-start",start<=0.0001);
+    E("timeline-end-handle").classList.toggle("is-at-end",end>=meta.duration_sec-0.0001);
+    E("timeline-playhead").classList.toggle("is-at-start",current<=0.0001);
+    E("timeline-playhead").classList.toggle("is-at-end",current>=meta.duration_sec-0.1);
     for(const [id,value] of [["timeline-start-input",start],["timeline-end-input",end]]){
       const input=E(id);
       // A dragged handle always updates its corresponding numeric field.
@@ -164,6 +168,7 @@ window.VolleyballAnalysisUI=(()=>{
     E("source-video-placeholder").textContent="Открываем видео…";
     E("preview-source-details").textContent="Читаем параметры файла…";
     E("source-playback-note").textContent="Белая линия — позиция просмотра; зелёные — границы анализа.";
+    E("source-video-note").open=false;
     try{
       const get=async(path)=>{
         const response=await fetch(path,{cache:"no-store"});

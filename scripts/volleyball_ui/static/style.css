@@ -922,3 +922,131 @@ body{zoom:.8}
 @media(min-width:681px) and (max-width:1200px){
  .topbar{padding-top:38px}
 }
+
+/* Single-line video header: note by title, court button centered,
+   metadata right. Video choices remain scrollable without an edit header. */
+.analysis-media-panel .workspace-video-main .workspace-video-head{
+  display:grid;grid-template-columns:minmax(120px,1fr) auto minmax(120px,1fr);
+  gap:12px;align-items:center;position:relative;min-height:42px;
+  margin-bottom:9px;overflow:visible;
+}
+.source-head-title{display:flex;align-items:center;gap:8px;min-width:0}
+.source-head-title h3{white-space:nowrap;min-width:0}
+.source-info-note{display:inline-block;position:relative;flex:none;z-index:40}
+.source-info-note>summary{
+  list-style:none;cursor:pointer;display:grid;place-items:center;
+  width:22px;height:22px;padding:0;
+  color:#d9efd3;font-size:13px;font-weight:900;
+  border:1px solid #547b67;border-radius:50%;
+  background:linear-gradient(140deg,#365748,#18372d);
+}
+.source-info-note>summary::-webkit-details-marker{display:none}
+.source-info-note>summary:hover,.source-info-note[open]>summary{
+  border-color:#b4ed81;background:linear-gradient(140deg,#436a4b,#27543a);
+}
+.source-info-popover{
+  position:absolute;top:calc(100% + 9px);left:0;
+  width:min(305px,calc(100vw - 90px));
+  margin:0!important;padding:12px 14px!important;
+  border:1px solid #648d70;border-radius:12px;
+  background:linear-gradient(145deg,#254438,#102a26);
+  box-shadow:0 15px 36px #000b;
+  color:#d7e9da!important;font-size:11px!important;
+  line-height:1.6;white-space:normal;overflow-wrap:break-word;
+  z-index:45;
+}
+.analysis-media-panel .workspace-video-main .workspace-video-head .court-simple-toolbar{
+  width:max-content!important;max-width:min(100%,500px);
+  margin:0!important;padding:0;
+  min-height:35px;justify-self:center;
+  display:flex;flex-wrap:wrap;justify-content:center;gap:6px;
+}
+.analysis-media-panel .workspace-video-head #court-toggle{
+  display:inline-flex;align-items:center;gap:8px;
+  padding:5px 11px;min-height:33px;
+  white-space:nowrap;
+}
+.court-button-hint{
+  padding:3px 7px;border:1px solid #5a795a7a;border-radius:999px;
+  color:#a4c89c;font-size:10px;font-weight:600;letter-spacing:0;
+  background:#213c2a78;
+}
+.analysis-media-panel .workspace-video-head #preview-source-details{
+  text-align:right;min-width:0;justify-self:stretch;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.analysis-media-panel .workspace-video-sidebar{
+  padding-top:0; /* no secondary header */
+}
+.analysis-media-panel .workspace-video-sidebar .project-source-list{
+  padding-top:0;
+}
+/* Align both green boundary lines exactly to the track's mathematical
+   positions (0% / 100%). Caps stay INSIDE at the extreme values. */
+.timeline-input-only .timeline-selected-range{
+  box-sizing:border-box;border:0!important;
+}
+.timeline-input-only .timeline-handle::before{
+  left:50%;transform:translateX(-50%);
+  width:2px;background:var(--green);
+  border:0;
+}
+.timeline-input-only .timeline-handle::after{
+  left:50%;right:auto;transform:translateX(-50%);
+}
+.timeline-input-only .timeline-handle.is-at-start::after{
+  left:50%;transform:none;
+}
+.timeline-input-only .timeline-handle.is-at-end::after{
+  left:auto;right:50%;transform:none;
+}
+.timeline-input-only .timeline-playhead-control::before{
+  left:50%;transform:translateX(-50%);
+}
+.timeline-input-only .timeline-playhead-control::after{
+  left:50%;right:auto;transform:translateX(-50%);
+}
+.timeline-input-only .timeline-playhead-control.is-at-start::after{
+  left:50%;transform:none;
+}
+.timeline-input-only .timeline-playhead-control.is-at-end::after{
+  left:auto;right:50%;transform:none;
+}
+@media(max-width:1150px){
+ .analysis-media-panel .workspace-video-main .workspace-video-head{
+   grid-template-columns:minmax(108px,1fr) auto;
+ }
+ .analysis-media-panel .workspace-video-head #preview-source-details{
+   grid-column:1/-1;text-align:left;
+ }
+}
+@media(max-width:570px){
+ .analysis-media-panel .workspace-video-main .workspace-video-head{
+   grid-template-columns:1fr;justify-items:center;
+ }
+ .source-head-title{justify-content:center}
+ .analysis-media-panel .workspace-video-main .workspace-video-head .court-simple-toolbar{
+   width:100%!important;max-width:100%;
+ }
+ .analysis-media-panel .workspace-video-head #preview-source-details{
+   grid-column:1;text-align:center;
+ }
+}
+
+/* The note must not inherit the video-column width constraint. */
+.analysis-media-panel .workspace-video-main #source-playback-note.source-info-popover{
+  width:min(305px,calc(100vw - 70px))!important;
+  min-width:min(230px,calc(100vw - 70px));
+  max-width:none;
+  white-space:normal;
+  word-break:normal;
+}
+/* Keep the court action truly centered on ordinary/narrow desktop widths. */
+@media(min-width:571px) and (max-width:1150px){
+ .analysis-media-panel .workspace-video-main .workspace-video-head{
+   grid-template-columns:minmax(105px,1fr) auto minmax(105px,1fr);
+ }
+ .analysis-media-panel .workspace-video-head #preview-source-details{
+   grid-column:auto;text-align:right;
+ }
+}

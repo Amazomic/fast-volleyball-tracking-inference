@@ -113,15 +113,26 @@
           <div class="workspace-video-layout">
             <div class="workspace-video-main">
               <div class="workspace-video-head">
-                <h3>Видео для анализа</h3>
+                <div class="source-head-title">
+                  <h3>Видео для анализа</h3>
+                  <details id="source-video-note" class="source-info-note">
+                    <summary aria-label="Примечание о воспроизведении видео"
+                      title="Примечание о воспроизведении">!</summary>
+                    <p id="source-playback-note" class="source-info-popover">
+                      Выберите видео справа и задайте временной диапазон на шкале.
+                    </p>
+                  </details>
+                </div>
+                <div class="court-simple-toolbar" aria-label="Разметка площадки">
+                  <button type="button" id="court-toggle" class="secondary small">
+                    <span id="court-toggle-title">Разметить площадку</span>
+                    <span id="court-progress" class="court-button-hint">необязательно</span>
+                  </button>
+                  <button type="button" id="court-skip" class="secondary small" hidden>Пропустить точку</button>
+                  <button type="button" id="court-undo" class="secondary small" hidden title="Отменить последнюю точку">↶ Назад</button>
+                  <button type="button" id="court-clear" class="secondary small" hidden>Сбросить</button>
+                </div>
                 <span id="preview-source-details" class="muted">Выберите исходное видео</span>
-              </div>
-              <div class="court-simple-toolbar" aria-label="Разметка площадки">
-                <button type="button" id="court-toggle" class="secondary small">Разметить площадку</button>
-                <button type="button" id="court-skip" class="secondary small" hidden>Пропустить точку</button>
-                <button type="button" id="court-undo" class="secondary small" hidden title="Отменить последнюю точку">↶ Назад</button>
-                <button type="button" id="court-clear" class="secondary small" hidden>Сбросить</button>
-                <span id="court-progress" class="court-toolbar-status">Разметка не обязательна</span>
               </div>
               <div id="court-instruction" class="court-inline-hint" hidden>
                 <strong id="court-point-prompt">Точка 1/8</strong>
@@ -140,15 +151,8 @@
                 <span id="source-video-placeholder">Загрузка видео…</span>
               </div>
 
-              <p class="footnote" id="source-playback-note">
-                Выберите видео справа и задайте временной диапазон под проигрывателем.
-              </p>
             </div>
             <aside class="workspace-video-sidebar">
-              <div class="workspace-video-sidebar-head">
-                <h3>Видео проекта <span id="source-count" class="muted"></span></h3>
-                <button class="secondary small" id="edit-project-videos" type="button">Изменить</button>
-              </div>
               <div id="project-source-list" class="project-source-list"></div>
             </aside>
           </div>

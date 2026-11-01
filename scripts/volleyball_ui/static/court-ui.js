@@ -22,7 +22,7 @@ window.VolleyballCourtUI=(()=>{
   }
   function feedback(){
     const count=points.filter(Boolean).length;
-    E("court-toggle").textContent=editing?"Завершить разметку":"Разметить площадку";
+    E("court-toggle-title").textContent=editing?"Завершить разметку":"Разметить площадку";
     E("court-skip").hidden=!editing;
     E("court-undo").hidden=!editing;
     E("court-undo").disabled=!history.length;
@@ -32,10 +32,9 @@ window.VolleyballCourtUI=(()=>{
       "Все 8 точек отмечены — сохраните разметку":
       "Точка "+(index+1)+"/8: "+LABELS[index];
     E("court-progress").textContent=editing?
-      count+"/8"+(dirty?" · не сохранено":""):
-      saved?("Разметка: "+saved.keypoints.filter(p=>p.status==="estimated").length+
-        " за кадром, "+saved.keypoints.filter(p=>p.status==="unknown").length+" неизвестны"):
-        "Разметка не обязательна";
+      (count+"/8"+(dirty?" · не сохранено":"")):
+      saved?("сохранено · "+saved.keypoints.filter(p=>p.status==="unknown").length+" неизвестных"):
+        "необязательно";
     E("court-overlay-badge").hidden=!editing&&!saved;
   }
   function render(){

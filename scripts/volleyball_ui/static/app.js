@@ -198,7 +198,6 @@ function renderSources() {
   }
   $("#active-project-name").textContent=p.name;
   $("#active-project-description").textContent="Выберите видео справа, задайте диапазон под проигрывателем и параметры запуска ниже.";
-  $("#source-count").textContent="· "+p.videos.length;
   $("#project-source-list").innerHTML=p.videos.map((name,i)=>{
     const range=projectRange(name);
     const duration=range.end>0?clock(range.start)+" — "+clock(range.end):"Весь файл";
@@ -607,7 +606,6 @@ function bind() {
   });
   $("#create-project").addEventListener("click",()=>openProjectDialog(false));
   $$("[data-create-project]").forEach(button=>button.addEventListener("click",()=>openProjectDialog(false)));
-  $("#edit-project-videos").addEventListener("click",()=>openProjectDialog(true));
   $("#new-project-form").addEventListener("submit",event=>{event.preventDefault();saveProjectDialog()});
   $("#cancel-create-project").addEventListener("click",closeProjectDialog);
   $("#close-project-dialog").addEventListener("click",closeProjectDialog);
