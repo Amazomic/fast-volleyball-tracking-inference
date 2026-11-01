@@ -47,20 +47,12 @@ window.VolleyballAnalysisUI=(()=>{
     const left=pct(start),right=pct(end);
     E("timeline-selected-range").style.left=left+"%";
     E("timeline-selected-range").style.width=Math.max(0,right-left)+"%";
-    E("timeline-start-handle").style.left=left+"%";
-    E("timeline-end-handle").style.left=right+"%";
     E("timeline-playhead").style.left=pct(current)+"%";
-    E("timeline-start-handle").classList.toggle("is-at-start",start<=0.0001);
-    E("timeline-end-handle").classList.toggle("is-at-end",end>=meta.duration_sec-0.0001);
     E("timeline-playhead").classList.toggle("is-at-start",current<=0.0001);
     E("timeline-playhead").classList.toggle("is-at-end",current>=meta.duration_sec-0.1);
-    for(const [id,value] of [["timeline-start-input",start],["timeline-end-input",end]]){
-      const input=E(id);
-      // A dragged handle always updates its corresponding numeric field.
-      // Do not overwrite a partially typed value during ordinary video playback.
-      if(document.activeElement!==input||drag)
-        input.value=String(Math.round(value*10)/10);
-    }
+    E("range-start-display").textContent=stamp(start);
+    E("range-end-display").textContent=stamp(end);
+    E("timeline-current-clock").textContent=stamp(current);
     E("timeline-playhead").setAttribute("aria-valuetext",stamp(current));
     ranges.set(video,{start,end});
   }
@@ -243,8 +235,6 @@ window.VolleyballAnalysisUI=(()=>{
       const saved=ranges.get(name);
       start=saved?clamp(saved.start,0,Math.max(0,info.duration_sec-1)):0;
       end=saved?clamp(saved.end,start+1,info.duration_sec):info.duration_sec;
-      E("timeline-start-input").max=info.duration_sec;
-      E("timeline-end-input").max=info.duration_sec;
       E("preview-source-details").textContent=name+" · "+info.width+"×"+info.height+" · "+stamp(info.duration_sec);
       E("timeline-ticks").innerHTML=[0,.25,.5,.75,1]
         .map(n=>"<span>"+stamp(n*info.duration_sec)+"</span>").join("");
@@ -281,30 +271,12 @@ window.VolleyballAnalysisUI=(()=>{
       E("analysis-width").disabled=!e.target.checked;showWidth();
     });
     E("analysis-width").addEventListener("change",showWidth);
-    for(const [id,side] of [["timeline-start-input","start"],["timeline-end-input","end"]]){
-      const input=E(id);
-      input.addEventListener("input",()=>{
-        if(!meta||!input.value.trim()||!Number.isFinite(input.valueAsNumber))return;
-        // While typing "320" the intermediate "3" must not move an
-        // already selected 180-second start boundary backwards.
-        const value=input.valueAsNumber;
-        if(side==="end"&&value<=start||side==="start"&&value>=end)return;
-        boundary(side,value,false);
-      });
-      input.addEventListener("change",()=>{
-        if(input.value.trim()&&Number.isFinite(input.valueAsNumber))
-          boundary(side,input.valueAsNumber,true);
-        renderRange();
-      });
-      input.addEventListener("blur",()=>{
-        if(meta)input.value=String(Math.round((side==="start"?start:end)*10)/10);
-      });
-    }
+    E("timeline-set-start-current").addEventListener("click",()=>boundary("start",current,true));
+    E("timeline-set-end-current").addEventListener("click",()=>boundary("end",current,true));
     const timebar=E("match-timeline");
     attachDrag(timebar,"playhead");
     attachDrag(E("timeline-playhead"),"playhead");
-    attachDrag(E("timeline-start-handle"),"start");
-    attachDrag(E("timeline-end-handle"),"end");
+
     E("source-play-toggle").addEventListener("click",togglePlayback);
     E("source-mute-toggle").addEventListener("click",()=>{
       player().muted=!player().muted;updatePlayButton();

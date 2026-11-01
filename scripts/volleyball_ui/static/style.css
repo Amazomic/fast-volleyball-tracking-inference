@@ -1278,3 +1278,45 @@ body{zoom:.8}
  }
  .analysis-media-panel .workspace-video-main .workspace-video-head .court-simple-toolbar{grid-row:2}
 }
+
+/* One draggable playhead. The selected analysis interval remains a subtle
+   shaded range, never a draggable boundary or another vertical marker. */
+.timeline-input-only .timeline-selected-range{
+  background:linear-gradient(90deg,#9fef561e,#9fef5632);
+  border:0!important;pointer-events:none;
+}
+.analysis-current-actions{
+  display:grid;grid-template-columns:minmax(140px,1fr) auto minmax(140px,1fr);
+  align-items:center;gap:13px;margin-top:13px;width:100%;
+}
+.analysis-current-actions>button{
+  display:flex;align-items:center;justify-content:center;
+  gap:13px;min-height:42px;padding:8px 13px;
+  border-radius:13px;border:1px solid #4a6958;
+  background:linear-gradient(130deg,#244033,#152d27);
+  white-space:nowrap;font-size:12px;
+}
+.analysis-current-actions>button:hover{border-color:#a4e57c;background:linear-gradient(130deg,#335941,#1b3a2e)}
+.analysis-current-actions>button span{color:#a7bdab;font-weight:700}
+.analysis-current-actions>button strong{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;
+  font-variant-numeric:tabular-nums;color:#c7efa9;font-size:12px}
+.analysis-current-clock{
+  display:inline-flex;align-items:center;justify-content:center;
+  min-width:105px;white-space:nowrap;
+  color:#e9f8ef;font:800 13px ui-monospace,SFMono-Regular,Consolas,monospace;
+  font-variant-numeric:tabular-nums;
+}
+.analysis-current-actions .autosave-error{grid-column:1/-1}
+.result-video-layout[hidden],.result-unavailable[hidden],.result-job-panel[hidden]{display:none!important}
+.result-unavailable{margin-top:0;padding:26px;max-width:720px}
+.result-unavailable h3{font-size:15px;margin:0 0 10px}
+.result-unavailable p{font-size:12px;color:#afc5b5;line-height:1.7;margin-bottom:14px}
+#analysis-job-panel{margin:20px 0 0}
+#analysis-job-panel .terminal{max-height:300px}
+#analysis-job-panel .job-actions{margin-bottom:13px}
+@media(max-width:700px){
+ .analysis-current-actions{grid-template-columns:1fr 1fr;gap:8px}
+ .analysis-current-actions .analysis-current-clock{grid-column:1/-1;grid-row:1;min-height:25px}
+ .analysis-current-actions>button{gap:7px;min-width:0;padding:9px 5px}
+ .analysis-current-actions>button strong{font-size:11px}
+}

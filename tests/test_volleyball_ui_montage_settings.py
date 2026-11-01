@@ -48,6 +48,15 @@ class MontageCommandTests(unittest.TestCase):
         self.assertNotIn("--min-confidence",cmd)
         self.assertIn("--beach",cmd)
 
+    def test_analysis_onnx_cpu_explicit_backend_and_threads(self):
+        server.start_job("analyze", {
+            "project_id":"abc","backend":"onnx-cpu",
+            "analysis_width":"auto","threads":10
+        })
+        cmd=server.JOB["command"]
+        self.assertEqual(cmd[cmd.index("--backend")+1],"onnx-cpu")
+        self.assertEqual(cmd[cmd.index("--threads")+1],"10")
+
     def test_montage_receives_filters_without_neural_pipeline(self):
         result = server.start_job("highlights", {
             "project_id":"abc","duration":120,"min_rally":4,

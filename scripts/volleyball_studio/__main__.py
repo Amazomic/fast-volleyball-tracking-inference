@@ -48,7 +48,7 @@ def parser():
     p.add_argument("--workers", type=int, default=0)
     p.add_argument("--benchmark", action="store_true")
     p.add_argument("--encoder", choices=["auto", "cpu", "nvenc"], default="auto")
-    p.add_argument("--backend", choices=["onnx", "openvino"], default="onnx")
+    p.add_argument("--backend", choices=["onnx", "onnx-cpu", "openvino"], default="onnx")
     p.add_argument("--threads", type=int, default=8)
     p.add_argument("--min-confidence", type=positive, default=.65)
     p.add_argument("--analysis-width", type=int, default=1280)

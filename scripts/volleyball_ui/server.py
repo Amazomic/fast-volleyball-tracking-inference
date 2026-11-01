@@ -98,7 +98,7 @@ def start_job(kind: str, options: dict) -> dict:
             raise ValueError("Уже запущена обработка — дождитесь завершения или остановите её")
         if kind == "analyze":
             backend = options.get("backend", "onnx")
-            if backend not in ("onnx", "openvino"):
+            if backend not in ("onnx", "onnx-cpu", "openvino"):
                 raise ValueError("Неизвестный backend")
             analysis_width = (0 if project_sources and options.get("analysis_width", "auto") in ("auto", None, "")
                               else target_width(video_info(source.name), options.get("analysis_width", "auto")))
@@ -143,7 +143,7 @@ def start_job(kind: str, options: dict) -> dict:
                     info["duration_sec"] - start >= 2):
                 raise ValueError("Выберите участок длительностью 2–120 секунд")
             target_width(info, width)
-            if backend not in ("onnx", "openvino") or not 1 <= threads <= 32:
+            if backend not in ("onnx", "onnx-cpu", "openvino") or not 1 <= threads <= 32:
                 raise ValueError("Некорректный движок или число потоков")
             cmd = [
                 sys.executable, str(ROOT / "scripts" / "benchmark_project.py"),

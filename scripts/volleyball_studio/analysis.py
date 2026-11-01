@@ -58,7 +58,7 @@ def analyze(source, work, args):
     command = ["ffmpeg", "-v", "error", "-nostdin", "-y", "-ss", str(args.analysis_start), "-i", source]
     if args.analysis_seconds:
         command += ["-t", str(args.analysis_seconds)]
-    command += ["-vf", f"fps=30,scale={args.analysis_width}:-2,setsar=1", "-an", "-c:v", "libx264", "-preset", "ultrafast", "-crf", "18", "-threads", "4", proxy]
+    command += ["-vf", f"fps=30,scale={args.analysis_width}:-2,setsar=1", "-an", "-c:v", "libx264", "-preset", "ultrafast", "-crf", "18", "-threads", str(args.threads), proxy]
     cached(folder, "normalize", signature, lambda: (run(command, folder / "normalize.log"), [proxy])[1])
     inference_input = proxy
     if getattr(args, "scratch_dir", None):
@@ -69,7 +69,7 @@ def analyze(source, work, args):
     video = next(s for s in probe(proxy)["streams"] if s["codec_type"] == "video")
     width, height = video["width"], video["height"]
     csv_path = folder / "ball/analysis/ball.csv"
-    ball_key = key([signature, identity(model), identity(ROOT / "ov/VballNetV4c_seq9_grayscale_20260908_213829.xml"), identity(ROOT / "ov/VballNetV4c_seq9_grayscale_20260908_213829.bin"), args.backend])
+    ball_key = key([signature, identity(model), identity(ROOT / "ov/VballNetV4c_seq9_grayscale_20260908_213829.xml"), identity(ROOT / "ov/VballNetV4c_seq9_grayscale_20260908_213829.bin"), args.backend, args.threads if args.backend in ("onnx-cpu","openvino") else None])
 
     def ball():
         csv_path.parent.mkdir(parents=True, exist_ok=True)
@@ -77,7 +77,11 @@ def analyze(source, work, args):
             csv_path.unlink()
         script = "inference_openvino_seq_gray_v2.py" if args.backend == "openvino" else "inference_onnx_seq_gray_v2.py"
         command = [sys.executable, ROOT / "src" / script, "--video_path", inference_input, "--output_dir", folder / "ball", "--only_csv"]
-        command += ["--model_xml", ROOT / "ov/VballNetV4c_seq9_grayscale_20260908_213829.xml", "--device", "CPU"] if args.backend == "openvino" else ["--model_path", model]
+        command += (["--model_xml", ROOT / "ov/VballNetV4c_seq9_grayscale_20260908_213829.xml",
+                     "--device", "CPU"] if args.backend == "openvino" else
+                    ["--model_path", model,
+                     "--device", "cpu" if args.backend=="onnx-cpu" else "cuda",
+                     "--num-threads", str(args.threads)])
         run(command, folder / "ball.log")
         if args.backend == "openvino":
             shutil.copyfile(folder / "ball/analysis_predict_ball.csv", csv_path)

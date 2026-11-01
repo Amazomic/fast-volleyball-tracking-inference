@@ -22,6 +22,10 @@ window.VolleyballResultsUI=(()=>{
   const mediaTime=t=>Math.max(0,t-offset);
   const sourceTime=t=>t+offset;
   const percent=t=>Math.max(0,Math.min(100,(t-offset)*100/Math.max(1,totalDuration)));
+  function setAvailable(yes){
+    E("view-analysis-results").querySelector(".result-video-layout").hidden=!yes;
+    E("result-unavailable").hidden=yes;
+  }
   function clear(){
     const player=v();
     player.pause();
@@ -73,7 +77,7 @@ window.VolleyballResultsUI=(()=>{
       select.value=preferred;
       await setVideo(preferred);
     }else{
-      source="";clear();
+      source="";clear();setAvailable(false);
       E("result-video-placeholder").hidden=false;
       E("result-video-placeholder").textContent="Создайте проект и запустите анализ";
     }
@@ -81,7 +85,7 @@ window.VolleyballResultsUI=(()=>{
   async function setVideo(name){
     const seq=++loadId;
     source=name;
-    clear();
+    clear();setAvailable(false);
     E("result-video-name").textContent=name;
     E("result-meta").textContent="Загрузка результатов…";
     E("result-video-placeholder").hidden=false;
@@ -92,11 +96,13 @@ window.VolleyballResultsUI=(()=>{
       const result=await resp.json();
       if(!resp.ok)throw Error(result.error||"Не удалось загрузить анализ");
       if(seq!==loadId)return;
-      if(!result.analyzed){
-        E("result-video-placeholder").textContent="Для этого видео ещё нет завершённого анализа";
-        E("result-meta").textContent="Результат не найден";
+      const status=await fetch("/api/job",{cache:"no-store"}).then(r=>r.json()).catch(()=>null);
+      if(!result.analyzed || status?.kind==="analyze"&&status.status==="running"){
+        setAvailable(false);
+        E("result-unavailable").querySelector("h3").textContent="Результаты ещё не готовы";
         return;
       }
+      setAvailable(true);
       data=result;
       offset=Number(result.analysis_offset_sec)||0;
       totalDuration=Number(result.duration_sec)||0;

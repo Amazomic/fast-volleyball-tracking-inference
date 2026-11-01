@@ -15,7 +15,7 @@ from scripts.volleyball_ui.projects import (project_videos, project_ranges,
 def main():
     parser=argparse.ArgumentParser()
     parser.add_argument("--project-id",required=True)
-    parser.add_argument("--backend",choices=("onnx","openvino"),default="onnx")
+    parser.add_argument("--backend",choices=("onnx","onnx-cpu","openvino"),default="onnx")
     parser.add_argument("--analysis-width",type=int,default=1280)
     parser.add_argument("--threads",type=int,default=8)
     parser.add_argument("--analysis-start",type=float,default=0)

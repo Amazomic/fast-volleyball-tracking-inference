@@ -166,17 +166,18 @@
               <div id="timeline-selected-range" class="timeline-selected-range"></div>
               <button type="button" id="timeline-playhead" class="timeline-playhead-control"
                 aria-label="Текущая позиция видео — перетащите для перемотки" title="Перетащите для перемотки"></button>
-              <button type="button" id="timeline-start-handle" class="timeline-handle start-handle"
-                aria-label="Передвинуть начало анализа" title="Начало диапазона"></button>
-              <button type="button" id="timeline-end-handle" class="timeline-handle end-handle"
-                aria-label="Передвинуть конец анализа" title="Конец диапазона"></button>
             </div>
             <div class="timeline-ticks" id="timeline-ticks"></div>
-            <div class="analysis-range-footer" aria-label="Границы анализа в секундах">
-              <input type="number" id="timeline-start-input" min="0" step="0.1" value="0"
-                inputmode="decimal" aria-label="Начало анализа в секундах" title="Начало анализа в секундах">
-              <input type="number" id="timeline-end-input" min="1" step="0.1" value="0"
-                inputmode="decimal" aria-label="Конец анализа в секундах" title="Конец анализа в секундах">
+            <div class="analysis-current-actions" aria-label="Выбрать границы анализа по текущему кадру">
+              <button type="button" class="secondary" id="timeline-set-start-current"
+                title="Установить начало анализа в позиции белого маркера">
+                <span>Начало</span><strong id="range-start-display">00:00:00</strong>
+              </button>
+              <span id="timeline-current-clock" class="analysis-current-clock" aria-live="off">00:00:00</span>
+              <button type="button" class="secondary" id="timeline-set-end-current"
+                title="Установить конец анализа в позиции белого маркера">
+                <span>Конец</span><strong id="range-end-display">00:00:00</strong>
+              </button>
               <span id="autosave-error" class="autosave-error" hidden role="alert"></span>
             </div>
             <span id="range-save-status" class="sr-only" role="status" aria-live="polite"></span>
@@ -189,7 +190,7 @@
               <p class="footnote" id="analysis-project-hint">Параметры применяются ко всем видео проекта, а диапазон выбирается отдельно для каждого видео.</p>
               <div class="form-row">
                 <label class="field"><span>Движок обнаружения мяча</span>
-                  <select name="backend"><option value="onnx">ONNX Runtime</option><option value="openvino">OpenVINO</option></select>
+                  <select name="backend"><option value="onnx">ONNX Runtime — CUDA (GPU)</option><option value="onnx-cpu">ONNX Runtime — CPU</option><option value="openvino">OpenVINO — CPU</option></select>
                 </label>
                 <div class="field"><span>Размер кадра анализа</span>
                   <div class="auto-size"><b>Автоматически</b><span id="auto-size-value">По видео</span></div>
@@ -205,18 +206,33 @@
               </details>
               <p id="resolution-explanation" class="footnote">Разрешение определяется автоматически.</p>
               <div class="form-row">
-                <label class="field"><span>CPU-потоки</span><input name="threads" type="number" min="1" max="32" step="1" value="8"></label>
+                <label class="field"><span>Потоки CPU</span><input name="threads" type="number" min="1" max="32" step="1" value="8"></label>
                 <label class="checkbox-field"><input name="beach" type="checkbox" checked><span>Пляжный волейбол</span></label>
               </div>
+              <p class="footnote">В CPU-режиме число потоков передаётся нейросети, при CUDA вычисления идут на GPU. CPU-потоки не гарантируют одинаковую загрузку всех ядер.</p>
               <button class="primary" type="submit">Запустить анализ всех видео проекта ↗</button>
-              <span id="analysis-run-status" class="muted analysis-run-status">После запуска перейдите в «Результат анализа».</span>
+              <span id="analysis-run-status" class="muted analysis-run-status">Ход обработки появится ниже. Результаты откроются после завершения.</span>
             </form>
           </article>
+                  <article class="panel result-job-panel" id="analysis-job-panel" hidden>
+          <div class="panel-heading"><h3>Ход обработки</h3><span id="job-badge" class="status-pill">Нет задачи</span></div>
+          <div class="job-illustration"><span>⌁</span><div><b id="job-head">Ожидание запуска</b><p id="job-sub">Запустите анализ на первой вкладке.</p></div></div>
+          <div class="progress-row"><span id="job-progress-caption">Прогресс обработки</span><strong id="job-percent">—</strong></div>
+          <div class="progress-track"><div id="job-progress"></div></div>
+          <div class="job-actions"><button class="secondary" id="cancel-job" type="button" disabled>Остановить</button><button class="secondary" id="open-analysis-results" data-go="analysis-results" type="button" disabled>Смотреть результаты</button></div>
+          <div class="console-label">ЖУРНАЛ ОБРАБОТКИ</div>
+          <pre id="job-log" class="terminal" tabindex="0">Здесь появятся сообщения обработки.</pre>
+        </article>
         </div>
       </section>
       <section id="view-analysis-results" class="view">
         <div class="section-intro"><h2>Результат анализа</h2>
           <p>Видео с найденными игровыми событиями и розыгрышами. Выберите розыгрыш справа — воспроизведение остановится на его окончании.</p>
+        </div>
+        <div id="result-unavailable" class="panel result-unavailable" hidden>
+          <h3>Результаты ещё не готовы</h3>
+          <p>Ход обработки и журнал находятся во вкладке «Анализ». Видео с разметкой и розыгрыши появятся здесь после завершения анализа.</p>
+          <button class="secondary" data-go="analysis" type="button">Вернуться к анализу</button>
         </div>
         <div class="result-video-layout">
           <div class="result-video-main">
@@ -248,15 +264,7 @@
             </div>
           </aside>
         </div>
-        <article class="panel result-job-panel">
-          <div class="panel-heading"><h3>Ход обработки</h3><span id="job-badge" class="status-pill">Нет задачи</span></div>
-          <div class="job-illustration"><span>⌁</span><div><b id="job-head">Ожидание запуска</b><p id="job-sub">Запустите анализ на первой вкладке.</p></div></div>
-          <div class="progress-row"><span>Прогресс</span><strong id="job-percent">—</strong></div>
-          <div class="progress-track"><div id="job-progress"></div></div>
-          <div class="job-actions"><button class="secondary" id="cancel-job" type="button" disabled>Остановить</button><button class="secondary" id="open-report" data-go="report" type="button">Открыть отчёт</button></div>
-          <div class="console-label">ЖУРНАЛ ОБРАБОТКИ</div>
-          <pre id="job-log" class="terminal">Здесь появятся сообщения обработки.</pre>
-        </article>
+
       </section>
       <section id="view-players" class="view">
         <div class="section-intro"><h2>Игроки и идентификаторы</h2><p>Track ID относятся к конкретной записи. Выберите видео проекта, сравнивайте фотографии и объединяйте повторные ID одного спортсмена.</p></div>
@@ -323,7 +331,7 @@
                 <label class="field"><span>CPU-потоки</span><input name="threads" type="number" min="1" max="32" step="1" value="8"></label>
               </div>
               <label class="field" id="benchmark-backend-field" hidden><span>Движок нейросети</span>
-                <select name="backend"><option value="onnx">ONNX Runtime</option><option value="openvino">OpenVINO</option></select>
+                <select name="backend"><option value="onnx">ONNX Runtime — CUDA (GPU)</option><option value="onnx-cpu">ONNX Runtime — CPU</option><option value="openvino">OpenVINO — CPU</option></select>
               </label>
               <p class="footnote">Полный тест анализирует новый короткий участок в изолированном каталоге без общего кэша и включает время запуска моделей. Он может потребовать больше времени, чем декодирование.</p>
               <button class="primary wide" type="submit">Запустить бенчмарк ↗</button>

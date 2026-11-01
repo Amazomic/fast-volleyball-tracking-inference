@@ -473,6 +473,19 @@ async function resetVideoContext(name){
     if(button)button.disabled=false;
   }
 }
+function extractProcessingTelemetry(log){
+  // Show measured frame progress, not a frozen stage boundary estimate.
+  const events=String(log||"").split("\n");
+  let frames=null;
+  for(const line of events){
+    if(!line.startsWith("{"))continue;
+    try{
+      const value=JSON.parse(line);
+      if(value.frames>0&&value.total_frames>0)frames=value;
+    }catch(_){}
+  }
+  return frames;
+}
 async function pollJob() {
   const info=await api("/api/job");
   const previous=state.jobStatus;
@@ -480,16 +493,34 @@ async function pollJob() {
   $("#job-badge").textContent={
     idle:"Нет задачи",running:"Выполняется",complete:"Завершено",failed:"Ошибка",cancelled:"Остановлено"
   }[info.status]||info.status;
+  const analysisJob=info.kind==="analyze";
+  $("#analysis-job-panel").hidden=!(analysisJob&&info.status!=="idle");
+  $("#open-analysis-results").disabled=!(analysisJob&&info.status==="complete");
   $("#job-head").textContent=info.status==="running"?"Обработка выполняется":info.status==="complete"?"Задача завершена":info.status==="failed"?"Ошибка обработки":info.status==="cancelled"?"Обработка остановлена":"Готово к запуску";
-  $("#job-sub").textContent=info.stage || (info.kind==="highlights"?"Сборка лучших моментов":info.kind==="analyze"?"Анализ мяча и игроков":"Выберите видео и параметры.");
-  $("#job-percent").textContent=info.progress==null?(info.status==="complete"?"100%":"—"):String(info.progress)+"%";
-  $("#job-progress").style.width=String(info.progress==null?(info.status==="complete"?100:0):info.progress)+"%";
+  const measurement=analysisJob&&info.status==="running"?extractProcessingTelemetry(info.log):null;
+  const activeFrames=measurement&&Number.isFinite(Number(measurement.fps))?measurement:null;
+  const stageDetail=activeFrames?
+    "Обнаружение мяча: "+Number(activeFrames.frames).toLocaleString("ru-RU")+
+    " / "+Number(activeFrames.total_frames).toLocaleString("ru-RU")+" кадров · "+
+    Number(activeFrames.fps).toFixed(1)+" FPS"+
+    (Number.isFinite(Number(activeFrames.eta_sec))?" · осталось около "+Math.round(Number(activeFrames.eta_sec)/60)+" мин":""):
+    "";
+  $("#job-sub").textContent=stageDetail||info.stage||
+    (info.kind==="highlights"?"Сборка лучших моментов":analysisJob?"Анализ мяча и игроков":"Выберите видео и параметры.");
+  const stagePct=activeFrames?Math.min(100,100*Number(activeFrames.frames)/Number(activeFrames.total_frames)):null;
+  const shownPct=stagePct==null?
+    (info.progress==null?(info.status==="complete"?100:0):Number(info.progress)):stagePct;
+  $("#job-progress-caption").textContent=stagePct==null?"Прогресс обработки":"Прогресс текущего этапа";
+  $("#job-percent").textContent=stagePct!=null?shownPct.toFixed(1)+"%":
+    info.progress==null?(info.status==="complete"?"100%":"—"):String(info.progress)+"%";
+  $("#job-progress").style.width=Math.max(0,Math.min(100,shownPct))+"%";
   $("#cancel-job").disabled=info.status!=="running";
   $("#job-log").textContent=info.log || "Здесь появятся сообщения pipeline.";
   if(info.status==="running")$("#job-log").scrollTop=$("#job-log").scrollHeight;
-  $("#analysis-run-status").textContent=info.kind==="analyze"?
-    ({running:"Анализ выполняется…",complete:"Анализ завершён. Смотрите вкладку «Результат анализа».",
-      failed:"Ошибка анализа — откройте «Результат анализа» и проверьте журнал.",
+  $("#analysis-run-status").textContent=analysisJob?
+    ({running:"Анализ выполняется · ход обработки и журнал ниже.",
+      complete:"Анализ завершён. Результаты доступны в следующей вкладке.",
+      failed:"Анализ завершился с ошибкой · подробности в журнале ниже.",
       cancelled:"Анализ остановлен."}[info.status]||""):"Готово к запуску";
   $("#benchmark-state").textContent=info.kind==="benchmark"
     ? ({running:"Измерение…",complete:"Готово",failed:"Ошибка",cancelled:"Остановлен"}[info.status]||"Нет замера")
@@ -505,7 +536,7 @@ async function pollJob() {
   if(previous==="running" && info.status!=="running"){
     await Promise.all([loadAll(),loadRenders()]);
     if(info.kind==="benchmark")await loadBenchmarkResults();
-    if(info.status==="failed")alertBox("Обработка завершилась с ошибкой. Посмотрите журнал.");
+    if(info.status==="failed")alertBox("Обработка завершилась с ошибкой. Журнал находится во вкладке «Анализ».");
   }
 }
 async function loadBenchmarkResults(){
@@ -725,7 +756,9 @@ function bind() {
     try {
       Object.assign(params,window.VolleyballAnalysisUI.params());
       await window.VolleyballAutoSave.flush();
-      await submitTask("/api/analyze",params,"analysis-results");
+      await submitTask("/api/analyze",params,"analysis");
+      const job=$("#analysis-job-panel");
+      if(!job.hidden)job.scrollIntoView({behavior:"smooth",block:"start"});
     }catch(err){alertBox(err.message)}
   });
   $("#benchmark-mode").addEventListener("change",e=>{

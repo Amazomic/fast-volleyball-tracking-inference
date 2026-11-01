@@ -82,6 +82,10 @@ def parse_args():
         help="Heatmap confidence threshold",
     )
     parser.add_argument("--verbose", action="store_true", help="Enable debug logging")
+    parser.add_argument("--device", choices=("cpu","cuda","auto"), default="auto",
+                        help="Explicit ONNX Runtime execution provider")
+    parser.add_argument("--num-threads", type=int, default=8,
+                        help="CPU intra-op threads when using ONNX Runtime CPU")
     return parser.parse_args()
 
 
@@ -116,13 +120,24 @@ def resolve_dim(dim, fallback: int) -> int:
     return fallback
 
 
-def load_onnx_model(model_path):
+def load_onnx_model(model_path, device="auto", num_threads=8):
     if not os.path.exists(model_path):
         raise FileNotFoundError(f"Model not found: {model_path}")
     model_params = infer_model_params(model_path)
-    session = ort.InferenceSession(
-        model_path, providers=["CUDAExecutionProvider", "CPUExecutionProvider"]
-    )
+    available = ort.get_available_providers()
+    if device == "cuda" and "CUDAExecutionProvider" not in available:
+        raise RuntimeError("CUDAExecutionProvider недоступен в ONNX Runtime. Выберите CPU.")
+    preferred = ["CPUExecutionProvider"] if device == "cpu" else (
+        ["CUDAExecutionProvider", "CPUExecutionProvider"]
+        if "CUDAExecutionProvider" in available else ["CPUExecutionProvider"])
+    options = ort.SessionOptions()
+    options.intra_op_num_threads = max(1, int(num_threads))
+    session = ort.InferenceSession(model_path, sess_options=options, providers=preferred)
+    actual = session.get_providers()
+    if device == "cuda" and (not actual or actual[0] != "CUDAExecutionProvider"):
+        raise RuntimeError("Не удалось активировать CUDAExecutionProvider; CPU fallback запрещён для выбранного GPU-режима")
+    LOG.info("ONNX Runtime device=%s; active providers=%s; CPU intra-op threads=%s",
+             device, actual, num_threads)
     input_names = [inp.name for inp in session.get_inputs()]
     output_names = [out.name for out in session.get_outputs()]
     input_shape = session.get_inputs()[0].shape
@@ -605,7 +620,7 @@ def main():
         input_names,
         output_names,
         model_params,
-    ) = load_onnx_model(args.model_path)
+    ) = load_onnx_model(args.model_path,args.device,args.num_threads)
     input_width = model_params["input_width"]
     input_height = model_params["input_height"]
 
