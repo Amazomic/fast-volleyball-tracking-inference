@@ -205,11 +205,11 @@
                 <p class="footnote">Размер перед анализом. Высота вычисляется автоматически, исходное видео не меняется.</p>
               </details>
               <p id="resolution-explanation" class="footnote">Разрешение определяется автоматически.</p>
-              <div class="form-row">
-                <label class="field"><span>Потоки CPU</span><input name="threads" type="number" min="1" max="32" step="1" value="8"></label>
+              <div class="form-row analysis-cpu-row gpu-only" id="analysis-cpu-row">
+                <label class="field" id="analysis-cpu-field" hidden><span>Потоки CPU</span><input name="threads" id="analysis-threads" type="number" min="1" max="32" step="1" value="8" disabled></label>
                 <label class="checkbox-field"><input name="beach" type="checkbox" checked><span>Пляжный волейбол</span></label>
               </div>
-              <p class="footnote">В CPU-режиме число потоков передаётся нейросети, при CUDA вычисления идут на GPU. CPU-потоки не гарантируют одинаковую загрузку всех ядер.</p>
+              <p class="footnote" id="analysis-cpu-note">Поиск мяча выполняется на GPU; CPU-этапы используют значения по умолчанию.</p>
               <button class="primary" type="submit">Запустить анализ всех видео проекта ↗</button>
               <span id="analysis-run-status" class="muted analysis-run-status">Ход обработки появится ниже. Результаты откроются после завершения.</span>
             </form>

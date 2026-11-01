@@ -515,8 +515,15 @@ async function pollJob() {
     info.progress==null?(info.status==="complete"?"100%":"—"):String(info.progress)+"%";
   $("#job-progress").style.width=Math.max(0,Math.min(100,shownPct))+"%";
   $("#cancel-job").disabled=info.status!=="running";
-  $("#job-log").textContent=info.log || "Здесь появятся сообщения pipeline.";
-  if(info.status==="running")$("#job-log").scrollTop=$("#job-log").scrollHeight;
+  const journal=$("#job-log");
+  const updatedLog=info.log || "Здесь появятся сообщения pipeline.";
+  if(journal.textContent!==updatedLog){
+    // Follow new entries only when the reader is already at the bottom.
+    // Scrolling up must keep the chosen position during polling.
+    const follow=journal.scrollHeight-journal.clientHeight-journal.scrollTop<=36;
+    journal.textContent=updatedLog;
+    if(follow)journal.scrollTop=journal.scrollHeight;
+  }
   $("#analysis-run-status").textContent=analysisJob?
     ({running:"Анализ выполняется · ход обработки и журнал ниже.",
       complete:"Анализ завершён. Результаты доступны в следующей вкладке.",
@@ -643,7 +650,21 @@ async function deleteProject(){
     error.textContent=e.message;error.hidden=false;
   }finally{button.disabled=false;}
 }
+function updateAnalysisCpuThreads(){
+  const backend=$("#analysis-form [name='backend']").value;
+  const usesCpu=backend==="onnx-cpu"||backend==="openvino";
+  const field=$("#analysis-cpu-field");
+  field.hidden=!usesCpu;
+  $("#analysis-threads").disabled=!usesCpu;
+  $("#analysis-cpu-row").classList.toggle("gpu-only",!usesCpu);
+  $("#analysis-cpu-note").textContent=usesCpu
+    ?"Количество потоков для CPU-обработки. Реальная загрузка ядер зависит от модели и этапа."
+    :"Мяч обрабатывается на GPU. CPU-этапы используют настройки по умолчанию.";
+}
 function bind() {
+  const backend=$("#analysis-form [name='backend']");
+  backend.addEventListener("change",updateAnalysisCpuThreads);
+  updateAnalysisCpuThreads();
   $("#project-settings-trigger").addEventListener("click",()=>{
     const menu=$("#project-settings-menu");
     if(menu.hidden)openSettingsMenu();else closeSettingsMenu();

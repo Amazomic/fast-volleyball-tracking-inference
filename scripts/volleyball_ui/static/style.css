@@ -1320,3 +1320,24 @@ body{zoom:.8}
  .analysis-current-actions>button{gap:7px;min-width:0;padding:9px 5px}
  .analysis-current-actions>button strong{font-size:11px}
 }
+
+/* Model-specific CPU tuning: hide entirely when the ball model runs on CUDA. */
+#analysis-cpu-field[hidden]{display:none!important}
+.analysis-cpu-row.gpu-only{grid-template-columns:minmax(0,1fr)}
+
+/* Job output is an independently scrollable console. */
+#analysis-job-panel #job-log{
+  box-sizing:border-box;
+  height:clamp(190px,36vh,330px);
+  max-height:none;
+  overflow-x:hidden;
+  overflow-y:auto;
+  overscroll-behavior:contain;
+  scrollbar-gutter:stable;
+  scrollbar-width:thin;
+  scrollbar-color:#527568 #101a18;
+}
+#analysis-job-panel #job-log:focus-visible{
+  outline:2px solid #a5e78b;
+  outline-offset:2px;
+}
