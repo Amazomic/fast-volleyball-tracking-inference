@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import re
 import signal
@@ -101,14 +102,12 @@ def start_job(kind: str, options: dict) -> dict:
             analysis_width = (0 if project_sources and options.get("analysis_width", "auto") in ("auto", None, "")
                               else target_width(video_info(source.name), options.get("analysis_width", "auto")))
             threads = int(options.get("threads", 8))
-            min_rally = float(options.get("min_rally", 1.5))
-            confidence = float(options.get("min_confidence", 0.5))
             start = float(options.get("analysis_start", 0))
             length = float(options.get("analysis_seconds", 0))
             if not (analysis_width == 0 or 320 <= analysis_width <= 1920 and analysis_width % 2 == 0):
                 raise ValueError("Ширина анализа должна быть чётной: 320–1920")
-            if not (1 <= threads <= 32 and 0.5 <= min_rally <= 30 and 0 < confidence <= 1):
-                raise ValueError("Проверьте число потоков, длину розыгрыша и порог уверенности")
+            if not 1 <= threads <= 32:
+                raise ValueError("CPU-потоки: от 1 до 32")
             if not (0 <= start < 86400 and 0 <= length <= 86400):
                 raise ValueError("Недопустимый диапазон анализа")
             cmd = [
@@ -116,7 +115,6 @@ def start_job(kind: str, options: dict) -> dict:
                 "--output", str(RUN_DIR), "--work", str(RESULTS / "analysis"),
                 "--analyze-only", "--non-interactive", "--backend", backend,
                 "--analysis-width", str(analysis_width), "--threads", str(threads),
-                "--min-rally", str(min_rally), "--min-confidence", str(confidence),
                 "--analysis-start", str(start),
             ]
             if length:
@@ -155,14 +153,20 @@ def start_job(kind: str, options: dict) -> dict:
             ]
         elif kind == "highlights":
             duration = float(options.get("duration", 120))
-            if not 10 <= duration <= 600:
+            min_rally = float(options.get("min_rally", 1.5))
+            confidence = float(options.get("min_confidence", .5))
+            if not (math.isfinite(duration) and 10 <= duration <= 600):
                 raise ValueError("Длина ролика: от 10 до 600 секунд")
+            if not (math.isfinite(min_rally) and .5 <= min_rally <= 30 and
+                    math.isfinite(confidence) and .05 <= confidence <= 1):
+                raise ValueError("Проверьте минимум розыгрыша и порог уверенности для монтажа")
             if project_sources:
                 missing = [p.name for p in project_sources if not find_cache(p.name, project_id)]
                 if missing:
                     raise ValueError("Сначала проанализируйте все видео: " + ", ".join(missing))
                 cmd = [sys.executable, str(ROOT / "scripts" / "build_project_highlights.py"),
-                       "--project-id", project_id, "--duration", str(duration)]
+                       "--project-id", project_id, "--duration", str(duration),
+                       "--min-rally", str(min_rally), "--min-confidence", str(confidence)]
             else:
                 if not find_cache(source.name):
                     raise ValueError("Сначала запустите анализ этого видео")

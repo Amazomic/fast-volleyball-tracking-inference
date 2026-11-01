@@ -205,10 +205,6 @@
               </details>
               <p id="resolution-explanation" class="footnote">Разрешение определяется автоматически.</p>
               <div class="form-row">
-                <label class="field"><span>Минимум розыгрыша, с</span><input name="min_rally" type="number" min="0.5" max="30" step="0.5" value="1.5"></label>
-                <label class="field"><span>Уверенность детекции</span><input name="min_confidence" type="number" min="0.05" max="1" step="0.05" value="0.5"></label>
-              </div>
-              <div class="form-row">
                 <label class="field"><span>CPU-потоки</span><input name="threads" type="number" min="1" max="32" step="1" value="8"></label>
                 <label class="checkbox-field"><input name="beach" type="checkbox" checked><span>Пляжный волейбол</span></label>
               </div>
@@ -356,6 +352,11 @@
               <p id="highlights-project-hint" class="notice">Для монтажа используются все видео выбранного проекта.</p>
 
               <label class="field"><span>Желаемая длительность, секунд</span><input name="duration" type="number" min="10" max="600" step="10" value="120"></label>
+              <div class="form-row">
+                <label class="field"><span>Минимум розыгрыша, с</span><input name="min_rally" type="number" min="0.5" max="30" step="0.5" value="1.5"></label>
+                <label class="field"><span>Минимальная уверенность розыгрыша</span><input name="min_confidence" type="number" min="0.05" max="1" step="0.05" value="0.5"></label>
+              </div>
+              <p class="footnote">Эти фильтры действуют только при выборе моментов для итогового ролика. Анализ видео повторять не нужно.</p>
               <p class="footnote">Приоритет — зрелищные полноценные розыгрыши, поэтому итоговая длительность может отличаться от заданной. Границы розыгрышей определяются эвристически.</p>
               <button class="primary wide" type="submit">Собрать лучшие моменты <span>↗</span></button>
             </form>

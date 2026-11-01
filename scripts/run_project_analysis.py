@@ -18,8 +18,6 @@ def main():
     parser.add_argument("--backend",choices=("onnx","openvino"),default="onnx")
     parser.add_argument("--analysis-width",type=int,default=1280)
     parser.add_argument("--threads",type=int,default=8)
-    parser.add_argument("--min-rally",type=float,default=1.5)
-    parser.add_argument("--min-confidence",type=float,default=.5)
     parser.add_argument("--analysis-start",type=float,default=0)
     parser.add_argument("--analysis-seconds",type=float,default=0)
     parser.add_argument("--beach",action="store_true")
@@ -45,7 +43,6 @@ def main():
              "--work",str(work),"--analyze-only",
              "--non-interactive","--backend",args.backend,
              "--analysis-width",str(width),"--threads",str(args.threads),
-             "--min-rally",str(args.min_rally),"--min-confidence",str(args.min_confidence),
              "--analysis-start",str(seg_start)]
         if seg_length>0:
             cmd+=["--analysis-seconds",str(seg_length)]

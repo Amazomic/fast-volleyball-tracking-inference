@@ -141,6 +141,16 @@ class ProjectDataTests(unittest.TestCase):
 
 
 class MultiSourceHighlightTests(unittest.TestCase):
+    def test_montage_filters_detected_duration_not_padded_length(self):
+        base = {"ranked":True, "detected_start_frame":50,
+                "detected_end_frame":94, "duration_sec":7.0,
+                "confidence":.83}
+        # Raw detection lasts 1.5 seconds, even if editing adds padding.
+        self.assertTrue(builder.montage_eligible(base,1.5,.8))
+        self.assertFalse(builder.montage_eligible(base,2.0,.8))
+        self.assertFalse(builder.montage_eligible(base,1.5,.9))
+        self.assertFalse(builder.montage_eligible({**base,"ranked":False},1.5,.2))
+
     def test_all_source_videos_appear_in_manifest(self):
         with tempfile.TemporaryDirectory() as folder:
             root=Path(folder)
@@ -151,8 +161,10 @@ class MultiSourceHighlightTests(unittest.TestCase):
                 cache.mkdir()
                 (cache/"ranking.json").write_text('[]',encoding="utf-8")
             clips={
-                "cache-a":[{"ranked":True,"ranking_score":9,"duration_sec":3,"source_start_frame":0,"source_end_frame":89}],
-                "cache-b":[{"ranked":True,"ranking_score":8,"duration_sec":4,"source_start_frame":90,"source_end_frame":209}],
+                "cache-a":[{"ranked":True, "ranking_score":9,"duration_sec":3,"source_start_frame":0,"source_end_frame":89,
+                     "detected_start_frame":0,"detected_end_frame":89,"confidence":.8}],
+                "cache-b":[{"ranked":True, "ranking_score":8,"duration_sec":4,"source_start_frame":90,"source_end_frame":209,
+                     "detected_start_frame":90,"detected_end_frame":209,"confidence":.9}],
             }
             produced=[]
             def mock_render(src,normalized,segments,output_path=None,segments_folder=None):
@@ -173,6 +185,8 @@ class MultiSourceHighlightTests(unittest.TestCase):
             manifest=json.loads((out/"highlights_manifest.json").read_text(encoding="utf-8"))
             self.assertEqual(set(produced),{"one.mp4","two.mp4"})
             self.assertEqual(len(manifest["selected_rallies"]),2)
+            self.assertEqual(manifest["min_rally_sec"],1.5)
+            self.assertEqual(manifest["min_confidence"],.5)
             self.assertTrue((out/"highlights.mp4").is_file())
 
 

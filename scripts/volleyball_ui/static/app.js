@@ -747,7 +747,12 @@ function bind() {
   $("#highlights-form").addEventListener("submit",e=>{
     e.preventDefault();
     if(!state.project)return alertBox("Сначала создайте проект");
-    submitTask("/api/highlights",{project_id:state.project,duration:Number(e.target.elements.duration.value)});
+    submitTask("/api/highlights",{
+      project_id:state.project,
+      duration:Number(e.target.elements.duration.value),
+      min_rally:Number(e.target.elements.min_rally.value),
+      min_confidence:Number(e.target.elements.min_confidence.value)
+    });
   });
   $("#cancel-job").addEventListener("click",()=>api("/api/cancel",{}).then(pollJob).catch(e=>alertBox(e.message)));
   $("#track-search").addEventListener("input",()=>{state.limit=60;renderPlayers()});

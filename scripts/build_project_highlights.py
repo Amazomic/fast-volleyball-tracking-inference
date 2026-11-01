@@ -26,13 +26,28 @@ def locate_cache(source: Path, project_id: str) -> Path:
     return cache
 
 
+def montage_eligible(group: dict, min_rally: float, min_confidence: float) -> bool:
+    """Filter scored, detected rally duration before context padding."""
+    duration = (int(group["detected_end_frame"]) -
+                int(group["detected_start_frame"]) + 1) / 30.0
+    return (bool(group["ranked"]) and duration >= min_rally and
+            float(group.get("confidence", 0.0)) >= min_confidence)
+
+
 def main():
     parser=argparse.ArgumentParser()
     parser.add_argument("--project-id",required=True)
     parser.add_argument("--duration",type=float,default=120)
+    parser.add_argument("--min-rally",type=float,default=1.5)
+    parser.add_argument("--min-confidence",type=float,default=.5)
     args=parser.parse_args()
-    if not 10<=args.duration<=600:
+    import math
+    if not (math.isfinite(args.duration) and 10<=args.duration<=600):
         parser.error("duration: 10..600")
+    if not (math.isfinite(args.min_rally) and .5<=args.min_rally<=30):
+        parser.error("min-rally: .5..30")
+    if not (math.isfinite(args.min_confidence) and .05<=args.min_confidence<=1):
+        parser.error("min-confidence: .05..1")
     videos=project_videos(args.project_id)
     project_root=project_dir(args.project_id)
     project_root.mkdir(parents=True,exist_ok=True)
@@ -43,13 +58,17 @@ def main():
         caches[src.name]=cache
         ranking=json.loads((cache/"ranking.json").read_text(encoding="utf-8"))
         for group in load_groups(cache,ranking):
-            if not group["ranked"]:
+            if not montage_eligible(group,args.min_rally,args.min_confidence):
                 continue
             group["video"]=src.name
             group["cache_id"]=cache.name
             groups.append(group)
     if not groups:
-        raise RuntimeError("Нет подходящих розыгрышей ни в одном видео")
+        raise RuntimeError(
+            "Нет розыгрышей, соответствующих фильтрам монтажа. "
+            "Уменьшите минимальную длительность или порог уверенности. "
+            "Если анализ выполнен старой версией, повторите анализ для обновления рейтинга."
+        )
     selected=choose_whole_groups(groups,args.duration,max_over_sec=8)
     by_video=defaultdict(list)
     for item in selected:
@@ -82,6 +101,8 @@ def main():
     manifest={"project_id":args.project_id,"source_videos":[x.name for x in videos],
               "selected_rallies":selected,
               "total_seconds":round(sum(x["duration_sec"] for x in selected),3),
+              "min_rally_sec": args.min_rally,
+              "min_confidence": args.min_confidence,
               "method":"globally ranked complete detected rallies across all project videos"}
     (project_root/"highlights_manifest.json").write_text(json.dumps(manifest,ensure_ascii=False,indent=2),encoding="utf-8")
     print(f"PROJECT VIDEO READY {output} ({manifest['total_seconds']} sec, {len(selected)} rallies, "

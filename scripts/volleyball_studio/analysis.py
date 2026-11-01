@@ -92,14 +92,14 @@ def analyze(source, work, args):
         return [player_path]
 
     cached(folder, "players", player_key, players)
-    track_key = key([ball_key, player_key, identity(court) if court.exists() else None, 1.5, args.beach])
+    track_key = key([ball_key, player_key, identity(court) if court.exists() else None, 0.5, args.beach])
 
     def tracks():
         track_dir = folder / "tracks/analysis/tracks"
         if track_dir.exists():
             for old in track_dir.glob("track_*.json"):
                 old.unlink()
-        command = [sys.executable, ROOT / "src/track_calculator_with_court.py", "--csv_path", csv_path, "--players_json_path", player_path, "--fps", "30", "--video_width", str(width), "--video_height", str(height), "--min_duration_sec", "1.5", "--output_dir", folder / "tracks"]
+        command = [sys.executable, ROOT / "src/track_calculator_with_court.py", "--csv_path", csv_path, "--players_json_path", player_path, "--fps", "30", "--video_width", str(width), "--video_height", str(height), "--min_duration_sec", "0.5", "--output_dir", folder / "tracks"]
         if court.exists():
             annotation = json.loads(court.read_text(encoding="utf-8"))
             old_w = annotation.get("frame_width", annotation.get("image_width"))
@@ -175,7 +175,9 @@ def analyze(source, work, args):
     all_tracks = json.loads(enriched_path.read_text())
     for track in all_tracks:
         track["player_interaction"]["contacts"] = contacts_for(timeline, track)
-        candidate = score_track(track, balls, width, args.min_rally, args.min_confidence, bool(court.exists()))
+        # Keep a broad set of scored candidates. User montage thresholds are
+        # applied later, so changing the edit does not rerun detection.
+        candidate = score_track(track, balls, width, 0.5, 0.05, bool(court.exists()))
         if candidate:
             candidate.update(id=key([str(source), candidate["start"], candidate["end"]]), source=str(source), source_content=source_id[-1], analysis_offset=args.analysis_start, analysis_width=width, analysis_height=height, track=track, ball=balls, players=players_by_frame, ball_rows=ball_rows, cache=str(folder), events=str(event_path), source_duration=float(source_probe["format"]["duration"]))
             candidate["components"].update(player_motion=player_motion(players_by_frame, candidate["start"], candidate["end"], width))
