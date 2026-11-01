@@ -128,17 +128,21 @@
                     <span id="court-toggle-title">Разметить площадку</span>
                     <span id="court-progress" class="court-button-hint">необязательно</span>
                   </button>
-                  <button type="button" id="court-skip" class="secondary small" hidden>Пропустить точку</button>
-                  <button type="button" id="court-undo" class="secondary small" hidden title="Отменить последнюю точку">↶ Назад</button>
-                  <button type="button" id="court-clear" class="secondary small" hidden>Сбросить</button>
                 </div>
                 <span id="preview-source-details" class="muted">Выберите исходное видео</span>
               </div>
-              <div id="court-instruction" class="court-inline-hint" hidden>
-                <strong id="court-point-prompt">Точка 1/8</strong>
-                <span>Нажмите на изображение или рядом с ним. Положение определяется автоматически.</span>
-              </div>
               <div class="workspace-video-player">
+                <div id="court-instruction" class="court-inline-hint" hidden>
+                  <div class="court-edit-explanation">
+                    <strong id="court-point-prompt">Точка 1/8</strong>
+                    <span>Отмечайте точки на видео или в свободном поле вокруг него.</span>
+                  </div>
+                  <div class="court-edit-actions">
+                    <button type="button" id="court-skip" class="secondary small" hidden>Пропустить точку</button>
+                    <button type="button" id="court-undo" class="secondary small" hidden title="Отменить последнюю точку">↶ Назад</button>
+                    <button type="button" id="court-clear" class="secondary small" hidden>Сбросить</button>
+                  </div>
+                </div>
                 <video id="source-video-player" playsinline preload="metadata" aria-label="Просмотр исходного видео"></video>
                 <div class="source-overlay-actions" aria-label="Управление воспроизведением">
                   <button type="button" id="source-play-toggle" class="source-overlay-button"

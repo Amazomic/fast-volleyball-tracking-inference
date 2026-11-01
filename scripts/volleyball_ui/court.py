@@ -61,8 +61,10 @@ def validate_court(project_id: str, video: str, payload: dict):
             if not 0 <= x <= width or not 0 <= y <= height:
                 raise ValueError(f"Точка {i+1} за пределами кадра")
         else:
-            # Offscreen estimates are allowed only reasonably near the frame.
-            if not (-width*.5 <= x <= width*1.5 and -height*.5 <= y <= height*1.5):
+            # The UI uses the whole fixed video workspace as the editable
+            # area. Wide offscreen estimates are valid; still reject extreme,
+            # likely accidental coordinates instead of trusting unbounded input.
+            if not (-width*3 <= x <= width*4 and -height*3 <= y <= height*4):
                 raise ValueError(f"Предполагаемая точка {i+1} слишком далеко от кадра")
             if 0 <= x <= width and 0 <= y <= height:
                 raise ValueError("Для точки внутри кадра используйте режим «В кадре»")

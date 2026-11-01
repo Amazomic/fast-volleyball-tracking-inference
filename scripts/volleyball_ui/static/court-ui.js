@@ -8,7 +8,6 @@ window.VolleyballCourtUI=(()=>{
     "Ближний правый угол","Условная середина слева","Условная середина справа",
     "Сетка слева","Сетка справа"];
   const LINKS=[[0,4],[4,1],[1,2],[2,5],[5,3],[3,0],[4,5],[4,6],[6,7],[7,5]];
-  const PAD=.2,VIDEO_SCALE=1/(1+PAD*2);
   let meta=null,projectId="",video="",saved=null,points=Array(8).fill(null),
       editing=false,dirty=false,index=0,frameSec=0,seq=0,drag=null,history=[];
   const overlay=()=>E("court-overlay"),player=()=>E("source-video-player");
@@ -43,15 +42,28 @@ window.VolleyballCourtUI=(()=>{
     player().parentElement.classList.toggle("court-outside-mode",editing);
     if(!meta){surface.setAttribute("hidden","");feedback();return;}
     const w=meta.width,h=meta.height;
-    // The image is reduced by VIDEO_SCALE. The expanded coordinates cover
-    // the entire stage including the margins around the image.
-    const margin=editing?PAD:0;
-    surface.setAttribute("viewBox",[-margin*w,-margin*h,w*(1+2*margin),h*(1+2*margin)].join(" "));
+    // Extend source-image coordinates across the WHOLE stable gallery canvas.
+    // The measured rendered video rectangle determines the real image-to-canvas
+    // scale. There is no second small annotation box with independent padding.
     const show=editing||Boolean(saved&&Math.abs(player().currentTime-saved.frame_sec)<1.5);
-    surface.toggleAttribute("hidden",!show);
-    const line=Math.max(2,w/450);
-    surface.appendChild(element("rect",{x:-margin*w,y:-margin*h,width:w*(1+2*margin),
-      height:h*(1+2*margin),fill:"transparent","pointer-events":editing?"all":"none"}));
+    if(!show){surface.setAttribute("hidden","");feedback();return;}
+    // Unhide BEFORE measuring: a hidden SVG has a 0×0 bounding box.
+    surface.removeAttribute("hidden");
+    const stageRect=surface.getBoundingClientRect();
+    const imageRect=player().getBoundingClientRect();
+    const scale=Math.min(imageRect.width/w,imageRect.height/h);
+    if(!Number.isFinite(scale)||scale<=0||stageRect.width<=0||stageRect.height<=0){
+      surface.setAttribute("hidden","");feedback();return;
+    }
+    const vx=(stageRect.left-imageRect.left)/scale;
+    const vy=(stageRect.top-imageRect.top)/scale;
+    const vw=stageRect.width/scale,vh=stageRect.height/scale;
+    surface.setAttribute("viewBox",[vx,vy,vw,vh].join(" "));
+    // Keep point markers comfortably clickable even when a portrait source
+    // is displayed small inside a wide annotation workspace.
+    const line=Math.max(2,w/450,1.8/scale);
+    surface.appendChild(element("rect",{x:vx,y:vy,width:vw,height:vh,
+      fill:"transparent","pointer-events":editing?"all":"none"}));
     if(editing)surface.appendChild(element("rect",{
       x:0,y:0,width:w,height:h,fill:"none",stroke:"#a5e98c",
       "stroke-width":line*2,"stroke-dasharray":(line*6)+" "+(line*4),
@@ -206,5 +218,5 @@ window.VolleyballCourtUI=(()=>{
     ++seq;meta=null;video="";projectId="";saved=null;points=Array(8).fill(null);
     editing=false;dirty=false;history=[];index=0;render();
   }
-  return{init,setVideo,snapshot,markSaved,reset,isEditing:()=>editing};
+  return{init,setVideo,snapshot,markSaved,reset,isEditing:()=>editing,refreshGeometry:render};
 })();

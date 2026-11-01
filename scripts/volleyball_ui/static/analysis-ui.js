@@ -16,13 +16,19 @@ window.VolleyballAnalysisUI=(()=>{
   const width=()=>E("manual-width-enabled").checked?Number(E("analysis-width").value):meta?.auto_width;
   function fitSourceFrame(){
     if(!meta)return;
+    const stage=document.querySelector(".workspace-video-player");
     const main=document.querySelector(".workspace-video-main");
-    if(!main)return;
-    // Fit the actual display orientation, not the full horizontal workspace.
-    const maxHeight=Math.min(window.innerHeight*.54,570);
-    const fitWidth=maxHeight*meta.width/meta.height;
-    main.style.setProperty("--source-display-width",Math.max(1,fitWidth)+"px");
+    if(!stage||!main)return;
+    // Size the visible image inside the FIXED gallery canvas. Do not alter
+    // the canvas's dimensions or the layout when annotation is switched on.
+    const availableWidth=Math.max(1,stage.clientWidth-12);
+    const availableHeight=Math.max(1,stage.clientHeight-12);
+    const w=Math.min(availableWidth,availableHeight*meta.width/meta.height);
+    const h=w*meta.height/meta.width;
+    main.style.setProperty("--source-video-width",w+"px");
+    main.style.setProperty("--source-video-height",h+"px");
     main.style.setProperty("--source-aspect",meta.width+"/"+meta.height);
+    if(window.VolleyballCourtUI)window.VolleyballCourtUI.refreshGeometry();
   }
 
   function updatePlayButton(){
@@ -261,6 +267,10 @@ window.VolleyballAnalysisUI=(()=>{
       }
     });
     window.addEventListener("resize",fitSourceFrame);
+    if(typeof ResizeObserver!=="undefined"){
+      const stage=document.querySelector(".workspace-video-player");
+      new ResizeObserver(fitSourceFrame).observe(stage);
+    }
     player().addEventListener("error",()=>{
       if(meta)E("source-playback-note").textContent=
         "Браузер не поддерживает кодек этого видео. Диапазон можно задавать вручную.";

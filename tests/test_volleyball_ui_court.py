@@ -88,8 +88,16 @@ class ProjectCourtTests(unittest.TestCase):
         self.assertTrue(court.get_court(self.a["id"],"game.mp4"))
         self.assertEqual(court.project_context(self.a["id"])["videos"][0]["court_estimated"],1)
         self.assertTrue(court.project_context(self.a["id"])["videos"][0]["court_homography_ready"])
+        # An entire wide editor canvas is usable, not merely the 20% border
+        # around the source frame. This remains an explicitly estimated point.
+        wide = self.sample()
+        wide["keypoints"][0].update(x=-1902.208, y=1452.225,
+                                    status="estimated", visible=False)
+        validated = court.validate_court(self.a["id"], "game.mp4", wide)
+        self.assertEqual(validated["keypoints"][0]["x"], -1902.208)
+        self.assertFalse(validated["keypoints"][0]["visible"])
         other = self.sample()
-        other["keypoints"][0].update(x=-650,y=1400,status="estimated",visible=False)
+        other["keypoints"][0].update(x=-4000,y=1400,status="estimated",visible=False)
         with self.assertRaisesRegex(ValueError,"слишком далеко"):
             court.validate_court(self.a["id"],"game.mp4",other)
 
