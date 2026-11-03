@@ -1,25 +1,41 @@
-# Fast Volleyball Ball Tracking -> Vertical Reels
+# Fast Volleyball Ball Tracking → Volley Studio
 
-## Volley Studio — browser UI (this fork)
+## Volley Studio — local volleyball analysis and reels
 
-This fork adds a local dashboard for **projects containing one or multiple source videos**, **analysis parameters and color-coded event timelines**, **source/analysis frame previews**, **analysis progress**, **mapping multiple track IDs to one named player**, **match reports**, **isolated per-project data**, **performance benchmarking (FFmpeg vs full inference pipeline)**, and **full-rally highlight rendering across all project recordings**.
+This fork provides a browser-based workspace for **multi-video projects**, reusable **analysis profiles**, player detection and association, ball trajectories, touch/event previews, rally timelines, manual/automatic reel selection, vertical ball-following crops, and progress reporting.
 
-- Windows + WSL Ubuntu-25.04: double-click `start-volley-ui.cmd`.
-- WSL terminal in the repository root: `.venv/bin/python -m scripts.volleyball_ui`.
-- Open **http://127.0.0.1:8765** in your browser.
-- Source videos: `project/`; cached analysis, highlights, player names and job logs: `results/`.
+- Windows + WSL Ubuntu: double-click `start-volley-ui.cmd`.
+- WSL terminal from the repository root: `.venv/bin/python -m scripts.volleyball_ui`.
+- Open **http://127.0.0.1:8765**.
+- Source recordings: `project/`; project-scoped runs and montage results: `results/projects/`; reusable prepared videos: `results/prepared/`.
 - [Detailed UI guide (Russian)](docs/VOLLEY_STUDIO_UI.md).
 
-**Video formats:** Drop recordings into `project/` and add them to a project.
-**No pre-conversion is required.** The server reads local files with FFmpeg.
-Browser-compatible H.264 MP4 is served directly. For HEVC/H.265 and other
-supported codecs that a browser cannot play, Volley Studio converts only the
-requested short playback segments (18 seconds each) to H.264 on demand.
-The whole match is **not** preprocessed; original files are not changed.
-Short segments are shared between projects and evicted above a 160 MB cache
-budget. Input format/container still needs to be readable by local FFmpeg.
+### How the current Studio pipeline works
 
-The UI runs locally and does **not** upload video to any external service. Identity assignments are user-reviewed mappings, not automatic proof that two track IDs represent the same person.
+1. **Import / preparation:** source recordings remain unchanged. FFmpeg automatically prepares a reusable H.264 / 30 FPS analysis copy in `results/prepared/`, shared between projects when the source identity and normalization parameters match. This is a separate, visible stage.
+2. **Neural inference:** VballNet (ball) produces `ball.csv`; RAVEL (players, its own ball detections, and—on RAVEL-013—Touch predictions) produces `players.json`. Model/backend selection belongs to the analysis profile.
+3. **Postprocessing:** `src/track_calculator_with_court.py` builds ball tracks, estimates geometric contacts and heuristically classifies rally-like intervals; `scripts/rally_boundaries.py` reconstructs groups and safe context. **RAVEL-013's direct Touch scores are currently a separate preview, not the input to rally classification.**
+4. **Results / montage:** each completed analysis has its own project-linked cache and ranking. Montage selects reconstructed rallies using these saved results and cuts the **original recording** at corresponding timestamps. Ball-following reels additionally use the saved track coordinates.
+
+Rally boundaries are **heuristic, not verified serve-to-point annotations**; a lost ball track can still truncate a detected interval. The application runs locally and does not upload videos to an external service. Athlete identity links are user-reviewed rather than verified by the detector.
+
+## Measured inference speed (CPU vs CUDA)
+
+![Measured inference FPS for VballNet and RAVEL on Ryzen 9 / RTX 5070 Ti Laptop GPU](docs/images/benchmark-inference-fps.png)
+
+Real nine-frame input benchmark from the Studio UI, recorded **3 November 2026** (series `03d06a978a92`; 10/10 CPU/GPU measurements). Hardware: **AMD Ryzen 9 9955HX**, **NVIDIA GeForce RTX 5070 Ti Laptop GPU**, **26 CPU threads**, **ONNX Runtime 1.31.1**.
+
+| Model | CPU FPS | CUDA FPS |
+| --- | ---: | ---: |
+| VballNetV4c | 309.8 | 1,955.5 |
+| VballNetFastV1 | 770.1 | 3,780.2 |
+| RAVEL-VB-011 | 328.5 | 1,665.2 |
+| RAVEL-VB-012 | 68.4 | 382.5 |
+| **RAVEL-VB-013** | **68.0** | **371.1** |
+
+These are **inference-only throughput figures**, not real-world full-video processing speed or detection accuracy. Each model uses the same nine decoded source frames, resized and converted to that model's required input shape **before timing**; CPU and CUDA runs are sequential. Throughput is calculated as 9 frames divided by median synchronous inference latency. Video decoding, preprocessing, tracking, rally classification, rendering, and encoding are excluded. Different models have different native input resolutions.
+
+To reproduce on a local project: `uv run scripts/benchmark_project.py --project-id <project-id>`. The older accuracy/CPU-speed table below uses a **different machine and benchmark**, and should not be compared directly.
 
 ## Live demos
 - VPS: [Tracking - ball](https://demo.vb-ai.ru/)
@@ -29,7 +45,10 @@ High-speed pipeline for volleyball ball detection, rally extraction, and automat
 
 [![src/ball_tracker.py](examples/ball-tracking.jpg)](https://www.youtube.com/watch?v=TBDrTMFMoFA)
 
-## Pipeline
+## Standalone ball-tracking CLI (legacy pipeline)
+
+The steps below document the original ball-only CLI, **not** the complete Volley Studio project workflow described above.
+
 1. `src/inference_onnx_seq_gray_v2.py` -> detects ball and writes `ball.csv` (and optional `predict.mp4`).
 2. `src/track_calculator.py` -> converts `ball.csv` to rally tracks (`track_*.json`).
 3. `src/track_processor.py` -> creates combined video (`combined.mp4`) or split rally clips.
@@ -138,11 +157,23 @@ uv run src/show_rally.py output/beach-mixt/tracks /path/to/video.mp4 \
   (works without a display).
 
 ### `src/make_reels.py`
-- `--smoothing {none,moving_avg,savitzky_golay,kalman}`
-- `--interpolation {hold,linear}`
+- `--smoothing {none,moving_avg,savitzky_golay,kalman}` - smooth camera motion.
+- `--interpolation {hold,linear}` - fill missing tracked-ball coordinates.
 - `--margin` - lead offset in movement direction.
 - `--padding` - seconds added before the start and after the end of each rally (default 0.33).
-  The crop never leaves the frame.
+- `--zoom-max 1.35` - speed-adaptive zoom on portrait sources (allowed 1–2).
+  The crop follows ball X **and Y**; quick movement widens the view and
+  quieter movement zooms in. Use `--zoom-max 1` for no zoom.
+  The crop remains inside the original video frame and exports 9:16.
+
+The fork's montage now reconstructs common rally intervals in
+`scripts/rally_boundaries.py`, reused by Results and full-rally montage.
+Very short VballNet track dropouts can be joined; strongly classified
+technical returns or a confirmed new serve prevent accidental joining.
+These boundaries are **heuristic**. The pipeline does not have validated
+serve/point annotations for every rally, so it cannot guarantee exact
+serve-to-point edits. Vertical export receives one combined track payload
+per chosen rally instead of trimming each separate ball track.
 
 
 ## OpenVino runtime
@@ -152,32 +183,39 @@ uv run src/show_rally.py output/beach-mixt/tracks /path/to/video.mp4 \
 - `--only_csv`
 - `--output_dir ./demo-result/`
 
-### Players + ball detection: `src/inference_player_ball_openvino.py`
-Detects players (with track IDs), the ball and player heads with a RAVEL-VB
-OpenVINO release and writes `<video>_predictions.json` (`ravel-vb-predictions-v1`),
-the file `src/show_rally.py` and `--players_json_path` read.
-```bash
-# RAVEL-VB-012: VB7 yolo26n encoder, 640x360 RGB, players + ball + heads (default model)
-uv run src/inference_player_ball_openvino.py ./examples/gtu_20250316_002.mp4 \
-  --model ./ov/RAVEL-VB-012-9f.xml \
-  --output ./demo-result/ \
-  --output-video ./demo-result/gtu_20250316_002_players.mp4
+### Players + ball + Touch: `src/inference_player_ball_openvino.py`
+RAVEL releases predict player boxes / track associations and, when supported by
+the release, ball locations, head points and actions. RAVEL-VB-013 outputs
+`Touch` / `none` classifications per detected player, **not rally boundaries**.
+The tool writes a `ravel-vb-predictions-v1` JSON consumed by the UI and
+`--players_json_path` tools.
 
-# RAVEL-VB-011: v45 dense grid, 1024x576 grayscale, players + ball, ~2.5x faster on CPU
+```bash
+# RAVEL-VB-013: ONNX Runtime CUDA, 640x360 RGB, 9-frame clips, Touch scores
 uv run src/inference_player_ball_openvino.py ./examples/gtu_20250316_002.mp4 \
-  --model ./ov/RAVEL-VB-011-9f.xml --output ./demo-result/
+  --model ./models/RAVEL-VB-013-9f.onnx \
+  --backend onnx-cuda --device GPU \
+  --output ./demo-result/players.json
+
+# RAVEL-VB-012: OpenVINO example
+uv run src/inference_player_ball_openvino.py ./examples/gtu_20250316_002.mp4 \
+  --model ./ov/RAVEL-VB-012-9f.xml --output ./demo-result/
 ```
 - `--output` - JSON file or directory (a directory gets `<video>_predictions.json`).
 - `--output-video` - annotated video; `--show` - live window (`Esc`/`q` to stop).
 - `--score-threshold 0.35` / `--close-threshold 0.20` / `--hysteresis-frames 2` -
   player open/close thresholds and how many frames a lost player is held.
-- `--ball-threshold 0.35`, `--head-threshold 0.30` - separate thresholds for the
-  ball and head points (heads come only from RAVEL-VB-012).
+- `--ball-threshold 0.35`, `--head-threshold 0.30` - thresholds for
+  model-provided ball and head detections.
+- `--action-threshold 0.35` - threshold for RAVEL-013 Touch classification;
+  actions below the threshold are not retained as final Touch predictions.
 - `--stride 9` - clip step; `--frame-step 2` feeds every second frame (faster, coarser).
-- `--device {CPU,GPU,AUTO}`, `--num-threads N`.
-- Input size, channels and clip length are read from the model's sidecar `.json`,
-  so any release in `ov/` runs without extra flags. ONNX copies of the same
-  releases are in `models/RAVEL-VB-01{1,2}-9f.onnx`.
+- `--device {CPU,GPU,AUTO}`, `--num-threads N`; ONNX CUDA uses
+  `--backend onnx-cuda --device GPU`.
+- Input size, channels and clip length are read from the model's sidecar `.json`.
+  ONNX models include `models/RAVEL-VB-011-9f.onnx`,
+  `models/RAVEL-VB-012-9f.onnx`, and `models/RAVEL-VB-013-9f.onnx`
+  (with corresponding `.json` metadata).
 
 ## Available ONNX models
 Benchmark setup:
