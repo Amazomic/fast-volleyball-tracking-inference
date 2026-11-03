@@ -1,6 +1,11 @@
 import argparse
 import json
+import os
 from pathlib import Path
+
+# OpenCV's bundled Qt may look for fonts in a non-existent cv2/qt/fonts folder.
+if os.path.isdir('/usr/share/fonts/truetype/dejavu'):
+    os.environ.setdefault('QT_QPA_FONTDIR', '/usr/share/fonts/truetype/dejavu')
 
 import cv2
 
@@ -242,13 +247,21 @@ def annotate_video(video_path, output_dir, json_court=None):
     keypoints, frame_index = load_existing_annotation(
         annotation_path, frame_width, frame_height
     )
+    # Default reference points target a landscape camera. For portrait video
+    # they are misleading and obscure the image, so start from blank points.
+    if frame_height > frame_width and not annotation_path.exists():
+        for point in keypoints:
+            point.update(x=None, y=None, visible=False)
     if json_court is not None:
         print(f"Loaded court annotation from {json_court}")
     frame_index = clamp_frame_index(frame_index, frame_count)
 
     window_name = "Court Keypoint Annotation"
     cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
-    cv2.resizeWindow(window_name, min(frame_width, 1600), min(frame_height, 900))
+    preview_scale = min(1.0, 1400 / frame_width, 900 / frame_height)
+    cv2.resizeWindow(
+        window_name, int(frame_width * preview_scale), int(frame_height * preview_scale)
+    )
     state = {"current_idx": 0}
     is_fullscreen = False
 
@@ -258,50 +271,70 @@ def annotate_video(video_path, output_dir, json_court=None):
             current_point["x"] = int(x)
             current_point["y"] = int(y)
             current_point["visible"] = True
+            state["redraw"] = True
         elif event == cv2.EVENT_MBUTTONDOWN:
             current_point["x"] = None
             current_point["y"] = None
             current_point["visible"] = False
+            state["redraw"] = True
 
+    state["redraw"] = True
     cv2.setMouseCallback(window_name, mouse_callback)
+    cached_frame = None
+    cached_frame_index = -1
 
-    while True:
-        ok, frame = read_frame(cap, frame_index)
-        if not ok:
-            break
+    try:
+        while True:
+            # Clicking the window close button must terminate the process, too.
+            if cv2.getWindowProperty(window_name, cv2.WND_PROP_VISIBLE) < 1:
+                save_annotation(output_path, video_path, frame_index, frame_width, frame_height, keypoints)
+                break
 
-        draw_ui(frame, keypoints, state["current_idx"], frame_index, frame_count, output_path)
-        key = cv2.waitKey(20) & 0xFF
+            # Do not seek/decode a large HEVC file again on every GUI tick.
+            if cached_frame_index != frame_index:
+                ok, cached_frame = read_frame(cap, frame_index)
+                if not ok:
+                    break
+                cached_frame_index = frame_index
+                state["redraw"] = True
 
-        if key == ord("q"):
-            save_annotation(output_path, video_path, frame_index, frame_width, frame_height, keypoints)
-            break
-        if key == 19:
-            save_annotation(output_path, video_path, frame_index, frame_width, frame_height, keypoints)
-            print(f"Saved annotation to {output_path}")
-            continue
-        if key == ord("n"):
-            state["current_idx"] = min(len(keypoints) - 1, state["current_idx"] + 1)
-        elif key == ord("p"):
-            state["current_idx"] = max(0, state["current_idx"] - 1)
-        elif key == ord("d"):
-            frame_index = clamp_frame_index(frame_index + 1, frame_count)
-        elif key == ord("a"):
-            frame_index = clamp_frame_index(frame_index - 1, frame_count)
-        elif key == ord("w"):
-            frame_index = clamp_frame_index(frame_index + 15, frame_count)
-        elif key == ord("s"):
-            frame_index = clamp_frame_index(frame_index - 15, frame_count)
-        elif key == ord("f"):
-            is_fullscreen = not is_fullscreen
-            cv2.setWindowProperty(
-                window_name,
-                cv2.WND_PROP_FULLSCREEN,
-                cv2.WINDOW_FULLSCREEN if is_fullscreen else cv2.WINDOW_NORMAL,
-            )
+            if state["redraw"]:
+                draw_ui(cached_frame, keypoints, state["current_idx"], frame_index, frame_count, output_path)
+                state["redraw"] = False
+            key = cv2.waitKey(40) & 0xFF
 
-    cap.release()
-    cv2.destroyAllWindows()
+            if key == ord("q"):
+                save_annotation(output_path, video_path, frame_index, frame_width, frame_height, keypoints)
+                break
+            if key == 19:
+                save_annotation(output_path, video_path, frame_index, frame_width, frame_height, keypoints)
+                print(f"Saved annotation to {output_path}")
+                continue
+            if key == ord("n"):
+                state["current_idx"] = min(len(keypoints) - 1, state["current_idx"] + 1)
+                state["redraw"] = True
+            elif key == ord("p"):
+                state["current_idx"] = max(0, state["current_idx"] - 1)
+                state["redraw"] = True
+            elif key == ord("d"):
+                frame_index = clamp_frame_index(frame_index + 1, frame_count)
+            elif key == ord("a"):
+                frame_index = clamp_frame_index(frame_index - 1, frame_count)
+            elif key == ord("w"):
+                frame_index = clamp_frame_index(frame_index + 15, frame_count)
+            elif key == ord("s"):
+                frame_index = clamp_frame_index(frame_index - 15, frame_count)
+            elif key == ord("f"):
+                is_fullscreen = not is_fullscreen
+                cv2.setWindowProperty(
+                    window_name,
+                    cv2.WND_PROP_FULLSCREEN,
+                    cv2.WINDOW_FULLSCREEN if is_fullscreen else cv2.WINDOW_NORMAL,
+                )
+                state["redraw"] = True
+    finally:
+        cap.release()
+        cv2.destroyAllWindows()
     return output_path
 
 

@@ -49,11 +49,21 @@ def parser():
     p.add_argument("--benchmark", action="store_true")
     p.add_argument("--encoder", choices=["auto", "cpu", "nvenc"], default="auto")
     p.add_argument("--backend", choices=["onnx", "onnx-cpu", "openvino"], default="onnx")
+    from .ball_models import BALL_MODELS, DEFAULT_BALL_MODEL
+    p.add_argument("--ball-model", choices=BALL_MODELS, default=DEFAULT_BALL_MODEL)
+    p.add_argument("--ball-threshold", type=float, default=0.5,
+                   help="Confidence cutoff for ball detection (0.05–0.95)")
     p.add_argument("--threads", type=int, default=8)
+    p.add_argument("--gpu-device-id", type=int, default=0, help="ONNX CUDA GPU index")
+    p.add_argument("--gpu-memory-limit-mb", type=int, default=0,
+                   help="ONNX CUDA memory arena limit in MiB, 0 means unlimited")
     p.add_argument("--min-confidence", type=positive, default=.65)
     p.add_argument("--analysis-width", type=int, default=1280)
+    p.add_argument("--prepared-video", type=Path, default=None,
+                   help="Validated 30 FPS project proxy. Original --input remains canonical.")
     p.add_argument("--analysis-seconds", type=positive)
     p.add_argument("--analysis-start", type=float, default=0.)
+    p.add_argument("--cache-salt", default="", help=argparse.SUPPRESS)
     p.add_argument("--width", type=int, default=1080)
     p.add_argument("--court-json", type=Path, default=None,
                    help="Explicit validated project-scoped court calibration")
@@ -63,6 +73,8 @@ def parser():
     p.add_argument("--non-interactive", action="store_true")
     p.add_argument("--resume", type=Path)
     p.add_argument("--doctor", action="store_true")
+    from .advanced import add_arguments
+    add_arguments(p)
     return p
 
 
@@ -115,8 +127,19 @@ def main():
     if args.plan_only:
         print(json.dumps(vars(args), ensure_ascii=False, default=str, indent=2))
         return
-    from .resources import limit_cpus
-    limit_cpus(args.threads)
+    from .advanced import from_namespace
+    from_namespace(args)  # Fail on invalid advanced parameters before launching video inference.
+    from .resources import configure_cpu_threads
+    configure_cpu_threads(args.threads)
+    print(json.dumps({
+        "event": "CPU_THREADS_CONFIG",
+        "cpu_inference_threads": args.threads,
+        "available_logical_processors": len(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity") else os.cpu_count(),
+        "cpu_affinity_limited_by_studio": False,
+        "backend": args.backend,
+        "ball_inference_cpu": args.backend in ("onnx-cpu", "openvino"),
+        "players_inference_cpu": True,
+    }, ensure_ascii=False), flush=True)
     tools_present()
     if args.doctor:
         doctor()
@@ -132,6 +155,8 @@ def main():
     apply_style(args)
     if args.count < 1 or args.threads < 1 or args.duration <= 0 or args.min_rally <= 0 or args.min_confidence > 1 or args.event_confidence > 1 or args.width % 18 or args.width < 180 or args.analysis_width < 320 or args.analysis_width % 2 or not math.isfinite(args.analysis_start) or args.analysis_start < 0:
         raise ValueError("Некорректные параметры: width кратна 18, analysis-width чётная, count/threads >=1, confidence <=1")
+    if not math.isfinite(args.ball_threshold) or not 0.05 <= args.ball_threshold <= 0.95:
+        raise ValueError("Порог уверенности мяча должен быть от 0,05 до 0,95")
     if any(not math.isfinite(v) or v < 0 or v > 4 for v in (args.match_volume, args.music_volume, args.accent_volume)):
         raise ValueError("Громкость должна быть в диапазоне 0..4")
     source_root = args.input.resolve()
@@ -173,7 +198,7 @@ def main():
         candidates = []
         for number, video in enumerate(videos, 1):
             progress_context(stage="B/C", video=video.name, video_number=number, videos_total=len(videos), overall_percent=round(3+50*(number-1)/len(videos), 1))
-            print(json.dumps({"stage": "B Detection / C Game Analysis", "video": video.name, "video_number": number, "videos_total": len(videos), "overall_percent": round(3+50*(number-1)/len(videos), 1), "backend": args.backend, "players_backend": "OpenVINO CPU"}), flush=True)
+            print(json.dumps({"stage": "B Detection / C Game Analysis", "video": video.name, "video_number": number, "videos_total": len(videos), "overall_percent": round(3+50*(number-1)/len(videos), 1), "backend": args.backend, "ball_model": args.ball_model, "cpu_threads": args.threads, "players_backend": args.player_backend, "players_model": args.player_model, "gpu_memory_limit_mb": args.gpu_memory_limit_mb}), flush=True)
             try:
                 items, warnings, cache = analyze(video, args.work, args)
                 candidates.extend(items)

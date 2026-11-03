@@ -134,9 +134,10 @@ def get_index(cache: Path, project_id=None) -> dict:
         return index
 
 
-def photos_metadata(video: str, track_id, project_id=None) -> dict:
+def photos_metadata(video: str, track_id, project_id=None, cache_id=None) -> dict:
     data.video_path(video)
-    cache = data.find_cache(video, project_id)
+    from .analysis_runs import cache_for
+    cache = cache_for(video,project_id,cache_id) if cache_id else data.find_cache(video, project_id)
     if cache is None:
         raise FileNotFoundError("Видео ещё не проанализировано")
     tid = validate_track_id(track_id)
@@ -146,14 +147,15 @@ def photos_metadata(video: str, track_id, project_id=None) -> dict:
         {"index": i, "frame": entry["frame"],
          "time_sec": round(entry["frame"]/index["fps"], 2),
          "confidence": entry["confidence"],
-          "url": f"/api/player-photo?video={quote(video, safe='')}&id={tid}&sample={i}" + (f"&project_id={project_id}" if project_id else "")}
+          "url": f"/api/player-photo?video={quote(video, safe='')}&id={tid}&sample={i}" + (f"&project_id={project_id}" if project_id else "") + (f"&cache_id={cache_id}" if cache_id else "")}
         for i, entry in enumerate(records)
     ]}
 
 
-def photo_path(video: str, track_id, sample: int = 0, project_id=None) -> Path:
+def photo_path(video: str, track_id, sample: int = 0, project_id=None, cache_id=None) -> Path:
     data.video_path(video)
-    cache = data.find_cache(video, project_id)
+    from .analysis_runs import cache_for
+    cache = cache_for(video,project_id,cache_id) if cache_id else data.find_cache(video, project_id)
     if cache is None:
         raise FileNotFoundError("Видео ещё не проанализировано")
     tid = validate_track_id(track_id)

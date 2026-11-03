@@ -23,6 +23,13 @@ class MontageCommandTests(unittest.TestCase):
         job = {"process":None,"id":None,"kind":None,"log":None,"started_at":None,"command":[]}
         patches = [
             patch.object(server, "JOB", job),
+            patch("scripts.volleyball_ui.prepared_videos.status",
+                  return_value={"videos":[{"video":"one.mp4","state":"ready"}],
+                                "ready":1,"total":1}),
+            patch("scripts.volleyball_ui.projects.get_project",
+                  return_value={"id":"abc","name":"Mock","videos":["one.mp4"]}),
+            patch("scripts.volleyball_ui.projects.PROJECTS_DIR",
+                  self.root/"projects"),
             patch.object(server, "project_videos", return_value=[self.source]),
             patch.object(server, "project_logs_root", return_value=self.root/"logs"),
             patch.object(server, "find_cache", return_value=self.root/"cache"),
@@ -67,16 +74,19 @@ class MontageCommandTests(unittest.TestCase):
         self.assertEqual(result,{"status":"done"})
         cmd=server.JOB["command"]
         self.assertIn("benchmark_project.py",str(cmd))
-        self.assertEqual(cmd[cmd.index("--backend")+1],"onnx-cpu")
+        # Full-suite benchmarks select their own backends for all models.
+        self.assertNotIn("--backend",cmd)
         self.assertEqual(cmd[cmd.index("--threads")+1],"10")
         self.assertEqual(cmd[cmd.index("--runs")+1],"60")
         self.assertNotIn("--mode",cmd)
         self.assertNotIn("--video",cmd)
         self.assertNotIn("--analysis-width",cmd)
-        with self.assertRaises(ValueError):
-            server.start_job("benchmark",{
-                "project_id":"abc","model":"../private-model.onnx","backend":"onnx-cpu"
-            })
+        # Benchmark ignores legacy single-model input: both installed
+        # models must always be measured in sequence.
+        server.start_job("benchmark",{
+            "project_id":"abc","model":"../private-model.onnx","backend":"onnx-cpu"
+        })
+        self.assertNotIn("--model",server.JOB["command"])
 
     def test_montage_receives_filters_without_neural_pipeline(self):
         result = server.start_job("highlights", {

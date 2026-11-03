@@ -326,6 +326,33 @@ def apply_black_fade(
     return cv2.convertScaleAbs(frame, alpha=alpha, beta=0)
 
 
+class H264PipeWriter:
+    """Encode cropped original frames directly to H.264 using FFmpeg."""
+    def __init__(self, path, fps, width, height, crf, encoder):
+        self.logfile = Path(path).with_suffix(".encoder.log")
+        self.log = self.logfile.open("wb")
+        opts=(["-c:v","h264_nvenc","-preset","p5","-rc","vbr","-cq",str(crf),"-b:v","0"]
+              if encoder=="gpu" else
+              ["-c:v","libx264","-preset","fast","-crf",str(crf),"-threads","8"])
+        cmd=["ffmpeg","-hide_banner","-loglevel","error","-nostdin","-y",
+             "-f","rawvideo","-pixel_format","bgr24",
+             "-video_size",f"{width}x{height}","-framerate",str(fps),
+             "-i","pipe:0","-an",*opts,"-pix_fmt","yuv420p",
+             "-movflags","+faststart",path]
+        self.proc=subprocess.Popen(cmd,stdin=subprocess.PIPE,stderr=self.log,
+                                   stdout=subprocess.DEVNULL)
+    def write(self,frame):
+        self.proc.stdin.write(np.ascontiguousarray(frame).tobytes())
+    def release(self):
+        self.proc.stdin.close()
+        code=self.proc.wait()
+        self.log.close()
+        if code:
+            raise RuntimeError("H.264 encoder error: "+self.logfile.read_text(
+                encoding="utf8",errors="replace")[-500:])
+        self.logfile.unlink(missing_ok=True)
+
+
 def crop_and_save_track(
     video_path: str,
     track: Dict,
@@ -339,6 +366,8 @@ def crop_and_save_track(
     padding: float = DEFAULT_PADDING_SECONDS,
     fade_in: bool = False,
     fade_out: bool = False,
+    quality_crf: Optional[int] = None,
+    quality_encoder: str = "cpu",
 ) -> None:
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
@@ -358,11 +387,18 @@ def crop_and_save_track(
     track = scale_track_to_video(track, frame_width, frame_height)
     crop_width = min(int(frame_height * DEFAULT_CROP_ASPECT_RATIO), frame_width)
     crop_height = frame_height
+    if quality_crf is not None:
+        crop_width = max(2,crop_width // 2 * 2)
+        crop_height = max(2,crop_height // 2 * 2)
 
     out = None
     if not visualize:
-        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-        out = cv2.VideoWriter(output_path, fourcc, fps, (crop_width, crop_height))
+        if quality_crf is not None:
+            out = H264PipeWriter(output_path,fps,crop_width,crop_height,
+                                 quality_crf,quality_encoder)
+        else:
+            fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+            out = cv2.VideoWriter(output_path,fourcc,fps,(crop_width,crop_height))
 
     frame_to_pos = {int(p[2]): (p[0], p[1]) for p in track["positions"]}
     if not frame_to_pos:
@@ -402,7 +438,9 @@ def crop_and_save_track(
             lead = margin * np.sign(dx) if dx != 0 else 0.0
             center_x = int(center_x + lead)
 
-        cropped = crop_frame(frame, center_x, crop_width)
+        cropped = crop_frame(frame,center_x,crop_width)
+        if cropped.shape[0]!=crop_height:
+            cropped=cropped[:crop_height]
 
         if out is not None:
             if cropped.shape[1] != crop_width:
@@ -445,6 +483,8 @@ def crop_and_save_track_payload(
     padding: float = DEFAULT_PADDING_SECONDS,
     fade_in: bool = False,
     fade_out: bool = False,
+    quality_crf: Optional[int] = None,
+    quality_encoder: str = "cpu",
 ) -> None:
     track = load_track_from_payload(track_payload)
     crop_and_save_track(
@@ -460,6 +500,8 @@ def crop_and_save_track_payload(
         padding=padding,
         fade_in=fade_in,
         fade_out=fade_out,
+        quality_crf=quality_crf,
+        quality_encoder=quality_encoder,
     )
 
 
@@ -475,6 +517,8 @@ def crop_and_save_track_payloads(
     margin: float = 0.0,
     padding: float = DEFAULT_PADDING_SECONDS,
     fade_transition: bool = False,
+    quality_crf: Optional[int] = None,
+    quality_encoder: str = "cpu",
 ) -> None:
     if not track_payloads:
         raise ValueError("track_payloads must not be empty")
@@ -491,6 +535,8 @@ def crop_and_save_track_payloads(
             smooth_polyorder=smooth_polyorder,
             margin=margin,
             padding=padding,
+            quality_crf=quality_crf,
+            quality_encoder=quality_encoder,
         )
         return
 
@@ -515,6 +561,8 @@ def crop_and_save_track_payloads(
                 padding=padding,
                 fade_in=fade_transition and idx > 1,
                 fade_out=fade_transition and idx < len(track_payloads),
+                quality_crf=quality_crf,
+                quality_encoder=quality_encoder,
             )
             segment_files.append(segment_path)
 
@@ -601,6 +649,8 @@ def build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_PADDING_SECONDS,
         help="Seconds of video to add before the start and after the end of each rally",
     )
+    parser.add_argument("--quality-crf",type=int,default=None)
+    parser.add_argument("--quality-encoder",choices=["cpu","gpu"],default="cpu")
     parser.add_argument("--verbose", action="store_true", help="Enable debug logging")
     return parser
 
@@ -610,6 +660,8 @@ def main() -> None:
     args = parser.parse_args()
     if args.padding < 0:
         parser.error("--padding must be greater than or equal to 0")
+    if args.quality_crf is not None and not 12 <= args.quality_crf <= 23:
+        parser.error("--quality-crf must be between 12 and 23")
     setup_logging(args.verbose)
 
     base_name = os.path.splitext(os.path.basename(args.video_path))[0]
@@ -657,6 +709,8 @@ def main() -> None:
             margin=args.margin,
             padding=args.padding,
             fade_transition=args.fade_transition,
+            quality_crf=args.quality_crf,
+            quality_encoder=args.quality_encoder,
         )
         if not args.visualize:
             LOG.info("Saved combined reel: %s", output_path)
@@ -686,6 +740,8 @@ def main() -> None:
             smooth_polyorder=args.smooth_polyorder,
             margin=args.margin,
             padding=args.padding,
+            quality_crf=args.quality_crf,
+            quality_encoder=args.quality_encoder,
         )
 
         if not args.visualize:

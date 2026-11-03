@@ -44,6 +44,102 @@ class ProjectDataTests(unittest.TestCase):
         self.assertEqual(data.groups_for("one.mp4",b["id"]),[])
         self.assertEqual(data.groups_for("one.mp4"),[])
 
+    def test_project_roster_bulk_assignment_and_video_scoping(self):
+        project = projects.create_project("Матч", ["one.mp4", "two.mp4"])
+        project_id = project["id"]
+        roster = data.create_player("Иван", project_id)
+        ivan = roster[0]["id"]
+        self.assertEqual(roster[0]["tracks_by_video"], {})
+        self.assertEqual(data.groups_for("one.mp4", project_id), [])
+
+        other = data.create_player("Пётр", project_id)[1]["id"]
+        data.assign("one.mp4", ["12", "13", "14"], project_id=project_id, player_id=ivan)
+        data.assign("two.mp4", ["12"], project_id=project_id, player_id=other)
+        data.assign("one.mp4", ["13"], project_id=project_id, player_id=other)
+        current = {p["id"]: p for p in data.players_for(project_id)}
+        self.assertEqual(current[ivan]["tracks_by_video"]["one.mp4"], ["12", "14"])
+        self.assertEqual(current[other]["tracks_by_video"]["one.mp4"], ["13"])
+        self.assertEqual(current[other]["tracks_by_video"]["two.mp4"], ["12"])
+        self.assertEqual(current[other]["total_track_ids"], 2)
+
+        data.unassign("one.mp4", ["12", "14"], project_id)
+        self.assertEqual(len(data.players_for(project_id)), 2)
+        self.assertNotIn("one.mp4", data.players_for(project_id)[0]["tracks_by_video"])
+        data.rename_player(ivan, "Иван №7", project_id)
+        self.assertEqual(data.players_for(project_id)[0]["name"], "Иван №7")
+        data.delete_player(other, project_id)
+        self.assertEqual(len(data.players_for(project_id)), 1)
+        self.assertEqual(data.groups_for("two.mp4", project_id), [])
+
+    def test_global_players_available_for_new_projects(self):
+        initial = projects.create_project("Первая игра", ["one.mp4"])
+        alice = data.create_player("Алиса", initial["id"])[0]
+        other = projects.create_project("Вторая игра", ["two.mp4"],
+                                        player_ids=[alice["id"]])
+        self.assertEqual(other["player_ids"], [alice["id"]])
+        self.assertEqual(data.players_for(other["id"])[0]["name"], "Алиса")
+        data.assign("one.mp4", ["4"], project_id=initial["id"],
+                    player_id=alice["id"])
+        self.assertEqual(data.players_for(other["id"])[0]["tracks_by_video"], {})
+        data.assign("two.mp4", ["4", "5"], project_id=other["id"],
+                    player_id=alice["id"])
+        self.assertEqual(data.players_for(initial["id"])[0]["total_track_ids"], 1)
+        self.assertEqual(data.players_for(other["id"])[0]["total_track_ids"], 2)
+        data.delete_player(alice["id"], initial["id"])
+        self.assertFalse(data.players_for(initial["id"]))
+        self.assertEqual(len(data.players_for(other["id"])), 1)
+        self.assertEqual(len(data.global_players()), 1)
+        with self.assertRaisesRegex(ValueError, "общей базе"):
+            projects.create_project("Некорректный", ["one.mp4"],
+                                    player_ids=["not-found"])
+
+    def test_verified_photos_follow_manual_track_owner(self):
+        from scripts.volleyball_ui import player_library
+        game = projects.create_project("Тренировка", ["one.mp4"])
+        pid = game["id"]
+        first = data.create_player("Игрок А", pid)[0]["id"]
+        second = data.create_player("Игрок Б", pid)[1]["id"]
+        data.assign("one.mp4", ["8"], project_id=pid, player_id=first)
+        crop = self.root / "sample.jpg"
+        crop.write_bytes(b"sample jpeg bytes")
+        fake_samples = {"samples": [
+            {"index": 0, "frame": 77, "confidence": 0.9},
+            {"index": 1, "frame": 90, "confidence": 0.8}
+        ]}
+        with (patch.object(player_library, "photos_metadata", return_value=fake_samples),
+              patch.object(player_library, "photo_path", return_value=crop)):
+            result = player_library.sync_photos(pid, "one.mp4", ["8"])
+            self.assertEqual(result["copied"], 2)
+            self.assertEqual(player_library.photo_counts()[first], 2)
+            # Repeated collection must not duplicate training samples.
+            self.assertEqual(player_library.sync_photos(pid, "one.mp4", ["8"])["copied"], 0)
+            data.assign("one.mp4", ["8"], project_id=pid, player_id=second)
+            player_library.sync_photos(pid, "one.mp4", ["8"])
+            self.assertEqual(player_library.photo_counts()[first], 0)
+            self.assertEqual(player_library.photo_counts()[second], 2)
+            data.unassign("one.mp4", ["8"], project_id=pid)
+            player_library.sync_photos(pid, "one.mp4", ["8"])
+            self.assertEqual(player_library.photo_counts()[second], 0)
+
+    def test_roster_legacy_migration_and_validation(self):
+        p = projects.create_project("Старая разметка", ["one.mp4", "two.mp4"])
+        project_id = p["id"]
+        legacy = {"schema": 1, "videos": {
+            "one.mp4": [{"id": "old", "name": "Игрок А", "track_ids": ["7"]}],
+            "two.mp4": [{"id": "another", "name": "Игрок А", "track_ids": ["9"]}]
+        }}
+        data.save_json(data.identity_file(project_id), legacy)
+        roster = data.players_for(project_id)
+        self.assertEqual(len(roster), 1)
+        self.assertEqual(roster[0]["total_track_ids"], 2)
+        self.assertEqual(data.groups_for("two.mp4", project_id)[0]["id"], roster[0]["id"])
+        data.assign("one.mp4", ["10"], project_id=project_id, player_id=roster[0]["id"])
+        self.assertEqual(data.read_json(data.identity_file(project_id))["schema"], 2)
+        with self.assertRaisesRegex(ValueError, "уже существует"):
+            data.create_player("игрок а", project_id)
+        with self.assertRaisesRegex(ValueError, "не найден"):
+            data.assign("one.mp4", ["99"], project_id=project_id, player_id="missing")
+
     def test_create_project_stores_video_ranges(self):
         p=projects.create_project("01.11.2026",["one.mp4","two.mp4"],{
             "one.mp4":{"start":10,"end":45},
@@ -167,15 +263,20 @@ class MultiSourceHighlightTests(unittest.TestCase):
                      "detected_start_frame":90,"detected_end_frame":209,"confidence":.9}],
             }
             produced=[]
-            def mock_render(src,normalized,segments,output_path=None,segments_folder=None):
+            def mock_render(src,normalized,segments,output_path=None,segments_folder=None,progress_callback=None,**kwargs):
                 produced.append(src.name)
+                if progress_callback:
+                    progress_callback("clip","start",1,1,0,90)
+                    progress_callback("clip","complete",1,1,90,90)
+                    progress_callback("join","start",1,1,0,1)
+                    progress_callback("join","complete",1,1,1,1)
                 output_path.write_bytes(b"fake-mp4-data")
             def mock_concat(args,check=False,**kwargs):
                 Path(args[-1]).write_bytes(b"merged-mp4-data")
             out=root/"project-output";out.mkdir()
             with patch.object(builder,"project_videos",return_value=sources), \
                  patch.object(builder,"locate_cache",side_effect=caches), \
-                 patch.object(builder,"load_groups",side_effect=lambda c,r:clips[c.name]), \
+                 patch.object(builder,"load_groups",side_effect=lambda c,r,**kw:clips[c.name]), \
                  patch.object(builder,"render",side_effect=mock_render), \
                  patch.object(builder,"project_dir",return_value=out), \
                  patch.object(builder,"project_output",return_value=out/"highlights.mp4"), \

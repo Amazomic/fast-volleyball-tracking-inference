@@ -10,6 +10,7 @@ import numpy as np
 
 from .common import ANALYSIS_INPUT_VERSION, ROOT, cached, digest, identity, key, probe, run, save
 from .events import contacts_for, event_timeline
+from .ball_models import DEFAULT_BALL_MODEL, resolve_ball_model
 
 
 def image_contact_detector(player_path, width, height):
@@ -36,8 +37,17 @@ def uncalibrated_contacts(track, detector):
 
 
 def analyze(source, work, args):
-    model = ROOT / "models/VballNetV4c_seq9_grayscale_20260908_213829.onnx"
-    players_model = ROOT / "ov/RAVEL-VB-012-9f.xml"
+    from .advanced import from_namespace
+    from .analysis_stages import StageReporter
+    stages = StageReporter()
+    advanced = from_namespace(args)
+    model, openvino_model = resolve_ball_model(getattr(args, "ball_model", DEFAULT_BALL_MODEL))
+    player_format = "onnx" if advanced["player_backend"].startswith("onnx") else "xml"
+    players_model = ROOT / ("models" if player_format=="onnx" else "ov") / (advanced["player_model"] + "." + player_format)
+    if not players_model.is_file():
+        raise FileNotFoundError(f"Модель игроков не найдена: {players_model}")
+    player_cfg = {k:v for k,v in advanced.items() if k.startswith("player_") and k != "player_output_video"}
+    track_cfg = {k:v for k,v in advanced.items() if k.startswith("track_")}
     court_in_results = ROOT / "results" / (source.stem + "_court.json")
     if getattr(args, "court_json", None):
         court = args.court_json.resolve()
@@ -47,19 +57,38 @@ def analyze(source, work, args):
         court = work / "__no_saved_court__.json"
     else:
         court = court_in_results if court_in_results.is_file() else source.with_name(source.stem + "_court.json")
-    source_id = identity(source)
+    from .video_inputs import cached_source_identity
+    source_id = cached_source_identity(source, getattr(args, "prepared_video", None))
     code = {p.name: digest(p) for p in (ROOT / "src").glob("*.py")}
-    signature = key([ANALYSIS_INPUT_VERSION, source_id, args.analysis_seconds, args.analysis_start, args.analysis_width, code])
+    signature_parts = [ANALYSIS_INPUT_VERSION, source_id, args.analysis_seconds,
+                       args.analysis_start, args.analysis_width, model.name, code,
+                       player_cfg, track_cfg]
+    # Keep existing successful cache keys unchanged. Only a retry after an
+    # interrupted run receives a new isolated content address.
+    if getattr(args, "cache_salt", ""):
+        signature_parts.append(args.cache_salt)
+    signature = key(signature_parts)
     folder = work / signature
     folder.mkdir(parents=True, exist_ok=True)
     source_probe = probe(source)
     save(folder / "source.probe.json", source_probe)
     proxy = folder / "analysis.mp4"
-    command = ["ffmpeg", "-v", "error", "-nostdin", "-y", "-ss", str(args.analysis_start), "-i", source]
-    if args.analysis_seconds:
-        command += ["-t", str(args.analysis_seconds)]
-    command += ["-vf", f"fps=30,scale={args.analysis_width}:-2,setsar=1", "-an", "-c:v", "libx264", "-preset", "ultrafast", "-crf", "18", "-threads", str(args.threads), proxy]
-    cached(folder, "normalize", signature, lambda: (run(command, folder / "normalize.log"), [proxy])[1])
+    prepared = getattr(args, "prepared_video", None)
+    if prepared is not None:
+        prepared = prepared.resolve()
+        if not prepared.is_file():
+            raise ValueError("Подготовленный файл отсутствует")
+        # Original source is retained for signatures, player/court identities.
+        # Proxy is only the decoded input to subsequent neural networks.
+    from .video_inputs import prepare_proxy
+    stages.begin(1)
+    prepare_proxy(
+        source=source, prepared=prepared, proxy=proxy,
+        start=args.analysis_start, seconds=args.analysis_seconds,
+        width=args.analysis_width, threads=args.threads,
+        prepared_input=getattr(args, "prepared_input", False),
+    )
+    stages.end()
     inference_input = proxy
     if getattr(args, "scratch_dir", None):
         scratch = args.scratch_dir.resolve() / signature
@@ -69,41 +98,95 @@ def analyze(source, work, args):
     video = next(s for s in probe(proxy)["streams"] if s["codec_type"] == "video")
     width, height = video["width"], video["height"]
     csv_path = folder / "ball/analysis/ball.csv"
-    ball_key = key([signature, identity(model), identity(ROOT / "ov/VballNetV4c_seq9_grayscale_20260908_213829.xml"), identity(ROOT / "ov/VballNetV4c_seq9_grayscale_20260908_213829.bin"), args.backend, args.threads if args.backend in ("onnx-cpu","openvino") else None])
+    gpu_config = (getattr(args, "gpu_device_id", 0),
+                  getattr(args, "gpu_memory_limit_mb", 0))
+    ball_key = key(["raw-ball-candidates-v2", signature, identity(model), identity(openvino_model), identity(openvino_model.with_suffix(".bin")) if openvino_model.suffix == ".xml" else None, args.backend, args.threads if args.backend in ("onnx-cpu","openvino") else None, gpu_config if args.backend=="onnx" else None, args.ball_threshold, advanced["ball_output_video"]])
 
+    print(f"BALL DETECTOR: model={model.name}; backend={args.backend}; gpu_device_id={gpu_config[0]}; gpu_memory_limit_mb={gpu_config[1]}; CPU threads={args.threads}; threshold={args.ball_threshold}", flush=True)
     def ball():
         csv_path.parent.mkdir(parents=True, exist_ok=True)
         if csv_path.exists():
             csv_path.unlink()
         script = "inference_openvino_seq_gray_v2.py" if args.backend == "openvino" else "inference_onnx_seq_gray_v2.py"
-        command = [sys.executable, ROOT / "src" / script, "--video_path", inference_input, "--output_dir", folder / "ball", "--only_csv"]
-        command += (["--model_xml", ROOT / "ov/VballNetV4c_seq9_grayscale_20260908_213829.xml",
-                     "--device", "CPU", "--num-threads", str(args.threads)] if args.backend == "openvino" else
+        command = [sys.executable, ROOT / "src" / script, "--video_path", inference_input, "--output_dir", folder / "ball"]
+        if not advanced["ball_output_video"]:
+            command.append("--only_csv")
+        command += (["--model_xml", openvino_model,
+                     "--device", "CPU", "--num-threads", str(args.threads),
+                     "--threshold", str(args.ball_threshold)] if args.backend == "openvino" else
                     ["--model_path", model,
                      "--device", "cpu" if args.backend=="onnx-cpu" else "cuda",
-                     "--num-threads", str(args.threads)])
+                     "--num-threads", str(args.threads),
+                     "--gpu-device-id", str(gpu_config[0]),
+                     "--gpu-memory-limit-mb", str(gpu_config[1]),
+                     "--confidence_threshold", str(args.ball_threshold)])
         run(command, folder / "ball.log")
         if args.backend == "openvino":
             shutil.copyfile(folder / "ball/analysis_predict_ball.csv", csv_path)
-        return [csv_path]
+        raw_path = csv_path.with_name("ball.raw.csv")
+        raw_meta = csv_path.with_name("ball.raw.json")
+        if args.backend != "openvino" and (not raw_path.is_file() or not raw_meta.is_file()):
+            raise RuntimeError("VballNet не сохранил сырые оценки мяча")
+        return [csv_path, raw_path, raw_meta] if args.backend != "openvino" else [csv_path]
 
+    stages.begin(2)
     cached(folder, "ball", ball_key, ball)
+    stages.end()
     player_path = folder / "players.json"
-    player_key = key([signature, identity(players_model), identity(players_model.with_suffix(".bin")), identity(players_model.with_suffix(".json"))])
+    player_key = key(["raw-ravel-players-v1", signature, identity(players_model), identity(players_model.with_suffix(".bin")) if players_model.suffix==".xml" else None, identity(players_model.with_suffix(".json")), player_cfg, advanced["player_output_video"], args.threads, gpu_config if advanced["player_backend"]=="onnx-cuda" else None])
 
+    print(f"PLAYER DETECTOR: model={players_model.name}, backend={advanced['player_backend']}, device={advanced['player_device']}, gpu_device_id={gpu_config[0]}, gpu_memory_limit_mb={gpu_config[1]}, threads={args.threads}, frame_step={advanced['player_frame_step']}", flush=True)
     def players():
-        run([sys.executable, ROOT / "src/inference_player_ball_openvino.py", inference_input, "--model", players_model, "--output", player_path, "--device", "CPU", "--num-threads", str(args.threads)], folder / "players.log")
-        return [player_path]
+        cmd = [sys.executable, ROOT / "src/inference_player_ball_openvino.py",
+               inference_input, "--model", players_model, "--output", player_path,
+               "--backend", advanced["player_backend"],
+               "--device", advanced["player_device"], "--num-threads", str(args.threads),
+               "--gpu-device-id", str(gpu_config[0]),
+               "--gpu-memory-limit-mb", str(gpu_config[1]),
+               "--score-threshold", str(advanced["player_score_threshold"]),
+               "--close-threshold", str(advanced["player_close_threshold"]),
+               "--hysteresis-frames", str(advanced["player_hysteresis_frames"]),
+               "--match-center-distance", str(advanced["player_match_center_distance"]),
+               "--match-iou", str(advanced["player_match_iou"]),
+               "--ball-threshold", str(advanced["player_ball_threshold"]),
+               "--head-threshold", str(advanced["player_head_threshold"]),
+               "--action-threshold", str(advanced["player_action_threshold"]),
+               "--nms-iou", str(advanced["player_nms_iou"]),
+               "--stride", str(advanced["player_stride"]),
+               "--frame-step", str(advanced["player_frame_step"]),
+               "--warmup-runs", str(advanced["player_warmup_runs"]),
+               "--performance-hint", advanced["player_performance_hint"]]
+        cmd.append("--save-raw-players")
+        if advanced["player_include_features"]:
+            cmd.append("--include-features")
+        annotated = folder / "players-annotated.mp4"
+        if advanced["player_output_video"]:
+            cmd += ["--output-video", annotated]
+        run(cmd, folder / "players.log")
+        raw_path = player_path.with_name("players.raw.jsonl")
+        raw_meta = player_path.with_name("players.raw.json")
+        if not raw_path.is_file() or not raw_meta.is_file():
+            raise RuntimeError("RAVEL не сохранил сырые рамки игроков")
+        result = [player_path, raw_path, raw_meta]
+        return result + [annotated] if advanced["player_output_video"] else result
 
+    stages.begin(3)
     cached(folder, "players", player_key, players)
-    track_key = key([ball_key, player_key, identity(court) if court.exists() else None, 0.5, args.beach])
+    stages.end()
+    track_key = key([ball_key, player_key, identity(court) if court.exists() else None, track_cfg, args.beach])
 
     def tracks():
         track_dir = folder / "tracks/analysis/tracks"
         if track_dir.exists():
             for old in track_dir.glob("track_*.json"):
                 old.unlink()
-        command = [sys.executable, ROOT / "src/track_calculator_with_court.py", "--csv_path", csv_path, "--players_json_path", player_path, "--fps", "30", "--video_width", str(width), "--video_height", str(height), "--min_duration_sec", "0.5", "--output_dir", folder / "tracks"]
+        command = [sys.executable, ROOT / "src/track_calculator_with_court.py", "--csv_path", csv_path, "--players_json_path", player_path, "--fps", "30", "--video_width", str(width), "--video_height", str(height), "--min_duration_sec", str(advanced["track_min_duration"]),
+                   "--max_distance", str(advanced["track_max_distance"]),
+                   "--player_score_threshold", str(advanced["track_player_threshold"]),
+                   "--ball_score_threshold", str(advanced["track_ball_threshold"]),
+                   "--output_dir", folder / "tracks"]
+        if advanced["track_no_ball_fill"]:
+            command += ["--no_ball_fill"]
         if court.exists():
             annotation = json.loads(court.read_text(encoding="utf-8"))
             old_w = annotation.get("frame_width", annotation.get("image_width"))
@@ -140,7 +223,54 @@ def analyze(source, work, args):
         save(index, [str(p) for p in result])
         return [index] + result
 
+    stages.begin(4)
     paths = cached(folder, "tracks", track_key, tracks)
+    stages.end()
+
+    # These are explicit exports. No GUI windows are launched in the HTTP worker.
+    track_dir = folder / "tracks/analysis/tracks"
+    exports = folder / "exports"
+    export_key = key([track_key, {k:v for k,v in advanced.items()
+                                if k.startswith(("tracks_", "show_rally_"))}])
+    def diagnostic_exports():
+        exports.mkdir(parents=True, exist_ok=True)
+        generated = []
+        mode = advanced["tracks_export_mode"]
+        base = [sys.executable, ROOT / "src/track_processor.py", "--video_path", proxy,
+                "--json_dir", track_dir, "--fps", "30",
+                "--padding", str(advanced["tracks_padding"])]
+        if advanced["tracks_include_not_rally"]:
+            base += ["--include-not-rally"]
+        if advanced["tracks_debug"]:
+            base += ["--debug"]
+        if not advanced["tracks_mark_ball"]:
+            base += ["--no-mark"]
+        if mode in ("combined", "both"):
+            combined = exports / "rallies-combined.mp4"
+            run([*base, "--output_path", combined], exports / "combined.log")
+            generated.append(combined)
+        if mode in ("split", "both"):
+            clips = exports / "rallies-split"
+            run([*base, "--split_dir", clips], exports / "split.log")
+            generated += sorted(clips.glob("*.mp4"))
+        if advanced["show_rally_snapshot"]:
+            if not paths[1:]:
+                print("SHOW_RALLY: no track available for snapshot", flush=True)
+            else:
+                snapshot = exports / "track-snapshot.png"
+                cmd = [sys.executable, ROOT / "src/show_rally.py",
+                       track_dir, proxy, "--players_json_path", player_path,
+                       "--fps", "30", "--track", str(advanced["show_rally_track"]),
+                       "--snapshot", snapshot]
+                court_file = folder / "court.json"
+                if court_file.is_file():
+                    cmd += ["--court_json_path", court_file]
+                run(cmd, exports / "snapshot.log")
+                generated.append(snapshot)
+        return generated
+    if advanced["tracks_export_mode"] != "none" or advanced["show_rally_snapshot"]:
+        cached(folder, "diagnostic_exports", export_key, diagnostic_exports)
+
     ball_rows = {}
     with csv_path.open() as stream:
         for row in csv.DictReader(stream):
@@ -173,7 +303,10 @@ def analyze(source, work, args):
         save(enriched_path, tracks)
         return [event_path, enriched_path]
 
+    stages.begin(5)
     cached(folder, "game_analysis", event_key, game_analysis)
+    stages.end()
+    stages.begin(6)
     timeline = json.loads(event_path.read_text())
     candidates = []
     all_tracks = json.loads(enriched_path.read_text())
@@ -192,6 +325,7 @@ def analyze(source, work, args):
             candidate["score"] = round(sum(candidate["components"].values()) * candidate["confidence"], 4)
             candidates.append(candidate)
     save(folder / "ranking.json", [{k: v for k, v in x.items() if k not in ("ball", "players", "ball_rows", "track")} for x in candidates])
+    stages.end()
     return candidates, warnings, folder
 
 

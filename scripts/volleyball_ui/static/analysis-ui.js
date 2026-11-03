@@ -10,9 +10,13 @@ window.VolleyballAnalysisUI=(()=>{
       .map(n=>String(n).padStart(2,"0")).join(":");
   };
   let meta=null,video="",projectId="",start=0,end=0,current=0;
-  let loadSeq=0,drag=null,scrubTimer=null;
+  let loadSeq=0,drag=null,scrubTimer=null,arrowHold=null;
+  const ARROW_DELAY_MS=360;
+  const ARROW_TICK_MS=160;
+  const ARROW_DOUBLING_MS=850;
+  const ARROW_MAX_STEP_SEC=16;
   let playbackMode="original",segmentSeconds=18,segmentStart=0,segmentToken=0;
-  let prefetchTarget=null;
+  let prefetchTarget=null,waitingForPrepared="";
   const ranges=new Map();
   const pct=t=>meta?.duration_sec?100*clamp(t,0,meta.duration_sec)/meta.duration_sec:0;
   const width=()=>E("manual-width-enabled").checked?Number(E("analysis-width").value):meta?.auto_width;
@@ -89,6 +93,9 @@ window.VolleyballAnalysisUI=(()=>{
     }
     renderRange();
     markUnsaved();
+    window.dispatchEvent(new CustomEvent("volley-analysis-range",{
+      detail:{video,start,end}
+    }));
   }
   function cancelScheduledSeek(){
     if(scrubTimer!==null){clearTimeout(scrubTimer);scrubTimer=null;}
@@ -101,6 +108,33 @@ window.VolleyballAnalysisUI=(()=>{
     if(final)performSeek();
     else if(!(playbackMode==="segments"&&drag?.type==="playhead"))
       scrubTimer=setTimeout(()=>{scrubTimer=null;performSeek();},160);
+  }
+  function stopArrowSeek(){
+    if(!arrowHold)return;
+    clearTimeout(arrowHold.delay);
+    clearInterval(arrowHold.interval);
+    arrowHold=null;
+  }
+  function startArrowSeek(key){
+    if(arrowHold?.key===key)return; // Ignore native key repeat; use our own pacing.
+    stopArrowSeek();
+    const direction=key==="ArrowLeft"?-1:1;
+    seek(current+direction,true); // Exactly one second on a single press.
+    const hold={key,direction,startedAt:Date.now(),delay:null,interval:null};
+    arrowHold=hold;
+    hold.delay=setTimeout(()=>{
+      if(arrowHold!==hold)return;
+      hold.interval=setInterval(()=>{
+        if(arrowHold!==hold)return;
+        if(!meta||!E("view-analysis").classList.contains("active")){
+          stopArrowSeek();
+          return;
+        }
+        const heldMs=Math.max(0,Date.now()-hold.startedAt-ARROW_DELAY_MS-ARROW_TICK_MS);
+        const step=Math.min(ARROW_MAX_STEP_SEC,Math.pow(2,heldMs/ARROW_DOUBLING_MS));
+        seek(current+direction*step,true);
+      },ARROW_TICK_MS);
+    },ARROW_DELAY_MS);
   }
   function segmentUrl(startAt){
     return "/api/video-segment?project_id="+encodeURIComponent(projectId)+
@@ -185,11 +219,11 @@ window.VolleyballAnalysisUI=(()=>{
     target.addEventListener("pointerup",endDrag);
     target.addEventListener("pointercancel",endDrag);
     target.addEventListener("keydown",e=>{
-      if(!meta||!["ArrowLeft","ArrowRight"].includes(e.key))return;
+      if(type==="playhead"||!meta||!["ArrowLeft","ArrowRight"].includes(e.key))return;
       e.preventDefault();
-      const delta=(e.key==="ArrowLeft"?-1:1)*(e.shiftKey?5:1);
-      if(type==="playhead")seek(current+delta,true);
-      else boundary(type,(type==="start"?start:end)+delta);
+      e.stopPropagation();
+      const delta=e.key==="ArrowLeft"?-1:1;
+      boundary(type,(type==="start"?start:end)+delta);
     });
   }
   function togglePlayback(){
@@ -203,9 +237,11 @@ window.VolleyballAnalysisUI=(()=>{
   }
   async function setVideo(name){
     if(!name)return;
+    stopArrowSeek();
     const request=++loadSeq;
     if(meta&&video)ranges.set(video,{start,end});
-    video=name;meta=null;current=0;drag=null;cancelScheduledSeek();
+    video=name;meta=null;current=0;drag=null;waitingForPrepared="";
+    cancelScheduledSeek();
     segmentToken++;segmentStart=0;prefetchTarget=null;playbackMode="original";
     const v=player();
     v.pause();v.removeAttribute("src");v.load();updatePlayButton();
@@ -238,6 +274,23 @@ window.VolleyballAnalysisUI=(()=>{
       E("preview-source-details").textContent=name+" · "+info.width+"×"+info.height+" · "+stamp(info.duration_sec);
       E("timeline-ticks").innerHTML=[0,.25,.5,.75,1]
         .map(n=>"<span>"+stamp(n*info.duration_sec)+"</span>").join("");
+      if(playback.browser_preview==="preparing"){
+        waitingForPrepared=name;
+        v.removeAttribute("poster");
+        v.removeAttribute("src");
+        v.load();
+        E("source-video-placeholder").hidden=false;
+        E("source-video-placeholder").textContent=
+          playback.preparation_state==="failed"
+          ?"Ошибка подготовки видео — используйте «Повторить» в боковой панели"
+          :"Подготовка видео для анализа ещё идёт — просмотр будет доступен после завершения";
+        E("source-playback-note").textContent=
+          "Для предпросмотра и нейросети используется одна подготовленная копия из кэша проекта.";
+        current=clamp(start,0,info.duration_sec);
+        showWidth();renderRange();updatePlayButton();
+        return;
+      }
+      waitingForPrepared="";
       v.poster=playback.poster_url;
       playbackMode=playback.browser_preview==="segments"?"segments":"original";
       segmentSeconds=Number(playback.segment_seconds)||18;
@@ -253,12 +306,16 @@ window.VolleyballAnalysisUI=(()=>{
         },{once:true});
       }
       E("source-video-placeholder").hidden=true;
-      E("source-playback-note").textContent=playbackMode==="segments"
+      E("source-playback-note").textContent=playback.browser_preview==="prepared"
+        ?"Предпросмотр: подготовленное видео из кэша проекта (H.264, 30 FPS)."
+        :playbackMode==="segments"
         ?"Видео открывается напрямую из локальной папки: по мере просмотра подгружаются только нужные короткие участки. Полная копия не создаётся."
         :"Используется оригинальный файл без перекодирования.";
       current=clamp(start,0,info.duration_sec);
       showWidth();renderRange();updatePlayButton();
       E("range-save-status").textContent="Диапазон загружен из проекта";
+      window.dispatchEvent(new CustomEvent("volley-analysis-source",
+        {detail:{project:projectId,video:name,start,end,duration:info.duration_sec}}));
     }catch(err){
       if(request!==loadSeq)return;
       E("source-video-placeholder").hidden=false;
@@ -302,6 +359,17 @@ window.VolleyballAnalysisUI=(()=>{
         loadSegmentAt(segmentStart+segmentSeconds,true);
       }
     });
+    window.addEventListener("volley-preparation-update",event=>{
+      if(event.detail?.project!==projectId||!waitingForPrepared)return;
+      const row=(event.detail.videos||[]).find(item=>item.video===waitingForPrepared);
+      if(row?.state==="ready"){
+        waitingForPrepared="";
+        setVideo(video).catch(console.warn);
+      }else if(row?.state==="failed"){
+        E("source-video-placeholder").textContent=
+          "Ошибка подготовки видео: "+(row.error||"попробуйте повторить");
+      }
+    });
     window.addEventListener("resize",fitSourceFrame);
     if(typeof ResizeObserver!=="undefined"){
       const stage=document.querySelector(".workspace-video-player");
@@ -313,18 +381,31 @@ window.VolleyballAnalysisUI=(()=>{
     });
     document.addEventListener("keydown",e=>{
       if(!E("view-analysis").classList.contains("active")||!meta)return;
-      if(e.target.closest("input,textarea,select,button,[contenteditable]"))return;
+      if(e.altKey||e.ctrlKey||e.metaKey)return;
+      const target=e.target;
+      if(target?.closest?.("input,textarea,select,[contenteditable],[role='textbox']"))return;
+      if(target?.closest?.("button")&&target!==E("timeline-playhead"))return;
       if(e.code==="Space"){e.preventDefault();togglePlayback();}
       else if(e.key==="ArrowRight"||e.key==="ArrowLeft"){
-        e.preventDefault();seek(current+(e.key==="ArrowRight"?1:-1)*(e.shiftKey?5:1),true);
+        e.preventDefault();
+        startArrowSeek(e.key);
       }
+    });
+    document.addEventListener("keyup",e=>{
+      if(arrowHold?.key===e.key)stopArrowSeek();
+    });
+    window.addEventListener("blur",stopArrowSeek);
+    document.addEventListener("visibilitychange",()=>{
+      if(document.hidden)stopArrowSeek();
     });
     updatePlayButton();
   }
   function setProjectRanges(saved={},identifier=""){
+    stopArrowSeek();
     ++loadSeq;cancelScheduledSeek();
     if(window.VolleyballCourtUI)window.VolleyballCourtUI.reset();
     projectId=identifier;video="";meta=null;ranges.clear();drag=null;
+    waitingForPrepared="";
     segmentToken++;segmentStart=0;prefetchTarget=null;playbackMode="original";
     player().pause();
     for(const [name,range] of Object.entries(saved||{})){
@@ -343,5 +424,6 @@ window.VolleyballAnalysisUI=(()=>{
     if(!Number.isInteger(w)||w<320||w>1920||w%2)throw Error("Некорректная ширина кадра");
     return {analysis_width:E("manual-width-enabled").checked?w:"auto"};
   }
-  return {init,setVideo,setProjectRanges,currentRange,activeVideo,activeProject,params};
+  return {init,setVideo,setProjectRanges,currentRange,activeVideo,activeProject,params,
+    currentPosition:()=>current,duration:()=>meta?.duration_sec||0};
 })();

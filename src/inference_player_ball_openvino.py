@@ -35,6 +35,7 @@ DEFAULT_MODEL = ROOT / "ov" / "RAVEL-VB-012-9f.xml"
 HEAD_CLASS = "head"
 HEAD_CHANNEL = 0
 HEAD_THRESHOLD = 0.30
+ACTION_THRESHOLD = 0.50
 HEAD_NMS_KERNEL = 3
 # Половина крошечной рамки, в которой точка едет через слияние и трекер:
 # около 2.5 px на 640x360.
@@ -178,6 +179,8 @@ def decode_batch(
     max_players: int = 16,
     ball_threshold: float | None = None,
     head_threshold: float = HEAD_THRESHOLD,
+    action_names: list[str] | None = None,
+    action_threshold: float = ACTION_THRESHOLD,
 ) -> list[list[dict]]:
     """Decode the tensor ABI exported with the RAVEL-VB OpenVINO model.
 
@@ -188,6 +191,13 @@ def decode_batch(
     """
     if ball_threshold is None:
         ball_threshold = score_threshold
+    action_probabilities = None
+    if "action_logits" in outputs:
+        # This release exports LOG probabilities, not raw logits.
+        action_probabilities = np.exp(outputs["action_logits"].astype(np.float64))
+        channels = action_probabilities.shape[-1]
+        if action_names is None or len(action_names) != channels:
+            action_names = [*(f"action{index}" for index in range(channels-1)), "none"]
     results: list[list[dict]] = []
     batch_size, frame_count, query_count = outputs["logits"].shape[:3]
     for batch_index in range(batch_size):
@@ -255,6 +265,13 @@ def decode_batch(
                         record["head_point_norm"] = outputs["head_point_norm"][
                             batch_index, frame_slot, query_index
                         ].tolist()
+                    if action_probabilities is not None:
+                        row = action_probabilities[batch_index, frame_slot, query_index]
+                        # The final class is "none": it is not a contact event.
+                        best = int(row[:-1].argmax())
+                        if float(row[best]) >= action_threshold:
+                            record["action"] = action_names[best]
+                            record["action_score"] = round(float(row[best]), 3)
                     if include_features:
                         for key in (
                             "head_points",
@@ -336,15 +353,19 @@ def merge_frame_predictions(
 
 
 class PlayerHysteresis:
-    """Assign stable IDs and bridge short player-detection gaps."""
+    """Associate players across occlusions using motion-aware global matching.
+
+    A track is only retired after a real frame gap. Hungarian assignment avoids
+    the local greedy matches that swap identities when players cross.
+    """
 
     def __init__(
         self,
         open_threshold: float,
         close_threshold: float,
         hold_frames: int,
-        match_iou: float = 0.05,
-        max_center_distance: float = 0.08,
+        match_iou: float = 0.08,
+        max_center_distance: float = 0.11,
     ) -> None:
         self.open_threshold = open_threshold
         self.close_threshold = close_threshold
@@ -360,72 +381,139 @@ class PlayerHysteresis:
         right_x, right_y = (right[0] + right[2]) / 2, (right[1] + right[3]) / 2
         return ((left_x - right_x) ** 2 + (left_y - right_y) ** 2) ** 0.5
 
+    @staticmethod
+    def _anchor(box: list[float]) -> np.ndarray:
+        # Feet-biased position is more stable when bodies overlap vertically.
+        return np.array([(box[0] + box[2]) / 2,
+                         box[1] * .35 + box[3] * .65], dtype=float)
+
+    @staticmethod
+    def _box_size(box: list[float]) -> tuple[float, float]:
+        return max(1e-4, box[2] - box[0]), max(1e-4, box[3] - box[1])
+
+    def _pair_cost(self, state: dict, candidate: dict, frame: int) -> float:
+        previous = state["prediction"]["bbox_xyxy_norm"]
+        current = candidate["bbox_xyxy_norm"]
+        delta = max(1, frame - state["last_frame"])
+        # Limit extrapolation to avoid sending a lost player across the court.
+        projected = self._anchor(previous) + state["velocity"] * min(delta, 8)
+        distance = float(np.linalg.norm(projected - self._anchor(current)))
+        center = self._center_distance(previous, current)
+        overlap = _box_iou(previous, current)
+        gate = self.max_center_distance * (1 + min(delta - 1, 12) * .04)
+        if distance > gate and not (
+            overlap >= self.match_iou and center <= gate * 1.25
+        ):
+            return float("inf")
+        pw, ph = self._box_size(previous)
+        cw, ch = self._box_size(current)
+        shape = abs(np.log(ph / ch)) + .5 * abs(np.log(pw / cw))
+        if shape > 1.0:
+            return float("inf")
+        return (distance / gate + .12 * (1 - overlap)
+                + .16 * shape + .025 * min(delta - 1, 12))
+
+    def _match(self, track_id: int, candidate: dict, frame: int) -> dict:
+        old = self.tracks[track_id]
+        elapsed = max(1, frame - old["last_frame"])
+        previous = self._anchor(old["prediction"]["bbox_xyxy_norm"])
+        measured = (self._anchor(candidate["bbox_xyxy_norm"]) - previous) / elapsed
+        speed = float(np.linalg.norm(measured))
+        if speed > .035:
+            measured *= .035 / speed
+        # Use less momentum after a gap, but retain direction at crossings.
+        weight = .65 if elapsed == 1 else .35
+        velocity = old["velocity"] * weight + measured * (1 - weight)
+        candidate["track_id"] = track_id
+        candidate["interpolated"] = False
+        self.tracks[track_id] = {
+            "prediction": dict(candidate), "velocity": velocity,
+            "last_frame": frame,
+        }
+        return candidate
+
     def update(self, frame_index: int, predictions: list[dict]) -> list[dict]:
         players = [
-            dict(item)
-            for item in predictions
+            dict(item) for item in predictions
             if item["class_name"] == "player"
             and float(item["score"]) >= self.close_threshold
         ]
         output = [
             dict(item) for item in predictions if item["class_name"] != "player"
         ]
-        pairs: list[tuple[float, int, int]] = []
-        for track_id, state in self.tracks.items():
-            previous_box = state["prediction"]["bbox_xyxy_norm"]
-            for candidate_index, candidate in enumerate(players):
-                candidate_box = candidate["bbox_xyxy_norm"]
-                overlap = _box_iou(previous_box, candidate_box)
-                distance = self._center_distance(previous_box, candidate_box)
-                if overlap >= self.match_iou or distance <= self.max_center_distance:
-                    pairs.append((overlap - distance, track_id, candidate_index))
-        pairs.sort(reverse=True)
+        # Expire by actual frame distance, not the number of update calls.
+        for track_id in list(self.tracks):
+            if frame_index - self.tracks[track_id]["last_frame"] > self.hold_frames:
+                del self.tracks[track_id]
+
+        ids = list(self.tracks)
         matched_tracks: set[int] = set()
         matched_candidates: set[int] = set()
-        for _, track_id, candidate_index in pairs:
-            if track_id in matched_tracks or candidate_index in matched_candidates:
-                continue
-            candidate = players[candidate_index]
-            candidate["track_id"] = track_id
-            candidate["interpolated"] = False
-            self.tracks[track_id] = {
-                "prediction": candidate,
-                "missing": 0,
-            }
-            output.append(dict(candidate))
-            matched_tracks.add(track_id)
-            matched_candidates.add(candidate_index)
+        if ids and players:
+            n, m = len(ids), len(players)
+            # Dummy rows/columns allow a missed detection instead of forcing
+            # an implausible association to the wrong player.
+            costs = np.full((n + m, n + m), 2.0, dtype=float)
+            costs[n:, m:] = 0
+            for i, track_id in enumerate(ids):
+                for j, player in enumerate(players):
+                    cost = self._pair_cost(self.tracks[track_id], player, frame_index)
+                    costs[i, j] = cost if np.isfinite(cost) else 1e6
+            rows, columns = linear_sum_assignment(costs)
+            for row, col in zip(rows, columns):
+                if row >= n or col >= m or costs[row, col] >= 2:
+                    continue
+                track_id = ids[row]
+                output.append(dict(self._match(track_id, players[col], frame_index)))
+                matched_tracks.add(track_id)
+                matched_candidates.add(col)
 
         for track_id in list(self.tracks):
             if track_id in matched_tracks:
                 continue
             state = self.tracks[track_id]
-            state["missing"] += 1
-            if state["missing"] > self.hold_frames:
-                del self.tracks[track_id]
+            missing = frame_index - state["last_frame"]
+            if missing <= 0 or missing > self.hold_frames:
                 continue
             prediction = dict(state["prediction"])
+            previous = prediction["bbox_xyxy_norm"]
+            offset = state["velocity"] * min(missing, 8)
+            prediction["bbox_xyxy_norm"] = [
+                float(previous[0] + offset[0]), float(previous[1] + offset[1]),
+                float(previous[2] + offset[0]), float(previous[3] + offset[1]),
+            ]
             prediction["frame_index"] = frame_index
             prediction["track_id"] = track_id
             prediction["interpolated"] = True
-            prediction["score"] = float(prediction["score"]) * (
-                0.9 ** state["missing"]
-            )
+            # Held boxes are not fresh neural-network observations.
+            prediction.pop("action",None)
+            prediction.pop("action_score",None)
+            prediction["score"] = float(prediction["score"]) * (.9 ** missing)
             output.append(prediction)
 
-        for candidate_index, candidate in enumerate(players):
-            if (
-                candidate_index in matched_candidates
-                or float(candidate["score"]) < self.open_threshold
-            ):
+        for index, candidate in enumerate(players):
+            if index in matched_candidates or float(candidate["score"]) < self.open_threshold:
                 continue
             track_id = self.next_track_id
             self.next_track_id += 1
             candidate["track_id"] = track_id
             candidate["interpolated"] = False
-            self.tracks[track_id] = {"prediction": candidate, "missing": 0}
+            self.tracks[track_id] = {
+                "prediction": dict(candidate),
+                "velocity": np.zeros(2, dtype=float),
+                "last_frame": frame_index,
+            }
             output.append(dict(candidate))
         return output
+
+
+def _action_names_of(metadata: dict[str, Any]) -> list[str] | None:
+    if "action_logits" not in (metadata.get("output_names") or ()):
+        return None
+    names=metadata.get("action_names")
+    if not isinstance(names,list) or len(names)<2 or names[-1]!="none":
+        raise ValueError("RAVEL action metadata must define action_names ending in 'none'")
+    return [str(name) for name in names]
 
 
 class RavelVBOpenVINO:
@@ -492,6 +580,7 @@ class RavelVBOpenVINO:
         else:
             self.ball_width = self.ball_height = 0.0
         self.outputs = {name: compiled.output(name) for name in output_names}
+        self.action_names = _action_names_of(self.metadata)
 
     def preprocess(self, bgr: np.ndarray) -> np.ndarray:
         """Кадр -> тензор модели: размер, число каналов и шкала [0, 1].
@@ -530,6 +619,66 @@ class RavelVBOpenVINO:
             },
             elapsed,
         )
+
+
+class RavelVBONNX(RavelVBOpenVINO):
+    """RAVEL ONNX Runtime. Shares preprocessing/decoder with OpenVINO."""
+
+    def __init__(self, model_path: Path, num_threads: int, device: str,
+                 gpu_device_id: int = 0, gpu_memory_limit_mb: int = 0) -> None:
+        import onnxruntime as ort
+        if model_path.suffix.lower() != ".onnx":
+            raise ValueError("ONNX backend requires a .onnx model")
+        metadata_path = model_path.with_suffix(".json")
+        self.metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        self.config = self.metadata["config"]
+        for field in ("image_width", "image_height", "clip_length", "input_channels"):
+            if field not in self.config:
+                raise ValueError("ONNX metadata missing " + field)
+        names = self.metadata.get("output_names")
+        if not isinstance(names, list) or not {"logits", "boxes"} <= set(names):
+            raise ValueError("RAVEL ONNX outputs missing logits or boxes")
+        self.has_ball = "ball_grid" in names
+        if self.has_ball:
+            self.ball_width = float(self.config["ball_width_prior"])
+            self.ball_height = float(self.config["ball_height_prior"])
+        else:
+            self.ball_width = self.ball_height = 0.0
+        gpu = device == "cuda"
+        if gpu:
+            if "CUDAExecutionProvider" not in ort.get_available_providers():
+                raise RuntimeError("ONNX Runtime CUDAExecutionProvider unavailable")
+            ort.preload_dlls(directory="")
+        options = ort.SessionOptions()
+        if num_threads > 0:
+            options.intra_op_num_threads = num_threads
+        if not 0 <= gpu_device_id <= 15 or not 0 <= gpu_memory_limit_mb <= 131072:
+            raise ValueError("Invalid CUDA device ID or memory arena size")
+        cuda_options = {"device_id": str(gpu_device_id)}
+        if gpu_memory_limit_mb:
+            cuda_options["gpu_mem_limit"] = str(gpu_memory_limit_mb * 1024 * 1024)
+        providers = ([("CUDAExecutionProvider", cuda_options), "CPUExecutionProvider"] if gpu
+                     else ["CPUExecutionProvider"])
+        self.session = ort.InferenceSession(
+            str(model_path), sess_options=options, providers=providers
+        )
+        active = self.session.get_providers()
+        if gpu and (not active or active[0] != "CUDAExecutionProvider"):
+            raise RuntimeError("RAVEL CUDA failed to initialize; refusing CPU fallback")
+        self.device = "CUDA" if gpu else "CPU"
+        self.backend = "onnx-cuda" if gpu else "onnx-cpu"
+        self.input_name = self.metadata.get("input_name", "frames")
+        if self.input_name not in {item.name for item in self.session.get_inputs()}:
+            raise ValueError("RAVEL ONNX input does not match sidecar")
+        if not set(names) <= {item.name for item in self.session.get_outputs()}:
+            raise ValueError("RAVEL ONNX outputs do not match sidecar")
+        self.output_names = names
+        self.action_names = _action_names_of(self.metadata)
+
+    def infer(self, clip: np.ndarray) -> tuple[dict[str, np.ndarray], float]:
+        started = time.perf_counter()
+        tensors = self.session.run(self.output_names, {self.input_name: clip})
+        return dict(zip(self.output_names, tensors)), time.perf_counter() - started
 
 
 def _draw_predictions(
@@ -651,6 +800,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("video", help="input video")
     parser.add_argument("--model", default=str(DEFAULT_MODEL))
+    parser.add_argument("--backend", choices=("openvino", "onnx-cuda", "onnx-cpu"), default="openvino")
     parser.add_argument(
         "--output",
         help="write predictions to this JSON file or directory",
@@ -674,7 +824,7 @@ def parse_args() -> argparse.Namespace:
             "видео пропущенный кадр донашивает рамки предыдущего показанного"
         ),
     )
-    parser.add_argument("--score-threshold", type=float, default=0.35)
+    parser.add_argument("--score-threshold", type=float, default=0.42)
     parser.add_argument(
         "--ball-threshold",
         type=float,
@@ -693,10 +843,18 @@ def parse_args() -> argparse.Namespace:
             "ни на что не влияет"
         ),
     )
+    parser.add_argument("--action-threshold",type=float,default=ACTION_THRESHOLD,
+                        help="Touch probability threshold (RAVEL-VB-013)")
     parser.add_argument("--nms-iou", type=float, default=0.5)
     parser.add_argument("--close-threshold", type=float, default=0.20)
-    parser.add_argument("--hysteresis-frames", type=int, default=2)
+    parser.add_argument("--hysteresis-frames", type=int, default=18)
+    parser.add_argument("--match-center-distance", type=float, default=0.11,
+                        help="max normalized bbox center distance when reconnecting player tracks")
+    parser.add_argument("--match-iou", type=float, default=0.08,
+                        help="minimum overlap for matching player detections across frames")
     parser.add_argument("--no-player-hysteresis", action="store_true")
+    parser.add_argument("--save-raw-players", action="store_true",
+                        help="Store pre-hysteresis player proposals for threshold-only preview")
     parser.add_argument(
         "--include-features",
         action="store_true",
@@ -704,11 +862,13 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--warmup-runs", type=int, default=3)
     parser.add_argument("--num-threads", type=int, default=0)
+    parser.add_argument("--gpu-device-id", type=int, default=0)
+    parser.add_argument("--gpu-memory-limit-mb", type=int, default=0)
     parser.add_argument(
         "--device",
         choices=("CPU", "GPU", "AUTO"),
         default="CPU",
-        help="OpenVINO device used for inference",
+        help="OpenVINO-only device; ignored for ONNX backends",
     )
     parser.add_argument(
         "--performance-hint",
@@ -730,6 +890,8 @@ def main() -> None:
         raise ValueError("--ball-threshold must be in [0, 1]")
     if not 0 <= args.head_threshold <= 1:
         raise ValueError("--head-threshold must be in [0, 1]")
+    if not 0 <= args.action_threshold <= 1:
+        raise ValueError("--action-threshold must be in [0, 1]")
     if not 0 <= args.close_threshold <= 1:
         raise ValueError("--close-threshold must be in [0, 1]")
     if (
@@ -737,6 +899,10 @@ def main() -> None:
         and args.close_threshold > args.score_threshold
     ):
         raise ValueError("--close-threshold must not exceed --score-threshold")
+    if not 0.02 <= args.match_center_distance <= 0.30:
+        raise ValueError("--match-center-distance must be in [0.02, 0.30]")
+    if not 0 <= args.match_iou <= 1:
+        raise ValueError("--match-iou must be in [0, 1]")
     if args.hysteresis_frames < 0 or args.warmup_runs < 0 or args.num_threads < 0:
         raise ValueError("frame counts and thread count must be non-negative")
 
@@ -759,9 +925,11 @@ def main() -> None:
         raise FileNotFoundError(f"video not found: {video_path}")
     if not model_path.is_file():
         raise FileNotFoundError(f"OpenVINO model not found: {model_path}")
-    model = RavelVBOpenVINO(
-        model_path, args.num_threads, args.performance_hint, args.device
-    )
+    model = (RavelVBOpenVINO(model_path, args.num_threads, args.performance_hint, args.device)
+             if args.backend == "openvino" else
+             RavelVBONNX(model_path, args.num_threads,
+                         "cuda" if args.backend == "onnx-cuda" else "cpu",
+                         args.gpu_device_id, args.gpu_memory_limit_mb))
     config = model.config
     clip_length = int(config["clip_length"])
     if args.stride > clip_length:
@@ -791,6 +959,12 @@ def main() -> None:
     raw_by_frame: dict[int, list[dict]] = defaultdict(list)
     predictions_by_frame: dict[int, list[dict]] = defaultdict(list)
     predictions: list[dict] = []
+    raw_path = (output_path.with_name("players.raw.jsonl")
+                if args.save_raw_players and output_path is not None else None)
+    raw_file = None
+    if raw_path is not None:
+        raw_path.parent.mkdir(parents=True, exist_ok=True)
+        raw_file = raw_path.open("w", encoding="utf-8", newline="\n")
     hysteresis = (
         None
         if args.no_player_hysteresis
@@ -798,6 +972,8 @@ def main() -> None:
             args.score_threshold,
             args.close_threshold,
             args.hysteresis_frames,
+            match_iou=args.match_iou,
+            max_center_distance=args.match_center_distance,
         )
     )
     show_frames: dict[int, np.ndarray] = {}
@@ -810,9 +986,9 @@ def main() -> None:
     inference_runs = 0
     model_elapsed = 0.0
     candidate_threshold = (
-        args.score_threshold
-        if args.no_player_hysteresis
-        else args.close_threshold
+        min(.05, args.score_threshold, args.close_threshold)
+        if raw_file is not None else
+        args.score_threshold if args.no_player_hysteresis else args.close_threshold
     )
 
     def infer_clip(
@@ -833,6 +1009,8 @@ def main() -> None:
             args.include_features,
             ball_threshold=args.ball_threshold,
             head_threshold=args.head_threshold,
+            action_names=model.action_names,
+            action_threshold=args.action_threshold,
         )[0]
         for item in decoded:
             slot = int(item.pop("frame_slot"))
@@ -894,7 +1072,18 @@ def main() -> None:
                 _show_frame(current_frame)
                 next_finalize_frame += 1
                 continue
-            merged = merge_frame_predictions(raw_by_frame.pop(current_frame, []))
+            merged = merge_frame_predictions(raw_by_frame.pop(current_frame, []),
+                                             iou_threshold=args.nms_iou)
+            if raw_file is not None:
+                # One JSONL row per inferred frame, independent of the player
+                # score/open/close thresholds and subsequent Track ID matching.
+                raw_players = [
+                    [round(float(item["score"]), 6),
+                     *[round(float(x), 6) for x in item["bbox_xyxy_norm"]]]
+                    for item in merged if item["class_name"] == "player"
+                ]
+                raw_file.write(json.dumps([current_frame, raw_players],
+                                          separators=(",", ":")) + "\n")
             if hysteresis is not None:
                 filtered = hysteresis.update(current_frame, merged)
             else:
@@ -969,7 +1158,11 @@ def main() -> None:
                 tail_indices.append(tail_indices[-1])
             infer_clip(tail_frames, tail_indices, real_frame_count)
     capture.release()
-    finalize_frames(total)
+    try:
+        finalize_frames(total)
+    finally:
+        if raw_file is not None:
+            raw_file.close()
     if args.show:
         cv2.destroyAllWindows()
     pipeline_elapsed = time.perf_counter() - pipeline_started
@@ -988,6 +1181,7 @@ def main() -> None:
             total / max(pipeline_elapsed, 1e-9), 3
         ),
         "device": model.device,
+        "backend": args.backend,
     }
 
     if output_video_path is not None:
@@ -1026,6 +1220,7 @@ def main() -> None:
     payload = {
         "format": "ravel-vb-predictions-v1",
         "model": str(model_path),
+        "backend": args.backend,
         "video": str(video_path),
         "source_size": {"width": width, "height": height},
         "fps": fps,
@@ -1035,15 +1230,41 @@ def main() -> None:
         "score_threshold": args.score_threshold,
         "ball_threshold": args.ball_threshold,
         "head_threshold": args.head_threshold,
+        "action_threshold":args.action_threshold if model.action_names else None,
         "close_threshold": (
             None if args.no_player_hysteresis else args.close_threshold
         ),
         "hysteresis_frames": (
             0 if args.no_player_hysteresis else args.hysteresis_frames
         ),
+        "match_iou": None if args.no_player_hysteresis else args.match_iou,
+        "match_center_distance": (
+            None if args.no_player_hysteresis else args.match_center_distance
+        ),
+        "association_method": (
+            "model_queries" if args.no_player_hysteresis
+            else "global_motion_geometry_hungarian"
+        ),
+        "observed_player_track_ids": len({
+            item["track_id"] for item in predictions
+            if item["class_name"] == "player"
+            and not item.get("interpolated")
+            and item.get("track_id") is not None
+        }),
         "benchmark": benchmark,
         "predictions": predictions,
     }
+    if raw_path is not None:
+        metadata_path = raw_path.with_name("players.raw.json")
+        metadata_path.write_text(json.dumps({
+            "format": "ravel-raw-players-v1",
+            "minimum_confidence": .05,
+            "score_threshold": args.score_threshold,
+            "close_threshold": args.close_threshold,
+            "nms_iou": args.nms_iou,
+            "frame_step": args.frame_step,
+            "width": width, "height": height, "fps": fps,
+        }, ensure_ascii=False), encoding="utf-8")
     if output_path is not None:
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text(

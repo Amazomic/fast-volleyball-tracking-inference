@@ -4,29 +4,37 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Volley Studio · Анализ матчей</title>
+  <link rel="icon" href="/favicon.ico?v=3" sizes="any">
+  <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png?v=3">
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg?v=3">
+  <script>
+    (() => {
+      const valid = ["analysis", "analysis-results", "players", "report", "benchmark", "results"];
+      const requested = new URLSearchParams(location.search).get("view");
+      document.documentElement.dataset.initialView = valid.includes(requested) ? requested : "analysis";
+      try { document.documentElement.dataset.lang = localStorage.getItem("volley-ui-language")==="en"?"en":"ru"; }
+      catch { document.documentElement.dataset.lang="ru"; }
+    })();
+  </script>
   <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/pipeline-settings.css">
+<link rel="stylesheet" href="/montage-player.css">
+  <link rel="stylesheet" href="/result-media.css">
+  <link rel="stylesheet" href="/settings-tooltips.css">
+  <link rel="stylesheet" href="/analysis-presets.css">
+  <link rel="stylesheet" href="/players-workspace.css">
+  <link rel="stylesheet" href="/quick-reel.css?v=7">
 </head>
 <body>
 <div class="shell">
   <aside class="sidebar">
     <div class="brand"><span class="brand-logo">V</span><span><b>VOLLEY<span class="accent">STUDIO</span></b><small>AI Match Workspace</small></span></div>
-    <div class="nav-caption">РАБОЧЕЕ ПРОСТРАНСТВО</div>
-    <nav class="nav">
-      <button class="nav-button active" data-view="analysis"><span class="nav-icon">▶</span> Анализ</button>
-      <button class="nav-button" data-view="analysis-results"><span class="nav-icon">▤</span> Результат анализа</button>
-      <button class="nav-button" data-view="players"><span class="nav-icon">♧</span> Игроки</button>
-      <button class="nav-button" data-view="report"><span class="nav-icon">▥</span> Отчёт</button>
-      <button class="nav-button" data-view="benchmark"><span class="nav-icon">g</span> Бенчмарк</button>
-      <button class="nav-button" data-view="results"><span class="nav-icon">▣</span> Монтаж</button>
-    </nav>
-    <div class="sidebar-bottom">
-      <div class="sidebar-note"><span class="pulse"></span>Локальный сервер в WSL<br><small>Результаты сохраняются в /results</small></div>
-      <div class="version">MVP / 0.1.0</div>
-    </div>
-  </aside>
-  <main class="main">
-    <header class="topbar">
-      <div><div class="eyebrow">MATCH INTELLIGENCE / WORKSPACE</div><h1 id="page-title">Анализ</h1></div>
+    <div class="sidebar-project">
+      <div class="topbar-controls">
+        <button class="quick-reel-trigger" id="quick-reel-open" type="button">✦ Быстрый рилс</button>
+        <button class="primary" id="create-project" type="button">+ Создать проект</button>
+      </div>
+      <div class="sidebar-project-head">
       <div class="project-picker" id="project-picker">
         <select id="top-project" class="project-picker-native" tabindex="-1" aria-hidden="true"><option value="">Выберите проект</option></select>
         <button type="button" class="project-picker-trigger" id="project-picker-trigger"
@@ -38,6 +46,8 @@
           </svg>
         </button>
         <div class="project-picker-menu" id="project-picker-menu" role="listbox" aria-label="Доступные проекты" hidden></div>
+
+      </div>
         <button type="button" class="project-settings-trigger" id="project-settings-trigger"
           aria-label="Настройки текущего проекта" title="Настройки проекта" aria-haspopup="menu"
           aria-expanded="false" aria-controls="project-settings-menu">
@@ -52,10 +62,149 @@
           <button type="button" role="menuitem" id="project-settings-delete" class="project-settings-danger">Удалить проект</button>
         </div>
       </div>
-      <div class="topbar-controls">
-        <button class="primary" id="create-project" type="button">+ Создать проект</button>
+      <div class="sidebar-analysis-run" id="sidebar-analysis-run">
+        <label class="field" for="sidebar-analysis-run-select">
+          <span>Запуск анализа</span>
+          <select id="sidebar-analysis-run-select" class="analysis-run-select"
+                  data-analysis-run-select aria-label="Выбрать запуск анализа текущего проекта"
+                  aria-describedby="sidebar-run-info" disabled>
+            <option value="">Выберите проект</option>
+          </select>
+        </label>
+        <div id="sidebar-run-info" class="sidebar-run-tooltip" role="tooltip" hidden></div>
       </div>
-    </header>
+    </div>
+    <div class="nav-caption">РАБОЧЕЕ ПРОСТРАНСТВО</div>
+    <nav class="nav">
+      <button class="nav-button" data-view="analysis"><span class="nav-icon">▶</span> Анализ</button>
+      <button class="nav-button" data-view="analysis-results"><span class="nav-icon">▤</span> Предпросмотр</button>
+      <button class="nav-button" data-view="players"><span class="nav-icon">♧</span> Игроки</button>
+      <button class="nav-button" data-view="report"><span class="nav-icon">▥</span> Отчёт</button>
+      <button class="nav-button" data-view="results"><span class="nav-icon">▣</span> Монтаж</button>
+    </nav>
+    <section class="sidebar-tasks" id="sidebar-tasks" aria-label="Ход выполнения задач проекта" hidden>
+      <div class="sidebar-tasks-caption">ХОД ОБРАБОТКИ</div>
+      <button class="sidebar-task" id="sidebar-analysis-task" data-task-view="analysis" type="button" hidden>
+        <span class="sidebar-task-heading"><strong>Анализ</strong><span id="sidebar-analysis-state">Выполняется</span></span>
+        <span class="sidebar-task-stage" id="sidebar-analysis-stage"></span>
+        <span class="sidebar-task-meter" role="progressbar" aria-label="Прогресс анализа" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+          <span id="sidebar-analysis-fill"></span>
+        </span>
+        <span class="sidebar-task-footer"><span id="sidebar-analysis-count"></span><span id="sidebar-analysis-time"></span></span>
+      </button>
+      <button class="sidebar-task" id="sidebar-montage-task" data-task-view="results" type="button" hidden>
+        <span class="sidebar-task-heading"><strong>Монтаж</strong><span id="sidebar-montage-state">Выполняется</span></span>
+        <span class="sidebar-task-stage" id="sidebar-montage-stage"></span>
+        <span class="sidebar-task-meter" role="progressbar" aria-label="Прогресс монтажа" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+          <span id="sidebar-montage-fill"></span>
+        </span>
+        <span class="sidebar-task-footer"><span id="sidebar-montage-count"></span><span id="sidebar-montage-time"></span></span>
+      </button>
+    </section>
+    <div class="sidebar-bottom">
+      <section id="video-preparation" class="sidebar-preparation" aria-label="Подготовка видео" hidden>
+        <div class="sidebar-preparation-heading">
+          <span>Обработка видео</span>
+          <span id="video-preparation-count" role="status">Проверка…</span>
+        </div>
+        <div class="sidebar-preparation-meter" id="video-preparation-total-meter"
+             role="progressbar" aria-label="Подготовка видео проекта"
+             aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+          <div id="video-preparation-total-fill"></div>
+        </div>
+        <details class="sidebar-preparation-detail">
+          <summary id="video-preparation-summary">Подробности</summary>
+          <div id="video-preparation-list" class="video-preparation-list"></div>
+          <button class="secondary small" type="button" id="video-preparation-retry" hidden>
+            Повторить подготовку
+          </button>
+        </details>
+      </section>
+      <button class="nav-button" data-view="benchmark"><span class="nav-icon">g</span> Бенчмарк</button>
+      <div class="sidebar-language" data-language-switch role="group" aria-label="Язык интерфейса">
+        <div class="sidebar-language-buttons">
+          <button type="button" data-language-choice="ru" aria-pressed="true">RU</button>
+          <button type="button" data-language-choice="en" aria-pressed="false">EN</button>
+        </div>
+      </div>
+    </div>
+  </aside>
+  <main class="main">
+
+    <dialog id="quick-reel-dialog" class="quick-reel-dialog" aria-labelledby="quick-reel-heading">
+      <div class="quick-reel-head">
+        <div>
+          <p class="quick-reel-eyebrow">БЫСТРЫЙ МОНТАЖ</p>
+          <h2 id="quick-reel-heading">Быстрый рилс</h2>
+          <p class="quick-reel-lede">Добавьте записи матчей и музыку. Мы соберём лучшие целые розыгрыши в один вертикальный ролик.</p>
+        </div>
+        <button class="quick-reel-close" type="button" id="quick-reel-close" aria-label="Закрыть окно">×</button>
+      </div>
+      <div class="quick-reel-inputs">
+        <section class="quick-reel-section" id="quick-reel-video-section">
+          <div class="quick-reel-section-heading">
+            <span class="quick-reel-step">01</span>
+            <div><h3>Видео</h3><p>Одно или несколько, до 30 файлов</p></div>
+            <span id="quick-reel-video-count" class="quick-reel-count">0</span>
+          </div>
+          <button type="button" id="quick-reel-dropzone" class="quick-reel-dropzone" aria-label="Выбрать видео">
+            <span class="quick-reel-drop-icon" aria-hidden="true">▤</span>
+            <strong>Перетащите видео сюда</strong>
+            <span>или нажмите, чтобы выбрать файлы с Рабочего стола</span>
+            <span class="quick-reel-drop-action">Выбрать видео</span>
+          </button>
+          <input id="quick-reel-video-input" type="file" multiple accept=".mp4,.mov,.mkv,.avi,.webm,.m4v,.mts,video/*" hidden>
+          <div id="quick-reel-videos" class="quick-reel-file-list" aria-live="polite">
+            <span class="quick-reel-empty">Нет выбранных видео</span>
+          </div>
+        </section>
+        <section class="quick-reel-section" id="quick-reel-music-section">
+          <div class="quick-reel-section-heading">
+            <span class="quick-reel-step">02</span>
+            <div><h3>Музыка</h3><p>Длительность трека задаёт длину рилса</p></div>
+          </div>
+          <button type="button" id="quick-reel-music-dropzone" class="quick-reel-dropzone" aria-label="Выбрать музыку">
+            <span class="quick-reel-drop-icon" aria-hidden="true">♫</span>
+            <strong>Перетащите музыку сюда</strong>
+            <span>или нажмите, чтобы выбрать трек с Рабочего стола</span>
+            <span class="quick-reel-drop-action">Выбрать музыку</span>
+          </button>
+          <input id="quick-reel-audio-input" type="file" accept=".mp3,.m4a,.wav,.flac,.aac,.ogg,.opus,audio/*" hidden>
+          <div id="quick-reel-music" class="quick-reel-file-list" aria-live="polite">
+            <span class="quick-reel-empty">Трек ещё не выбран</span>
+          </div>
+        </section>
+      </div>
+      <div class="quick-reel-summary">
+        <div class="quick-reel-summary-main">
+          <span>Длительность рилса</span>
+          <strong id="quick-reel-duration">—</strong>
+        </div>
+        <div class="quick-reel-summary-sub">Лучшие розыгрыши · вертикальное видео 9:16</div>
+      </div>
+      <div class="quick-reel-progress" id="quick-reel-progress" hidden>
+        <div class="quick-reel-progress-row"><strong id="quick-reel-stage">Подготовка видео…</strong><span id="quick-reel-percent">0%</span></div>
+        <progress id="quick-reel-meter" max="100" value="0"></progress>
+      </div>
+      <p class="quick-reel-status" id="quick-reel-status" role="status" aria-live="polite"></p>
+      <div id="quick-reel-result" class="quick-reel-result" hidden>
+        <div class="quick-reel-result-heading"><h3>Рилс готов</h3><span>MP4</span></div>
+        <video id="quick-reel-video" controls playsinline preload="metadata"></video>
+        <div class="quick-reel-result-actions">
+          <a id="quick-reel-download" class="quick-reel-download" download="quick_reel.mp4">Скачать видео</a>
+
+        </div>
+        <p class="quick-reel-result-note" id="quick-reel-result-note"></p>
+      </div>
+      <div class="quick-reel-footer">
+        <p>Каждый запуск — новый анализ с настройками по умолчанию. Повторно используется только подготовленное видео. Проекты не создаются.</p>
+        <div class="quick-reel-footer-actions">
+          <button class="quick-reel-cancel" id="quick-reel-cancel" type="button" hidden>Остановить</button>
+          <button class="quick-reel-submit" id="quick-reel-submit" type="button" disabled>Создать рилс <span aria-hidden="true">→</span></button>
+        </div>
+      </div>
+    </dialog>
+
     <dialog id="project-dialog" class="project-dialog" aria-labelledby="project-dialog-title">
       <form id="new-project-form">
         <div class="project-dialog-head">
@@ -64,9 +213,20 @@
           <button type="button" class="icon-button" id="close-project-dialog" aria-label="Закрыть окно">×</button>
         </div>
         <label class="field"><span>Название проекта</span><input id="new-project-name" name="project_name" maxlength="100" autocomplete="off" required></label>
-        <div class="project-dialog-section-head"><h3>Исходные видео</h3><span class="muted">Каталог project/</span></div>
-        <div id="new-project-video-options" class="project-dialog-video-list"></div>
-        <p class="project-dialog-note">Для каждого видео по умолчанию выбран весь файл. После создания проекта откроется вкладка «Анализ»: там можно изменить диапазоны, модель и остальные параметры до запуска.</p>
+        <div class="project-dialog-section-head"><h3>Исходные видео</h3><span class="muted">Можно выбрать сразу несколько</span></div>
+        <button type="button" id="project-video-dropzone" class="project-video-dropzone">
+          <span class="project-video-dropzone-icon" aria-hidden="true">+</span>
+          <strong>Выбрать исходные видео через проводник</strong>
+          <span>Открывается папка project/ · можно выбрать несколько файлов</span>
+          <small>MP4, MOV, MKV, AVI, WEBM, M4V, MTS</small>
+        </button>
+        <p id="project-source-feedback" class="project-dialog-note" role="status" aria-live="polite"></p>
+        <div id="new-project-video-options" class="project-dialog-video-list"
+             aria-label="Выбранные для проекта видео" hidden></div>
+        <div class="project-dialog-section-head"><h3>Игроки проекта</h3><span class="muted">Общая база Volley Studio</span></div>
+        <p class="project-dialog-note">Отметьте игроков из базы — они сразу появятся в новом проекте. Track ID останутся независимыми для каждой записи.</p>
+        <div id="new-project-player-options" class="project-dialog-player-list"><p class="muted">Загружаем базу игроков…</p></div>
+        <p class="project-dialog-note">Оригиналы не копируются и не изменяются. После создания проекта подготовленные копии сохраняются в общей папке results/prepared/ и переиспользуются другими проектами. Прогресс — в боковой панели.</p>
         <div id="project-dialog-error" class="form-error" role="alert" hidden></div>
         <div class="project-dialog-footer"><span id="project-selected-count" class="muted">Выберите хотя бы одно видео</span>
           <button class="secondary" id="cancel-create-project" type="button">Отмена</button>
@@ -92,6 +252,7 @@
       <p>Проект <strong id="delete-project-name"></strong> исчезнет из списка.
         Его результаты и настройки будут перенесены в локальный архив.
         Исходные видео из папки <code>project/</code> останутся на месте.</p>
+      <p>При удалении будут остановлены подготовка видео, анализ, монтаж и другие фоновые задачи этого проекта. Задачи остальных проектов продолжат работу.</p>
       <div id="project-delete-error" class="form-error" role="alert" hidden></div>
       <div class="project-action-buttons">
         <button type="button" class="secondary" data-close-project-action>Отмена</button>
@@ -99,11 +260,26 @@
       </div>
     </dialog>
     <div class="content">
+      <section id="quick-reel-activity" class="quick-reel-activity" aria-label="Быстрый рилс — ход обработки" hidden>
+        <div class="quick-reel-activity-top">
+          <div class="quick-reel-activity-title"><strong>Быстрый рилс</strong><span id="quick-reel-header-state">Обработка</span></div>
+          <button type="button" id="quick-reel-header-open">Открыть</button>
+        </div>
+        <div id="quick-reel-header-stage" class="quick-reel-activity-stage">Ожидание запуска</div>
+        <progress id="quick-reel-header-meter" max="100" value="0"></progress>
+        <div id="quick-reel-header-videos" class="quick-reel-activity-videos"></div>
+        <div id="quick-reel-header-result" class="quick-reel-activity-result" hidden>
+          <span>Готовый рилс</span>
+          <a id="quick-reel-header-download" download="quick_reel.mp4">Скачать MP4</a>
+
+        </div>
+      </section>
       <div id="alerts" role="status"></div>
-      <section id="view-analysis" class="view active">
+      <section id="view-analysis" class="view">
         <div class="section-intro"><h2 id="active-project-name">Анализ</h2>
           <p id="active-project-description">Выберите проект, настройте видео и запустите обработку.</p>
         </div>
+
         <div id="no-project" class="panel no-project">
           <h3>Начните с проекта</h3><p>Создайте проект и выберите исходные видео.</p>
           <button class="primary" data-create-project type="button">+ Создать проект</button>
@@ -171,12 +347,12 @@
             <div class="analysis-current-actions" aria-label="Выбрать границы анализа по текущему кадру">
               <button type="button" class="secondary" id="timeline-set-start-current"
                 title="Установить начало анализа в позиции белого маркера">
-                <span>Начало</span><strong id="range-start-display">00:00:00</strong>
+                <span>Начало отсюда</span><strong id="range-start-display">00:00:00</strong>
               </button>
               <span id="timeline-current-clock" class="analysis-current-clock" aria-live="off">00:00:00</span>
               <button type="button" class="secondary" id="timeline-set-end-current"
                 title="Установить конец анализа в позиции белого маркера">
-                <span>Конец</span><strong id="range-end-display">00:00:00</strong>
+                <span>Конец тут</span><strong id="range-end-display">00:00:00</strong>
               </button>
               <span id="autosave-error" class="autosave-error" hidden role="alert"></span>
             </div>
@@ -184,116 +360,517 @@
           </article>
           </section>
           <article class="panel analysis-settings-panel">
-            <div class="panel-heading"><h3>Настройки запуска анализа</h3></div>
+            <div class="panel-heading"><h3>Настройка и запуск анализа</h3></div>
             <form id="analysis-form">
-              <div class="analysis-context-summary" id="analysis-context-summary" aria-label="Контекст анализа каждого видео"></div>
-              <p class="footnote" id="analysis-project-hint">Параметры применяются ко всем видео проекта, а диапазон выбирается отдельно для каждого видео.</p>
-              <div class="form-row">
-                <label class="field"><span>Движок обнаружения мяча</span>
+              <div class="analysis-profiles-layout">
+                <div class="analysis-profile-choose">
+                  <section class="analysis-presets" aria-label="Профиль анализа">
+                    <div class="analysis-preset-toolbar">
+                      <label class="field"><span>Профиль анализа</span>
+                        <select id="analysis-preset" aria-label="Профиль анализа"></select>
+                      </label>
+                      <button type="button" class="secondary" id="analysis-preset-delete" disabled title="Встроенные профили удалить нельзя">Удалить профиль</button>
+                      <button class="primary" id="analysis-start-submit" type="submit">Запустить анализ</button>
+                    </div>
+                    <div class="analysis-preset-meta">
+                      <p id="analysis-preset-description" class="footnote" role="status"></p>
+                      <div class="analysis-preset-actions">
+                        <button type="button" class="secondary" id="analysis-preset-reset" hidden>Сбросить изменения</button>
+                      </div>
+                    </div>
+                    <div class="profile-diff-heading">
+                      <span>Отличия от профиля по умолчанию «Новый»</span>
+                      <span id="analysis-preset-diff-count" aria-label="Количество отличий">0</span>
+                    </div>
+                    <div id="analysis-preset-diff" class="profile-difference-list" role="list" aria-label="Отличия настроек профиля"></div>
+                    <p id="analysis-preset-applied" class="footnote" role="status" hidden></p>
+                  </section>
+                </div>
+                <div class="analysis-profile-editor">
+                  <div class="analysis-profile-editor-head">
+                    <h4>Настройки анализа</h4>
+                     <p id="analysis-profile-validation" class="analysis-profile-validation" role="alert" hidden></p>
+                    <p>Изменение любого параметра создаёт пользовательскую конфигурацию. Запуск доступен без сохранения.</p>
+                  </div>
+              <details id="analysis-technical-settings" class="advanced-settings analysis-technical-settings" open>
+                <summary>Параметры по типам анализа</summary>
+                <div class="analysis-technical-body">
+              <details class="analysis-context-disclosure">
+                <summary>Контекст и источники видео</summary>
+                <div class="analysis-context-summary" id="analysis-context-summary" aria-label="Контекст анализа каждого видео"></div>
+              </details>
+              <p class="analysis-stage-note" id="analysis-project-hint">Параметры анализа общие для проекта, диапазоны задаются отдельно для каждого видео.</p>
+              <div class="analysis-stage-workspace">
+                <div class="analysis-stage-navigation" role="tablist" aria-label="Типы анализа" aria-orientation="horizontal">
+                  <div class="analysis-stage-nav-row">
+                    <button type="button" class="analysis-stage-tab" role="tab" id="analysis-tab-ball" data-analysis-tab="analysis-stage-ball" data-analysis-run="ball" aria-controls="analysis-stage-ball" aria-selected="true">Мяч <small>VballNet</small></button>
+                  </div>
+                  <div class="analysis-stage-nav-row">
+                    <button type="button" class="analysis-stage-tab" role="tab" id="analysis-tab-players" data-analysis-tab="analysis-pipeline-advanced" data-analysis-run="players" aria-controls="analysis-pipeline-advanced" aria-selected="false">Игроки <small>RAVEL · Track ID</small></button>
+                  </div>
+                  <div class="analysis-stage-nav-row">
+                    <button type="button" class="analysis-stage-tab" role="tab" id="analysis-tab-tracking" data-analysis-tab="analysis-stage-tracking" data-analysis-run="tracking" aria-controls="analysis-stage-tracking" aria-selected="false">Трекинг <small>Траектории и события</small></button>
+                  </div>
+                  <div class="analysis-stage-nav-row">
+                    <button type="button" class="analysis-stage-tab" role="tab" id="analysis-tab-performance" data-analysis-tab="analysis-stage-performance" data-analysis-run="performance" aria-controls="analysis-stage-performance" aria-selected="false">Ресурсы <small>CPU · OpenVINO</small></button>
+                  </div>
+                  <div class="analysis-stage-nav-row">
+                    <button type="button" class="analysis-stage-tab" role="tab" id="analysis-tab-outputs" data-analysis-tab="analysis-stage-outputs" data-analysis-run="outputs" aria-controls="analysis-stage-outputs" aria-selected="false">Результаты <small>Экспорт · диагностика</small></button>
+                  </div>
+                </div>
+                <div class="analysis-stage-content-panel">
+                  <p id="analysis-stage-run-hint" class="analysis-stage-run-hint" role="status"></p>
+                  <div class="analysis-stage-list">
+            <details class="analysis-stage" id="analysis-stage-ball" role="tabpanel" aria-labelledby="analysis-tab-ball" open>
+              <summary><span class="analysis-stage-name">Мяч</span><span class="analysis-stage-description">VballNet · модель, порог, движок</span></summary>
+              <div class="analysis-stage-content">
+                <div class="pipeline-settings-grid">
+                  <label class="field"><span>Модель обнаружения мяча</span>
+                <select name="ball_model" id="analysis-ball-model">
+                  <option value="VballNetV4c_seq9_grayscale_20260908_213829.onnx">VballNetV4c — точнее (F1 90,2%)</option>
+                  <option value="VballNetFastV1_seq9_grayscale_233_h288_w512.onnx">VballNetFastV1 — быстрее в инференсе (F1 79,9%)</option>
+                </select>
+              </label>
+                  <label class="field"><span>Порог уверенности обнаружения мяча (0,05–0,95)</span>
+                <input name="ball_threshold" id="analysis-ball-threshold" type="number" min="0.05" max="0.95" step="0.05" value="0.50" required>
+              </label>
+                  <label class="field"><span>Движок обнаружения мяча</span>
                   <select name="backend"><option value="onnx">ONNX Runtime — CUDA (GPU)</option><option value="onnx-cpu">ONNX Runtime — CPU</option><option value="openvino">OpenVINO — CPU</option></select>
                 </label>
-                <div class="field"><span>Размер кадра анализа</span>
+                </div>
+                <p class="analysis-stage-note">VballNet находит мяч; RAVEL анализирует игроков отдельно. Порог ниже — больше находок и ложных срабатываний. Реальную скорость нейросетей на CPU и GPU смотрите в «Бенчмарке»: ускорение всего анализа зависит также от декодирования и RAVEL.</p>
+              </div>
+            </details>
+            <details class="analysis-stage" id="analysis-pipeline-advanced" role="tabpanel" aria-labelledby="analysis-tab-players">
+              <summary><span class="analysis-stage-name">Игроки</span><span class="analysis-stage-description">RAVEL · детекция и стабильность ID</span></summary>
+              <div class="analysis-stage-content">
+                <div class="analysis-stage-subhead">Обнаружение и фильтрация</div>
+                <div class="pipeline-settings-grid">
+                  <label class="field"><span>Модель игроков</span><select name="player_model"><option value="RAVEL-VB-012-9f">RAVEL-VB-012 · игроки, мяч, головы</option><option value="RAVEL-VB-011-9f">RAVEL-VB-011 · быстрее, без голов</option><option value="RAVEL-VB-013-9f">RAVEL-VB-013 · игроки, мяч, головы, касания Touch</option></select></label>
+                  <label class="field"><span>Устройство модели игроков</span><select name="player_backend" id="analysis-player-device"><option value="onnx-cuda" selected>GPU · NVIDIA CUDA</option><option value="onnx-cpu">CPU · ONNX Runtime</option></select></label>
+                  <input type="hidden" name="player_device" value="GPU">
+                  <label class="field"><span>Игроки: порог детекции</span><input name="player_score_threshold" type="number" min="0" max="1" step="0.01" value="0.42" required></label>
+                  <label class="field"><span>RAVEL: порог головы</span><input name="player_head_threshold" type="number" min="0" max="1" step="0.01" value="0.3" required></label>
+                  <label class="field"><span>RAVEL-013: порог касания (Touch)</span><input name="player_action_threshold" type="number" min="0" max="1" step="0.05" value="0.5" required></label>
+                  <label class="field"><span>RAVEL: порог мяча</span><input name="player_ball_threshold" type="number" min="0" max="1" step="0.01" value="0.35" required></label>
+                  <label class="field"><span>NMS IoU игроков</span><input name="player_nms_iou" type="number" min="0" max="1" step="0.01" value="0.5" required></label>
+                </div>
+                <div class="analysis-stage-subhead">Удержание и связывание Track ID</div>
+                <div class="pipeline-settings-grid">
+                  <label class="field"><span>Игроки: порог закрытия трека</span><input name="player_close_threshold" type="number" min="0" max="1" step="0.01" value="0.2" required></label>
+                  <label class="field"><span>Игроки: удерживать пропажи (кадры)</span><input name="player_hysteresis_frames" type="number" min="0" max="30" step="1" value="18" required></label>
+                  <label class="field"><span>Связать ID: допустимое расстояние центров (0,02–0,30)</span><input name="player_match_center_distance" type="number" min="0.02" max="0.30" step="0.01" value="0.11" required></label>
+                  <label class="field"><span>Связать ID: минимум перекрытия рамок (IoU)</span><input name="player_match_iou" type="number" min="0" max="1" step="0.01" value="0.08" required></label>
+                </div>
+
+              </div>
+            </details>
+            <details class="analysis-stage" id="analysis-stage-tracking" role="tabpanel" aria-labelledby="analysis-tab-tracking">
+              <summary><span class="analysis-stage-name">Трекинг и контакты</span><span class="analysis-stage-description">Траектории, длительность, игровые действия</span></summary>
+              <div class="analysis-stage-content">
+                <div class="pipeline-settings-grid">
+                  <label class="field"><span>Максимальная дистанция трекинга, px</span><input name="track_max_distance" type="number" min="1" max="2000" step="1" value="200" required></label>
+                  <label class="field"><span>Минимальная длина трека, с</span><input name="track_min_duration" type="number" min="0.05" max="30" step="0.01" value="0.5" required></label>
+                  <label class="field"><span>Порог игроков для расчёта контактов</span><input name="track_player_threshold" type="number" min="0" max="1" step="0.01" value="0.35" required></label>
+                  <label class="field"><span>Порог мяча RAVEL для восстановления</span><input name="track_ball_threshold" type="number" min="0" max="1" step="0.01" value="0.35" required></label>
+                  <label class="checkbox-field"><input data-advanced-check name="track_no_ball_fill" type="checkbox" ><span>Запретить восполнение пропусков мяча</span></label>
+                  <label class="checkbox-field"><input name="beach" type="checkbox" checked><span>Пляжный волейбол</span></label>
+                </div>
+                <p class="analysis-stage-note">Эти параметры определяют траектории и расчёт контактов мяча с игроками, но не распознают личность.</p>
+              </div>
+            </details>
+            <details class="analysis-stage" id="analysis-stage-performance" role="tabpanel" aria-labelledby="analysis-tab-performance">
+              <summary><span class="analysis-stage-name">Скорость и ресурсы</span><span class="analysis-stage-description">OpenVINO · кадры · CPU</span></summary>
+              <div class="analysis-stage-content">
+                <div class="pipeline-settings-grid">
+                                    <label class="field"><span>Шаг клипа (stride)</span><input name="player_stride" type="number" min="1" max="36" step="1" value="9" required></label>
+                  <label class="field"><span>Пропуск кадров (1 = каждый кадр)</span><input name="player_frame_step" type="number" min="1" max="4" step="1" value="1" required></label>
+                  <label class="field"><span>Режим OpenVINO</span><select name="player_performance_hint"><option value="LATENCY">LATENCY</option><option value="THROUGHPUT">THROUGHPUT</option></select></label>
+                  <label class="field"><span>Прогрев OpenVINO</span><input name="player_warmup_runs" type="number" min="0" max="20" step="1" value="3" required></label>
+                </div>
+                <div class="analysis-stage-subhead">Ресурсы GPU · ONNX Runtime CUDA</div>
+                <div class="pipeline-settings-grid" id="analysis-gpu-resources">
+                  <label class="field"><span>GPU ID (device_id)</span><input name="gpu_device_id" type="number" min="0" max="15" step="1" value="0" required></label>
+                  <label class="field"><span>Арена VRAM, МБ (0 = без лимита)</span><input name="gpu_memory_limit_mb" type="number" min="0" max="131072" step="1" value="0" required></label>
+                </div>
+                <p class="analysis-stage-note">Параметры CUDA применяются к VballNet и RAVEL на GPU. Лимит арены не ограничивает всю VRAM: фактическое потребление может быть выше.</p>
+                <div class="analysis-stage-subhead">Кадр и CPU</div>
+                <div class="pipeline-settings-grid">
+                  <div class="field"><span>Размер кадра анализа</span>
                   <div class="auto-size"><b>Автоматически</b><span id="auto-size-value">По видео</span></div>
                 </div>
-              </div>
-              <details id="analysis-advanced" class="advanced-settings">
-                <summary>Ручное разрешение кадра</summary>
-                <label class="checkbox-field"><input type="checkbox" id="manual-width-enabled"><span>Задать целевую ширину вручную</span></label>
-                <label class="field"><span>Ширина, пикселей</span>
+                  <div class="form-row analysis-cpu-row" id="analysis-cpu-row">
+                    <label class="field" id="analysis-cpu-field"><span>Потоки CPU (зависит от профиля)</span><input name="threads" id="analysis-threads" type="number" min="1" max="128" step="1" value="8" required></label>
+                  </div>
+                </div>
+                <details id="analysis-advanced" class="analysis-inline-disclosure">
+                  <summary>Ручное разрешение кадра</summary>
+                  <div class="analysis-inline-content">
+                    <label class="checkbox-field"><input type="checkbox" id="manual-width-enabled"><span>Задать целевую ширину вручную</span></label>
+                    <label class="field"><span>Ширина, пикселей</span>
                   <input name="analysis_width" id="analysis-width" type="number" min="320" max="1920" step="2" value="1280" disabled>
                 </label>
-                <p class="footnote">Размер перед анализом. Высота вычисляется автоматически, исходное видео не меняется.</p>
-              </details>
-              <p id="resolution-explanation" class="footnote">Разрешение определяется автоматически.</p>
-              <div class="form-row analysis-cpu-row gpu-only" id="analysis-cpu-row">
-                <label class="field" id="analysis-cpu-field" hidden><span>Потоки CPU</span><input name="threads" id="analysis-threads" type="number" min="1" max="32" step="1" value="8" disabled></label>
-                <label class="checkbox-field"><input name="beach" type="checkbox" checked><span>Пляжный волейбол</span></label>
+                    <p class="analysis-stage-note">Высота сохраняет пропорции; исходный файл не меняется.</p>
+                  </div>
+                </details>
+                <p id="resolution-explanation" class="analysis-stage-note">Разрешение определяется автоматически.</p>
+                <p id="analysis-cpu-note" class="analysis-stage-note">Мяч обрабатывается на GPU. Число CPU-потоков не закрепляет ядра.</p>
               </div>
-              <p class="footnote" id="analysis-cpu-note">Поиск мяча выполняется на GPU; CPU-этапы используют значения по умолчанию.</p>
-              <button class="primary" type="submit">Запустить анализ всех видео проекта ↗</button>
-              <span id="analysis-run-status" class="muted analysis-run-status">Ход обработки появится ниже. Результаты откроются после завершения.</span>
+            </details>
+            <details class="analysis-stage" id="analysis-stage-outputs" role="tabpanel" aria-labelledby="analysis-tab-outputs">
+              <summary><span class="analysis-stage-name">Результаты и диагностика</span><span class="analysis-stage-description">Дополнительные MP4 и JSON</span></summary>
+              <div class="analysis-stage-content">
+                <div class="pipeline-settings-grid">
+                  <label class="checkbox-field"><input data-advanced-check name="player_output_video" type="checkbox" ><span>Сохранить MP4 с рамками игроков</span></label>
+                  <label class="checkbox-field"><input data-advanced-check name="ball_output_video" type="checkbox" ><span>Сохранить MP4 с детекциями мяча (отключает --only_csv)</span></label>
+                  <label class="checkbox-field"><input data-advanced-check name="player_include_features" type="checkbox" ><span>Добавить дополнительные признаки в JSON</span></label>
+                </div>
+                <p class="analysis-stage-note">Дополнительные файлы создаются только по выбору. Они требуют больше места, но не повышают точность детекции.</p>
+              </div>
+            </details>
+                  </div>
+                </div>
+              </div>
+                </div>
+              </details>
+
+                  <div class="analysis-profile-save" id="analysis-save-panel" hidden>
+                    <div class="analysis-profile-save-head">
+                      <strong>Пользовательские настройки</strong>
+                      <span>Можно запустить без сохранения или создать новый профиль.</span>
+                    </div>
+                    <label class="field"><span>Название нового профиля</span>
+                      <input id="analysis-profile-name" type="text" maxlength="80" value="Мой профиль" autocomplete="off">
+                    </label>
+                    <button id="analysis-profile-save" class="secondary" type="button">Сохранить профиль</button>
+                    <span id="analysis-profile-status" role="status"></span>
+                  </div>
+                </div>
+              </div>
+              <span id="analysis-run-status" class="muted analysis-run-status">Прогресс выполняющегося анализа отображается в истории запусков.</span>
+
             </form>
           </article>
-                  <article class="panel result-job-panel" id="analysis-job-panel" hidden>
-          <div class="panel-heading"><h3>Ход обработки</h3><span id="job-badge" class="status-pill">Нет задачи</span></div>
-          <div class="job-illustration"><span>⌁</span><div><b id="job-head">Ожидание запуска</b><p id="job-sub">Запустите анализ на первой вкладке.</p></div></div>
-          <div class="progress-row"><span id="job-progress-caption">Прогресс обработки</span><strong id="job-percent">—</strong></div>
-          <div class="progress-track"><div id="job-progress"></div></div>
-          <div class="job-actions"><button class="secondary" id="cancel-job" type="button" disabled>Остановить</button><button class="secondary" id="open-analysis-results" data-go="analysis-results" type="button" disabled>Смотреть результаты</button></div>
-          <div class="console-label">ЖУРНАЛ ОБРАБОТКИ</div>
-          <pre id="job-log" class="terminal" tabindex="0">Здесь появятся сообщения обработки.</pre>
-        </article>
+          <details class="panel analysis-runs-panel analysis-history-collapsible" aria-label="История запусков анализа">
+            <summary class="analysis-history-summary">
+              <span class="analysis-history-summary-title">История запусков анализа</span>
+              <span class="analysis-history-summary-hint">Профили, длительность и стадии</span>
+              <span class="analysis-history-summary-chevron" aria-hidden="true">⌄</span>
+            </summary>
+            <div class="analysis-history-content">
+              <section class="analysis-running-panel analysis-history-live" id="analysis-job-panel" hidden aria-label="Текущий запуск анализа">
+                <div class="analysis-history-live-header">
+                  <strong id="job-head">Выполняется анализ</strong>
+                  <span id="job-badge" class="status-pill">Выполняется</span>
+                </div>
+                <div class="analysis-history-live-profile" id="job-profile">Профиль анализа</div>
+                <div class="analysis-history-live-info">
+                  <span id="job-sub">Подготовка анализа</span>
+                  <span id="job-elapsed">Время: 00:00</span>
+                </div>
+                <div class="progress-row">
+                  <span id="job-completed">Пройдено 0/6 стадий</span>
+                  <strong id="job-percent">0/6</strong>
+                </div>
+                <div class="progress-track analysis-history-live-progress" role="progressbar" aria-label="Прогресс нового анализа" aria-valuemin="0" aria-valuemax="100">
+                  <div id="job-progress"></div>
+                </div>
+                <div class="analysis-history-stage-heading">
+                  <span id="job-stage-title">Текущая стадия</span>
+                  <span id="job-stage-count">Этап 0 из 6</span>
+                </div>
+                <div class="analysis-history-live-stage-extra" hidden>
+                  <span id="job-stage-percent">Выполняется</span>
+                  <div class="progress-track" role="progressbar" aria-label="Прогресс текущей стадии" aria-valuemin="0" aria-valuemax="100"><div id="job-stage-progress"></div></div>
+                </div>
+                <div id="analysis-live-stages" class="analysis-live-stages" aria-label="Стадии нового анализа"></div>
+                <div class="analysis-history-live-actions">
+                  <span id="job-video-count">Видео проекта</span>
+                  <button class="secondary small" id="cancel-job" type="button" disabled>Остановить анализ</button>
+                  <button class="secondary small" id="open-analysis-results" data-go="analysis-results" type="button" hidden disabled>Смотреть результаты</button>
+                </div>
+                <details class="analysis-run-log">
+                  <summary>Технический журнал обработки</summary>
+                  <pre id="job-log" class="terminal" tabindex="0">Здесь появятся сообщения обработки.</pre>
+                </details>
+              </section>
+              <div id="analysis-timing-history" class="analysis-timing-history" aria-live="polite">Запуски ещё не выполнялись.</div>
+            </div>
+          </details>
         </div>
+        <details id="results-diagnostics" class="panel result-diagnostics-panel">
+          <summary>Диагностика сохранённого анализа</summary>
+          <p class="footnote">Не влияет на распознавание. При необходимости отдельно запускает штатные track_processor.py и show_rally.py по уже сохранённым трекам текущего видео. Для обычного просмотра достаточно разметки поверх плеера, экспорт не нужен.</p>
+          <label class="field"><span>Видео для диагностики</span><select id="diagnostics-source-select" aria-label="Видео для диагностического экспорта"></select></label>
+          <form id="diagnostics-form">
+            <section class="pipeline-settings-group"><h4>Экспорт и диагностика (по запросу)</h4><div class="pipeline-settings-grid"><label class="field"><span>Клипы из track_processor.py</span><select name="tracks_export_mode"><option value="none">Не создавать</option><option value="combined">Один общий MP4</option><option value="split">Отдельные MP4 по розыгрышам</option><option value="both">Общий и отдельные MP4</option></select></label>
+<label class="field"><span>Запас до/после розыгрыша, с</span><input name="tracks_padding" type="number" min="0" max="10" step="0.01" value="0.33" required></label>
+<label class="checkbox-field"><input data-advanced-check name="tracks_include_not_rally" type="checkbox" ><span>Включить неигровые и нераспознанные треки</span></label>
+<label class="checkbox-field"><input data-advanced-check name="tracks_mark_ball" type="checkbox" checked><span>Показывать маркер мяча на диагностическом видео</span></label>
+<label class="checkbox-field"><input data-advanced-check name="tracks_debug" type="checkbox" ><span>Наложить отладочные признаки на MP4</span></label>
+<label class="checkbox-field"><input data-advanced-check name="show_rally_snapshot" type="checkbox" ><span>Создать снимок show_rally.py (без GUI)</span></label>
+<label class="field"><span>Номер трека для снимка</span><input name="show_rally_track" type="number" min="0" max="99999" step="1" value="0" required></label></div></section>
+            <div class="form-row"><button type="submit" class="secondary" id="diagnostics-submit">Создать диагностические файлы</button>
+              <span id="diagnostics-status" class="muted" role="status">Выберите формат и запустите при необходимости.</span></div>
+          </form>
+          <div id="diagnostics-files" class="diagnostics-files" aria-live="polite"></div>
+          <pre id="diagnostics-log" class="diagnostics-log" hidden></pre>
+        </details>
       </section>
       <section id="view-analysis-results" class="view">
-        <div class="section-intro"><h2>Результат анализа</h2>
-          <p>Видео с найденными игровыми событиями и розыгрышами. Выберите розыгрыш справа — воспроизведение остановится на его окончании.</p>
-        </div>
         <div id="result-unavailable" class="panel result-unavailable" hidden>
           <h3>Результаты ещё не готовы</h3>
           <p>Ход обработки и журнал находятся во вкладке «Анализ». Видео с разметкой и розыгрыши появятся здесь после завершения анализа.</p>
           <button class="secondary" data-go="analysis" type="button">Вернуться к анализу</button>
         </div>
-        <div class="result-video-layout">
+        <section class="panel result-media-panel" aria-label="Просмотр результата, источники и временная шкала">
+          <div class="result-project-sources" aria-label="Видео проекта">
+            <div class="result-project-sources-head"><h3>Видео проекта</h3><span id="result-source-count" class="muted">0</span></div>
+            <p class="result-source-hint">Выберите исходное видео для просмотра. Для ручного монтажа отмечайте отдельные розыгрыши справа.</p>
+            <label class="sr-only" for="result-source-select">Выбор проанализированного видео</label>
+            <select id="result-source-select" class="sr-only" aria-label="Выбор проанализированного видео"></select>
+            <div id="result-source-list" class="result-source-list" aria-label="Источники проекта">
+              <div class="empty">Выберите проект с видео.</div>
+            </div>
+          </div>
+          <div class="result-video-layout">
           <div class="result-video-main">
             <div class="result-video-head">
-              <div><h3 id="result-video-name">Видео проекта</h3><span id="result-meta" class="muted">Выберите проанализированное видео</span></div>
+              <div><h3 id="result-video-name">Предпросмотр</h3><span id="result-meta" class="muted">Выберите проанализированное видео</span></div>
               <span class="result-annotation-badge">Разметка событий</span>
+            </div>
+            <div class="result-preview-mode-bar" role="group" aria-label="Источник отображаемых касаний">
+              <span>Источник данных</span>
+              <label><input type="radio" name="result-preview-mode" value="events" checked> События анализа</label>
+              <label><input type="radio" name="result-preview-mode" value="model"> Касания RAVEL-013 · без эвристик</label>
+            </div>
+            <fieldset class="result-overlay-controls" aria-label="Фильтры отображения игровых событий на видео">
+              <legend>Показывать на видео</legend>
+              <div class="result-overlay-options">
+                <label data-kind="touches"><input type="checkbox" data-result-overlay="touches" checked> <span>Все касания</span><small data-result-count="touches"></small></label>
+                <label data-kind="attacks"><input type="checkbox" data-result-overlay="attacks" checked> <span>Атаки</span><small data-result-count="attacks"></small></label>
+                <label data-kind="blocks"><input type="checkbox" data-result-overlay="blocks" checked> <span>Блоки</span><small data-result-count="blocks"></small></label>
+                <label data-kind="serves"><input type="checkbox" data-result-overlay="serves" checked> <span>Подачи</span><small data-result-count="serves"></small></label>
+                <label data-kind="digs"><input type="checkbox" data-result-overlay="digs" checked> <span>Приёмы</span><small data-result-count="digs"></small></label>
+                <label data-kind="passes"><input type="checkbox" data-result-overlay="passes" checked> <span>Верхние передачи</span><small data-result-count="passes"></small></label>
+                <label data-kind="trajectory"><input type="checkbox" data-result-overlay="trajectory"> <span>Траектория мяча</span></label>
+                <label data-kind="players"><input type="checkbox" data-result-overlay="players"> <span>Рамки игроков · ID</span></label>
+              </div>
+              <div class="result-overlay-confidence">
+                <span class="result-confidence-label" id="result-confidence-title">Уверенность событий</span>
+                <div class="result-confidence-options" role="group" aria-labelledby="result-confidence-title">
+                  <button type="button" data-result-confidence="0" aria-pressed="true">0% · все</button>
+                  <button type="button" data-result-confidence="0.5" aria-pressed="false">50%</button>
+                  <button type="button" data-result-confidence="0.65" aria-pressed="false">65%</button>
+                  <button type="button" data-result-confidence="0.8" aria-pressed="false">80%</button>
+                </div>
+                <select id="result-confidence-threshold" class="sr-only" aria-hidden="true" tabindex="-1">
+                  <option value="0">0% · все</option>
+                  <option value="0.5">50%</option>
+                  <option value="0.65">65%</option>
+                  <option value="0.8">80%</option>
+                </select>
+              </div>
+              <div class="result-ball-threshold-controls" id="result-ball-threshold-controls">
+                <div class="result-ball-threshold-head">
+                  <label for="result-ball-threshold">Порог обнаружения мяча VballNet</label>
+                  <output id="result-ball-threshold-value" for="result-ball-threshold">50%</output>
+                  <button type="button" class="secondary small" id="result-ball-threshold-reset" disabled>Исходный порог</button>
+                </div>
+                <input id="result-ball-threshold" type="range" min="0.05" max="0.95" step="0.05" value="0.5" disabled>
+                <small id="result-ball-threshold-status" role="status">Проверяем наличие исходных оценок мяча…</small>
+              </div>
+              <div class="result-ball-threshold-controls" id="result-player-threshold-controls">
+                <div class="result-ball-threshold-head">
+                  <label for="result-player-threshold">Уверенность обнаружения игроков RAVEL-013</label>
+                  <output id="result-player-threshold-value" for="result-player-threshold">50%</output>
+                  <button type="button" class="secondary small" id="result-player-threshold-reset" disabled>Исходный порог</button>
+                </div>
+                <input id="result-player-threshold" type="range" min="0.05" max="0.95" step="0.05" value="0.5" disabled>
+                <small id="result-player-threshold-status" role="status">Проверяем исходные рамки игроков…</small>
+              </div>
+              <div class="result-overlay-status">
+                <small id="result-trajectory-status" class="result-trajectory-status" aria-live="polite"></small>
+                <button id="result-trajectory-jump" class="result-trajectory-jump" type="button" hidden>Перейти к мячу</button>
+              </div>
+            </fieldset>
+            <div class="result-model-touch-controls" id="result-model-touch-controls" hidden>
+              <label for="result-model-touch-threshold">Порог Touch
+                <select id="result-model-touch-threshold">
+                  <option value="0.5">50%</option>
+                  <option value="0.65">65%</option>
+                  <option value="0.8">80%</option>
+                  <option value="0.9">90%</option>
+                </select>
+              </label>
+              <span id="result-model-touch-summary" aria-live="polite"></span>
             </div>
             <div class="result-player-wrap">
               <video id="result-video-player" controls playsinline preload="metadata"></video>
+              <div id="result-trajectory-indicator" class="result-trajectory-indicator" hidden>● Траектория включена</div>
               <div id="result-overlay" class="result-overlay" aria-hidden="true">
-                <div id="result-overlay-ball" class="result-ball" hidden></div>
+                <div id="result-ball-layer" class="result-ball-layer" aria-hidden="true">
+                  <div id="result-model-touch-boxes" class="result-model-touch-boxes" aria-label="Рамки касаний RAVEL-013"></div>
+                  <div id="result-player-boxes" class="result-player-boxes" aria-label="Обнаруженные игроки с Track ID"></div>
+                  <svg id="result-ball-trail" class="result-ball-trail" viewBox="0 0 1 1" preserveAspectRatio="none" hidden>
+                    <path id="result-ball-trail-path"></path>
+                    <circle id="result-ball-trail-head" r="24"></circle>
+                  </svg>
+                  <div id="result-overlay-ball" class="result-ball" hidden></div>
+                </div>
                 <div id="result-overlay-event" class="result-event-label" hidden></div>
+                <div id="result-overlay-touch" class="result-touch-label" hidden>КАСАНИЕ</div>
                 <div id="result-overlay-rally" class="result-rally-label" hidden></div>
               </div>
               <div id="result-video-placeholder" class="result-video-placeholder">Ожидание анализа</div>
             </div>
-            <div id="result-rally-now" class="result-playback-state">Выберите розыгрыш справа</div>
-            <div class="result-timeline">
-              <div id="result-rally-track" class="result-rally-track" aria-label="Розыгрыши и игровые действия"></div>
-              <div id="result-timeline-ticks" class="timeline-ticks"></div>
-            </div>
-            <p class="footnote">Границы розыгрышей и классификация действий определены автоматически и могут быть неточными. Метки на видео появляются в моменты обнаруженных событий.</p>
           </div>
-          <aside class="result-rally-sidebar">
-            <label class="field"><span>Проанализированное видео</span><select id="result-source-select"></select></label>
-            <div class="result-rally-sidebar-head"><h3>Розыгрыши</h3><span id="result-rally-count" class="muted">0</span></div>
+          <aside class="result-rally-sidebar result-rallies-panel" aria-label="Найденные розыгрыши">
+            <div class="result-rally-sidebar-head">
+              <div class="result-rally-title"><h3>Найденные розыгрыши</h3><span id="result-rally-count" class="muted">0</span></div>
+              <label class="result-rally-sort-label" for="result-rally-sort">Сортировка
+                <select id="result-rally-sort" aria-label="Сортировка найденных розыгрышей">
+                  <option value="normal">Обычная (по времени)</option>
+                  <option value="duration">По длительности ↓</option>
+                  <option value="touches">По касаниям ↓</option>
+                </select>
+              </label>
+            </div>
             <div id="result-rally-list" class="result-rally-list">
               <div class="empty">Розыгрыши появятся после анализа.</div>
             </div>
           </aside>
-        </div>
+          </div>
+          <div class="analysis-video-divider" role="separator" aria-label="Временная шкала результата"></div>
+          <div class="result-timeline">
+            <div class="result-timeline-heading">
+              <strong>Розыгрыши и игровые события</strong>
+              <span id="result-current-time">00:00:00</span>
+            </div>
+            <details class="result-rally-settings" id="result-rally-settings">
+              <summary>Настройки формирования розыгрышей</summary>
+              <div class="result-rally-settings-fields">
+                <label class="field"><span>Объединять разрывы траектории до (сек)</span>
+                  <input id="rally-gap-sec" type="number" min="0" max="12" step="0.5" value="3"></label>
+                <label class="field"><span>Минимальная длительность игрового эпизода (сек)</span>
+                  <input id="rally-min-sec" type="number" min="0" max="40" step="0.5" value="3"></label>
+                <label class="field"><span>Запас до и после эпизода (сек)</span>
+                  <input id="rally-context-sec" type="number" min="0" max="10" step="0.5" value="1.5"></label>
+              </div>
+              <p class="footnote">Изменения применяются к уже сохранённым трекам без повторного анализа. Показываются только отрезки, классифицированные как игровые; точные подача и окончание очка пока определяются эвристически.</p>
+            </details>
+            <p id="result-rally-summary" class="result-rally-summary" aria-live="polite"></p>
+            <div id="result-rally-track" class="result-rally-track" aria-label="Розыгрыши и игровые действия"></div>
+            <div id="result-model-touch-section" class="result-model-touch-section" hidden>
+              <div class="result-model-touch-header">
+                <strong id="result-model-touch-info">Касания RAVEL-013</strong>
+                <small id="result-model-touch-current"></small>
+              </div>
+              <div class="result-model-touch-histogram-wrap">
+                <canvas id="result-model-touch-histogram" width="900" height="70"
+                  aria-label="Плотность предсказаний касаний RAVEL-013 по всему видео. Нажмите, чтобы перейти к моменту."></canvas>
+                <div id="result-model-touch-playhead" class="result-model-touch-playhead"></div>
+              </div>
+              <small id="result-model-touch-window-count" class="muted"></small>
+              <div id="result-model-touch-nearby" class="result-model-touch-nearby"
+                aria-label="Предсказания касаний в текущем интервале"></div>
+            </div>
+            <div id="result-timeline-ticks" class="timeline-ticks"></div>
+            <p class="footnote">Границы розыгрышей и классификация действий определены автоматически и могут быть неточными. Метки на видео появляются в моменты обнаруженных событий.</p>
+          </div>
+        </section>
 
       </section>
       <section id="view-players" class="view">
-        <div class="section-intro"><h2>Игроки и идентификаторы</h2><p>Track ID относятся к конкретной записи. Выберите видео проекта, сравнивайте фотографии и объединяйте повторные ID одного спортсмена.</p></div>
-        <label class="field player-video-selector"><span>Запись проекта</span><select id="players-video" aria-label="Видео для распознавания игроков"></select></label>
-        <div class="two-column players-columns">
-          <article class="panel">
-            <div class="panel-heading"><h3>Найденные track ID</h3><span class="muted" id="raw-count"></span></div>
-            <label class="field"><span>Поиск по ID</span><input type="search" id="track-search" placeholder="Например: 725"></label>
-            <div class="table-scroll"><table><thead><tr><th><input type="checkbox" id="select-all-ids" title="Выбрать видимые ID"></th><th>ФОТО</th><th>TRACK ID</th><th>АТАКИ</th><th>ПРИЁМЫ</th><th>ПЕРЕДАЧИ</th><th>ИГРОК</th></tr></thead><tbody id="raw-players"></tbody></table></div>
-            <div class="table-footer"><span id="table-hint">Показаны первые 60 совпадений</span><button class="secondary small" id="show-more">Показать ещё</button></div>
-          </article>
-          <div class="stack">
-            <article class="panel">
-              <div class="panel-heading"><h3>Фото выбранных ID</h3><span class="muted">Кадры из analysis.mp4</span></div>
-              <div id="player-photo-gallery" class="photo-gallery"><div class="empty">Выберите ID или нажмите на фото в таблице</div></div>
-              <div class="footnote photo-warning">Сравнивайте несколько кадров: трекер может перепутать игроков или временно потерять их.</div>
-            </article>
-            <article class="panel">
-              <div class="panel-heading"><h3>Присвоить имя / объединить ID</h3></div>
-              <p class="muted paragraph">Отметьте строки в таблице слева и введите имя. Если такое имя уже существует, выбранные ID присоединятся к нему.</p>
-              <label class="field"><span>Имя игрока</span><input id="player-name" list="known-names" placeholder="Например: Иван" maxlength="80" autocomplete="off"><datalist id="known-names"></datalist></label>
-              <div id="selected-ids" class="chosen">ID не выбраны</div>
-              <div class="form-row"><button class="primary" id="assign-ids">Сохранить и объединить</button><button class="secondary" id="unassign-ids">Убрать привязку</button></div>
-            </article>
-            <article class="panel">
-              <div class="panel-heading"><h3>Именованные игроки</h3><span class="muted" id="groups-count"></span></div>
-              <div id="named-list" class="named-list"></div>
-            </article>
+        <div class="section-intro"><h2>Игроки</h2>
+          <p>Выберите игроков из общей базы или создайте нового. Привязки Track ID сохраняются отдельно для каждой записи, а подтверждённые фото — в папке игрока.</p>
+        </div>
+        <div class="panel players-overview">
+          <div class="player-overview-main">
+            <label class="field player-video-selector"><span>Запись для разметки</span><select id="players-video" aria-label="Видео с найденными треками"></select></label>
+            <p class="player-quick-help">Отметьте ID одного человека ниже и нажмите на его карточку в списке игроков.</p>
           </div>
+          <div id="players-health" class="players-health" aria-live="polite"></div>
+        </div>
+        <div class="players-stack">
+          <section class="panel players-identity-panel">
+            <div class="panel-heading"><h3>Игроки проекта</h3><span id="groups-count" class="muted"></span></div>
+            <div class="player-library-add">
+              <label class="field"><span>Добавить игрока из общей базы</span><select id="library-player-select"><option value="">Выберите существующего игрока…</option></select></label>
+              <button type="button" id="add-library-player" class="secondary small">Добавить в проект</button>
+            </div>
+            <p id="player-roster-hint" class="player-panel-hint">Отметьте несколько Track ID одного человека в таблице ниже и нажмите на карточку нужного игрока здесь. Привязка сохранится автоматически.</p>
+            <div id="named-list" class="named-list" aria-label="Игроки проекта"></div>
+            <details class="player-create-disclosure">
+              <summary>+ Создать игрока в общей базе</summary>
+              <form id="create-player-form" class="player-create-form">
+                <label class="field"><span>Имя нового игрока</span>
+                  <input id="new-player-name" placeholder="Имя или номер игрока…" maxlength="80" autocomplete="off" required></label>
+                <button type="submit" class="primary">Создать игрока</button>
+              </form>
+            </details>
+            <details id="player-manage" class="player-manage" hidden>
+              <summary>Переименовать или удалить игрока</summary>
+              <form id="rename-player-form">
+                <label class="field"><span>Имя игрока</span><input id="rename-player-name" maxlength="80" required></label>
+                <div class="form-row">
+                  <button type="submit" class="secondary small">Сохранить имя</button>
+                  <button type="button" id="delete-player" class="secondary small">Убрать из проекта</button>
+                </div>
+              </form>
+              <button type="button" id="backfill-player-photos" class="secondary small">Собрать фото из всех проектов</button>
+              <p class="player-panel-hint">Кадры создаются по подтверждённым вручную ID, после разметки их ещё нужно проверить перед обучением.</p>
+            </details>
+          </section>
+          <article class="panel players-tracks-panel">
+            <div class="panel-heading"><h3 id="tracks-heading">Нераспознанные Track ID</h3><span id="raw-count" class="muted"></span></div>
+            <div class="player-filter-bar">
+              <label class="field"><span>Показывать</span>
+                <select id="players-filter">
+                  <option value="unassigned">Без привязки</option>
+                  <option value="main">Длинные (10+ сек)</option>
+                  <option value="assigned">Привязанные</option>
+                  <option value="short">Короткие (до 3 сек)</option>
+                  <option value="all">Все ID</option>
+                </select>
+              </label>
+              <label class="field"><span>Поиск</span><input type="search" id="track-search" placeholder="Номер ID или имя…" autocomplete="off"></label>
+            </div>
+            <p class="players-filter-note" id="players-filter-note"></p>
+            <div class="player-select-tools">
+              <button type="button" id="select-filtered" class="secondary small">Выбрать все найденные</button>
+              <button type="button" id="clear-selected" class="secondary small">Снять выделение</button>
+              <small>Отметьте ID одного человека. Затем нажмите на его карточку сверху. До 200 ID за раз.</small>
+            </div>
+            <div class="table-scroll player-tracks-scroll"><table>
+              <thead><tr><th><input type="checkbox" id="select-all-ids" aria-label="Выбрать показанные ID" title="Выбрать показанные ID"></th>
+                <th>КАДР</th><th>TRACK ID</th><th>ВИДЕН</th><th>ДЕЙСТВИЯ</th><th>ИГРОК</th></tr></thead>
+              <tbody id="raw-players"></tbody>
+            </table></div>
+            <div class="table-footer"><span id="table-hint"></span>
+              <button class="secondary small" id="show-more" type="button">Показать ещё</button></div>
+            <div class="player-bulk-bar" aria-live="polite">
+              <div class="player-bulk-summary"><strong id="assigned-player-name">Отметьте одинаковые ID, затем выберите игрока сверху</strong><span id="selected-ids" class="muted">0 ID выбрано</span></div>
+              <div class="player-bulk-actions">
+                <button type="button" class="secondary" id="unassign-ids" hidden disabled>Открепить выбранные ID</button>
+              </div>
+              <span id="players-action-feedback" class="player-action-feedback" role="status" aria-live="polite"></span>
+            </div>
+          </article>
+        </div>
+        <div class="players-review-columns">
+          <article class="panel">
+            <div class="panel-heading"><h3>3. Проверить по кадрам</h3><span class="muted">Локальные кадры</span></div>
+            <div id="player-photo-gallery" class="photo-gallery"><div class="empty">Выберите ID, чтобы сравнить кадры.</div></div>
+            <p class="footnote">Сравните форму, номер, расположение и время появления. Нажатие на фото не назначает ID автоматически.</p>
+          </article>
+          <article class="panel">
+            <div class="panel-heading"><h3>Возможные продолжения</h3><span class="muted">Гипотезы, не совпадения личности</span></div>
+            <div id="player-suggestions" class="player-suggestions">
+              <div class="empty">Выберите фото трека, чтобы увидеть возможные продолжения.</div>
+            </div>
+            <p class="footnote">Алгоритм сравнивает близость и последовательность треков; подтверждение всегда вручную.</p>
+          </article>
         </div>
       </section>
       <section id="view-report" class="view">
@@ -305,95 +882,225 @@
           <article class="panel"><div class="panel-heading"><h3>Игроки с объединёнными ID</h3><button class="text-link" data-go="players">Изменить ID →</button></div><div id="report-people"></div></article>
         </div>
       </section>
+      <section id="view-results" class="view">
+        <div class="section-intro"><h2>Монтаж проекта</h2><p>Самые зрелищные полные розыгрыши из всех записей проекта в одном итоговом ролике.</p></div>
+        <div class="two-column analysis-columns montage-workspace">
+          <article class="panel montage-create-panel">
+            <div class="panel-heading"><h3>Создать видео</h3></div>
+            <form id="highlights-form">
+              <input type="hidden" name="mode" value="montage">
+              <label class="checkbox-field montage-follow-toggle">
+                <input type="checkbox" name="follow_ball" id="montage-follow-ball" checked>
+                <span>Следить за мячом · вертикальный рилс 9:16</span>
+              </label>
+              <p id="montage-mode-note" class="montage-mode-note"></p>
+              <label class="field"><span>Режим выбора розыгрышей</span>
+                <select name="rally_selection_mode" id="montage-selection-mode">
+                  <option value="auto">Автоматически</option>
+                  <option value="manual">Выбрать вручную</option>
+                </select>
+              </label>
+              <label class="field" id="montage-auto-strategy"><span>Отбирать розыгрыши по</span>
+                <select name="selection_strategy" id="montage-selection-strategy">
+                  <option value="highlights" selected>Лучшие моменты · автоматически</option>
+                  <option value="longest">Самые длинные розыгрыши</option>
+                  <option value="most_actions">Больше всего игровых действий</option>
+                  <option value="attacks">Розыгрыши с атаками</option>
+                  <option value="blocks">Розыгрыши с блоками</option>
+                  <option value="digs">Розыгрыши с приёмами</option>
+                  <option value="passes">Розыгрыши с передачами</option>
+                  <option value="serves">Розыгрыши с подачами</option>
+                </select>
+              </label>
+              <p id="highlights-project-hint" class="montage-mode-note"></p>
+              <label class="field" id="montage-auto-duration"><span>Желаемая длительность, секунд</span>
+                <input name="duration" id="montage-duration" type="number" min="1" max="600" step="1" value="120" required>
+              </label>
+              <p id="montage-manual-hint" class="montage-mode-note" hidden>Отмечайте нужные розыгрыши в «Предпросмотре» или ниже — выбор синхронизируется. Итоговая длительность рассчитывается автоматически.</p>
+              <div class="montage-audio-settings">
+                <label class="field" for="montage-audio-path"><span>Музыка для итогового видео (необязательно)</span></label>
+                <div class="montage-audio-picker">
+                  <input name="audio_path" id="montage-audio-path" type="text"
+                         placeholder="Выберите MP3, WAV, M4A, FLAC или вставьте полный путь" autocomplete="off">
+                  <button type="button" class="secondary" id="montage-audio-choose">Выбрать трек</button>
+                  <button type="button" class="secondary" id="montage-audio-clear" aria-label="Убрать музыку">Убрать</button>
+                </div>
+                <label class="field montage-audio-volume"><span>Громкость музыки, %</span>
+                  <input name="audio_volume" id="montage-audio-volume" type="number" value="40" min="0" max="100" step="5" required>
+                </label>
+                <p class="montage-mode-note" id="montage-audio-status" role="status" aria-live="polite">Трек будет наложен на финальное видео, при необходимости повторён и плавно завершён.</p>
+              </div>
+              <div id="montage-source-info" class="montage-mode-note" role="status">Выберите результаты профиля.</div>
+              <details class="advanced-settings pipeline-advanced montage-advanced" id="montage-advanced">
+                <summary>Расширенные параметры</summary>
+                <div class="pipeline-settings-grid">
+                  <label class="field" data-montage-auto-filter><span>Минимум розыгрыша, с</span><input name="min_rally" type="number" min="1.5" max="30" step="0.5" value="1.5"></label>
+                  <label class="field" data-montage-auto-filter><span>Минимальная уверенность розыгрыша</span><input name="min_confidence" type="number" min="0.05" max="1" step="0.05" value="0.5"></label>
+                  <label class="field" ><span>Контекст из «Предпросмотра», с</span><input id="montage-context-display" type="number" min="0" max="10" step="0.5" value="1.5" disabled></label>
+                  <label class="checkbox-field" data-montage-tracks><input name="track_show_ball" type="checkbox"><span>Показывать метки мяча и Track ID на видео</span></label>
+                  <label class="field" data-montage-vertical><span>Сглаживание камеры</span><select name="reels_smoothing"><option value="moving_avg">Скользящее среднее</option><option value="none">Без сглаживания</option><option value="savitzky_golay">Savitzky–Golay</option><option value="kalman">Фильтр Калмана</option></select></label>
+                  <label class="field" data-montage-vertical><span>Интерполяция</span><select name="reels_interpolation"><option value="hold">Удерживать точку</option><option value="linear">Линейная</option></select></label>
+                  <label class="field" data-montage-vertical><span>Упреждение камеры, px</span><input name="reels_margin" type="number" min="-1000" max="1000" step="1" value="0"></label>
+                  <label class="field" data-montage-vertical><span>Окно сглаживания</span><input name="reels_smooth_window" type="number" min="3" max="101" step="2" value="15"></label>
+                  <label class="field" data-montage-vertical><span>Порядок полинома</span><input name="reels_smooth_polyorder" type="number" min="1" max="5" step="1" value="2"></label>
+                  <div class="montage-filter-settings" data-montage-auto-filter>
+                    <p class="montage-mode-note">Дополнительные условия отбора. Ноль — без ограничения. Считаются распознанные действия в каждом розыгрыше.</p>
+                    <div class="pipeline-settings-grid">
+                      <label class="field"><span>Не менее действий</span><input name="min_actions" type="number" min="0" max="100" step="1" value="0" required></label>
+                      <label class="field"><span>Не менее атак</span><input name="min_attack" type="number" min="0" max="100" step="1" value="0" required></label>
+                      <label class="field"><span>Не менее блоков</span><input name="min_block" type="number" min="0" max="100" step="1" value="0" required></label>
+                      <label class="field"><span>Не менее приёмов</span><input name="min_dig" type="number" min="0" max="100" step="1" value="0" required></label>
+                      <label class="field"><span>Не менее передач</span><input name="min_overhead_pass" type="number" min="0" max="100" step="1" value="0" required></label>
+                      <label class="field"><span>Не менее подач</span><input name="min_serve" type="number" min="0" max="100" step="1" value="0" required></label>
+                    </div>
+                  </div>
+                </div>
+              </details>
+            </form>
+          </article>
+          <article class="panel preview-panel">
+            <div class="panel-heading"><h3>Просмотр</h3></div>
+            <div id="montage-preview-shell" class="montage-preview-shell">
+              <div class="preview-stage">
+                <video id="preview-player" controls playsinline preload="metadata"></video>
+                <div id="preview-empty" class="empty-video">Выберите ролик из библиотеки</div>
+              </div>
+              <div id="montage-playback" class="montage-playback" hidden>
+                <button id="montage-play-toggle" class="montage-player-button" type="button" aria-label="Воспроизвести" title="Воспроизвести или пауза">▶</button>
+                <div class="montage-seek-container">
+                  <div class="montage-seek-track" aria-hidden="true"><div id="montage-seek-fill" class="montage-seek-fill"></div></div>
+                  <input id="montage-seek" type="range" min="0" max="10000" step="1" value="0" aria-label="Перемотка видео" aria-valuetext="00:00 из 00:00">
+                </div>
+                <output id="montage-play-time" for="montage-seek" class="montage-play-time">00:00 / 00:00</output>
+                <button id="montage-mute-toggle" class="montage-player-button" type="button" aria-label="Выключить звук" title="Звук">♫</button>
+                <button id="montage-fullscreen" class="montage-player-button" type="button" aria-label="Полный экран" title="Полный экран">⛶</button>
+              </div>
+            </div>
+            <div class="muted preview-caption" id="preview-title">—</div>
+            <p class="montage-preview-status" id="montage-preview-status" role="status"></p>
+          </article>
+        </div>
+        <section class="panel montage-selection-preview" id="montage-selection-preview"
+                 aria-label="Найденные розыгрыши для монтажа">
+          <div class="montage-plan-toolbar">
+            <div class="montage-plan-title">
+              <h3 id="montage-plan-heading">Найденные розыгрыши</h3>
+              <p id="montage-plan-summary" class="muted" aria-live="polite">Результат появится после выбора профиля.</p>
+            </div>
+            <div class="montage-manual-actions" id="montage-manual-actions" hidden>
+              <button type="button" class="secondary small" id="montage-manual-all">Выбрать все</button>
+              <button type="button" class="secondary small" id="montage-manual-none">Снять отметки</button>
+            </div>
+            <div class="montage-plan-navigation" aria-label="Прокрутка розыгрышей">
+              <button type="button" class="secondary small" id="montage-plan-prev" aria-label="Предыдущие розыгрыши">‹</button>
+              <button type="button" class="secondary small" id="montage-plan-next" aria-label="Следующие розыгрыши">›</button>
+            </div>
+          </div>
+          <div id="montage-source-selection" class="montage-source-selection" aria-live="polite"></div>
+          <div id="montage-plan-list" class="montage-plan-list" role="list"
+               aria-label="Найденные розыгрыши"></div>
+          <div class="montage-plan-submit">
+            <p id="montage-duration-hint" class="montage-mode-note">При автоматическом отборе итоговое видео не превышает заданную длительность. Полные розыгрыши не обрезаются.</p>
+            <button class="primary" type="submit" form="highlights-form" id="montage-create" disabled>Создать видео</button>
+          </div>
+        </section>
+        <article class="panel montage-library-panel space-top">
+          <div class="panel-heading"><h3>Библиотека созданных видео</h3><button type="button" id="montage-refresh" class="secondary small">Обновить список</button></div>
+          <p class="montage-mode-note">Готовые подборки текущего проекта и старые ролики из общей папки results. Внутренние временные файлы анализа не отображаются.</p>
+          <div id="all-renders" class="montage-render-list"></div>
+        </article>
+        <article class="panel montage-job-panel" id="montage-job-panel" hidden>
+          <div class="panel-heading">
+            <h3>Ход монтажа</h3>
+            <span id="montage-job-badge" class="status-pill" role="status">Нет задачи</span>
+          </div>
+          <div class="montage-job-summary">
+            <strong id="montage-job-count" class="montage-job-count" aria-live="polite">Подготовка стадий…</strong>
+            <span id="montage-job-elapsed" class="muted">Время: 00:00</span>
+          </div>
+          <div class="progress-track montage-job-track" role="progressbar" aria-label="Завершённые стадии монтажа" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+            <div id="montage-job-progress"></div>
+          </div>
+          <p id="montage-job-stage" class="montage-job-stage" aria-live="polite">Ожидание запуска</p>
+          <div class="job-actions"><button class="secondary" id="montage-cancel" type="button" disabled>Остановить монтаж</button></div>
+          <details class="montage-job-journal" open>
+            <summary>Журнал выполнения</summary>
+            <pre id="montage-job-log" class="terminal" tabindex="0">Здесь появятся сообщения монтажа.</pre>
+          </details>
+        </article>
+      </section>
       <section id="view-benchmark" class="view">
-        <div class="section-intro"><h2>Бенчмарк нейросетей</h2>
-          <p>Сравнение скорости моделей VballNet по методике исходного репозитория:
-          синтетический тензор, прогрев, серия измерений и медиана FPS. Без FFmpeg и анализа видео.</p>
+        <div class="section-intro"><h2>Бенчмарк 5 нейросетей · CPU и GPU</h2>
+          <p>Десять последовательных реальных измерений на вашем компьютере. Одни и те же кадры исходного видео, прогревы и число повторов; входной размер подбирается под каждую модель. FFmpeg и предварительная обработка не входят в FPS.</p>
         </div>
         <div class="two-column analysis-columns">
           <article class="panel">
-            <div class="panel-heading"><h3>Параметры замера</h3></div>
+            <div class="panel-heading"><h3>Единые условия измерения</h3></div>
             <form id="benchmark-form">
-              <label class="field"><span>Модель</span>
-                <select name="model" id="benchmark-model" required>
-                  <option value="VballNetV4c_seq9_grayscale_20260908_213829.onnx">VballNetV4c · основная модель</option>
-                  <option value="all">Все установленные модели VballNet</option>
-                </select>
-              </label>
-              <label class="field"><span>Движок вычислений</span>
-                <select name="backend" id="benchmark-backend">
-                  <option value="onnx-cpu">ONNX Runtime — CPU</option>
-                  <option value="onnx">ONNX Runtime — CUDA (GPU)</option>
-                  <option value="openvino">OpenVINO — CPU</option>
-                </select>
-              </label>
-              <label class="field" id="benchmark-cpu-threads"><span>Потоки CPU</span>
-                <input name="threads" type="number" min="1" max="32" step="1" value="8">
-              </label>
+              <div class="benchmark-pair-banner">
+                <b>5 моделей × 2 устройства = 10 тестов</b>
+                <span>VballNetV4c · VballNetFastV1 · RAVEL-VB-011 · RAVEL-VB-012 · RAVEL-VB-013</span>
+                <small id="benchmark-model-availability">CPU → CUDA для каждой модели. Следующая конфигурация запускается только после предыдущей.</small>
+              </div>
+              <label class="field"><span>Исходное видео (одно для всех)</span>
+                <select name="video" id="benchmark-video" required></select></label>
+              <div class="form-row">
+                <label class="field"><span>Старт общих кадров, сек.</span>
+                  <input name="start" type="number" min="0" max="86400" step="0.1" value="0" required></label>
+                <label class="field" id="benchmark-cpu-threads"><span>CPU-потоки (одинаково)</span>
+                  <input name="threads" type="number" min="1" max="128" step="1" value="8" required></label>
+              </div>
               <div class="form-row">
                 <label class="field"><span>Прогревов</span>
-                  <input name="warmup" type="number" min="0" max="30" step="1" value="10"></label>
+                  <input name="warmup" type="number" min="0" max="30" step="1" value="3" required></label>
                 <label class="field"><span>Измерений на повтор</span>
-                  <input name="runs" type="number" min="5" max="300" step="1" value="60"></label>
+                  <input name="runs" type="number" min="3" max="300" step="1" value="12" required></label>
               </div>
               <label class="field"><span>Независимых повторов</span>
-                <input name="repeats" type="number" min="1" max="5" step="1" value="3">
-              </label>
-              <p class="footnote">Значения по умолчанию — 10 прогревов, 60 измерений и 3 повтора, как в
-              <code>scripts/bench_inference_fps.py</code>. FPS = кадров на один вызов / медианная задержка вызова.
-              В каждом повторе модель загружается заново. Декодирование видео и постобработка не учитываются.</p>
-              <button class="primary wide" type="submit">Измерить скорость модели</button>
+                <input name="repeats" type="number" min="1" max="5" step="1" value="2" required></label>
+              <p class="footnote">Измеряем синхронный инференс ONNX Runtime на реальных кадрах, без декодирования/resize в таймере. FPS = 9 кадров / медианная задержка. RAVEL и VballNet — разные задачи, поэтому результаты сравниваются внутри своих групп. CPU и GPU не работают одновременно.</p>
+              <button class="primary wide" id="benchmark-submit" type="submit">Запустить 10 тестов последовательно</button>
             </form>
           </article>
           <article class="panel">
             <div class="panel-heading"><h3>Текущий замер</h3><span id="benchmark-state" class="status-pill">Нет замера</span></div>
             <div id="benchmark-current" class="job-illustration">
-              <span>⌁</span><div><b>Ожидание запуска</b><p>Выберите модель, движок и параметры.</p></div>
+              <span>⌁</span><div><b>Ожидание запуска</b><p>Один видеосэмпл для всех CPU/GPU измерений.</p></div>
             </div>
-            <div class="progress-row"><span>Прогресс измерения</span><strong id="benchmark-percent">—</strong></div>
+            <div class="progress-row"><span>Прогресс 10 последовательных тестов</span><strong id="benchmark-percent">—</strong></div>
             <div class="progress-track"><div id="benchmark-progress"></div></div>
             <button id="benchmark-cancel" class="secondary" type="button" disabled>Остановить</button>
-            <div class="console-label space-top">ЖУРНАЛ ЗАМЕРА</div>
-            <pre class="terminal" id="benchmark-log">Здесь появятся результаты тестов.</pre>
+            <details class="benchmark-log-details space-top" id="benchmark-log-details">
+              <summary>Технический журнал и ошибки CUDA</summary>
+              <pre class="terminal" id="benchmark-log">Результаты тестов будут показаны здесь.</pre>
+            </details>
           </article>
         </div>
-        <article class="panel space-top">
-          <div class="panel-heading"><h3>Результаты моделей</h3>
-            <span class="muted">Медианный FPS · задержка модели · движок · настройки</span></div>
-          <div id="benchmark-results" class="benchmark-history"><div class="empty">Замеров пока нет.</div></div>
+        <article class="panel benchmark-compare-panel space-top">
+          <div class="panel-heading"><h3>График скорости · реальные измерения</h3><span class="muted" id="benchmark-compare-settings">Данные появятся после запуска</span></div>
+          <div id="benchmark-results" aria-live="polite"><div class="empty">Нажмите «Запустить 10 тестов последовательно». График показывает FPS CPU и GPU для каждой модели.</div></div>
+          <p class="benchmark-method-note">Чем длиннее столбец, тем выше скорость. Для одной модели CPU и CUDA получают идентичный входной тензор. Входные разрешения разных моделей отличаются — это их штатные конфигурации. График отражает скорость инференса, не точность и не скорость полного видеоанализа.</p>
+          <details class="benchmark-history-details">
+            <summary>Архив серий бенчмарка</summary>
+            <div id="benchmark-history" class="benchmark-history"><div class="empty">Пока нет результатов.</div></div>
+          </details>
         </article>
-      </section>
-      <section id="view-results" class="view">
-        <div class="section-intro"><h2>Монтаж проекта</h2><p>Самые зрелищные полные розыгрыши из всех записей проекта в одном итоговом ролике.</p></div>
-        <div class="two-column analysis-columns">
-          <article class="panel"><div class="panel-heading"><h3>Новая подборка</h3></div>
-            <form id="highlights-form">
-              <p id="highlights-project-hint" class="notice">Для монтажа используются все видео выбранного проекта.</p>
-
-              <label class="field"><span>Желаемая длительность, секунд</span><input name="duration" type="number" min="10" max="600" step="10" value="120"></label>
-              <div class="form-row">
-                <label class="field"><span>Минимум розыгрыша, с</span><input name="min_rally" type="number" min="0.5" max="30" step="0.5" value="1.5"></label>
-                <label class="field"><span>Минимальная уверенность розыгрыша</span><input name="min_confidence" type="number" min="0.05" max="1" step="0.05" value="0.5"></label>
-              </div>
-              <p class="footnote">Эти фильтры действуют только при выборе моментов для итогового ролика. Анализ видео повторять не нужно.</p>
-              <p class="footnote">Приоритет — зрелищные полноценные розыгрыши, поэтому итоговая длительность может отличаться от заданной. Границы розыгрышей определяются эвристически.</p>
-              <button class="primary wide" type="submit">Собрать лучшие моменты <span>↗</span></button>
-            </form>
-            <div class="panel-heading space-top"><h3>Готовые MP4 проекта</h3></div><div id="all-renders" class="file-list"></div>
-          </article>
-          <article class="panel preview-panel"><div class="panel-heading"><h3>Просмотр</h3></div>
-            <div class="preview-stage"><video id="preview-player" controls playsinline preload="metadata"></video><div id="preview-empty" class="empty-video">Выберите MP4 из списка слева</div></div>
-            <div class="muted preview-caption" id="preview-title">—</div>
-          </article>
-        </div>
       </section>
     </div>
     <footer>VOLLEY STUDIO · ЛОКАЛЬНЫЙ ИНТЕРФЕЙС <span>Необработанные данные сохраняются · 2026</span></footer>
   </main>
 </div>
+<script src="/i18n-en.js" defer></script>
+<script src="/i18n.js" defer></script>
 <script src="/analysis-ui.js" defer></script>
 <script src="/court-ui.js" defer></script>
+<script src="/model-touches-ui.js" defer></script>
 <script src="/results-ui.js" defer></script>
+<script src="/results-diagnostics.js" defer></script>
+<script src="/analysis-presets.js" defer></script>
+<script src="/settings-tooltips.js" defer></script>
+<script src="/montage-player.js" defer></script>
 <script src="/app.js" defer></script>
+<script src="/quick-reel-ui.js?v=8" defer></script>
 </body>
 </html>

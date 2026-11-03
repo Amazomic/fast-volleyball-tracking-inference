@@ -70,17 +70,23 @@ class BaseExporter:
 
 
 class CombinedVideoExporter(BaseExporter):
-    def __init__(self, output_path: str, fps: float, size: Tuple[int, int]) -> None:
+    def __init__(self, output_path: str, fps: float, size: Tuple[int, int],
+                 quality_crf: Optional[int] = None, quality_encoder: str = "cpu") -> None:
         self.output_path = output_path
         self._writer = None
 
         output_dir = os.path.dirname(output_path)
         if output_dir:
             os.makedirs(output_dir, exist_ok=True)
-        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-        self._writer = cv2.VideoWriter(output_path, fourcc, fps, size)
-        if not self._writer.isOpened():
-            raise ValueError(f"Failed to create combined video writer: {output_path}")
+        if quality_crf is not None:
+            from make_reels import H264PipeWriter
+            self._writer = H264PipeWriter(
+                output_path,fps,size[0],size[1],quality_crf,quality_encoder)
+        else:
+            fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+            self._writer = cv2.VideoWriter(output_path, fourcc, fps, size)
+            if not self._writer.isOpened():
+                raise ValueError(f"Failed to create combined video writer: {output_path}")
 
     def write(self, frame) -> None:
         if not self._writer:
@@ -145,6 +151,8 @@ class TrackProcessor:
         include_not_rally: bool = False,
         mark_ball: bool = True,
         padding: float = DEFAULT_PADDING_SECONDS,
+        quality_crf: Optional[int] = None,
+        quality_encoder: str = "cpu",
     ) -> None:
         if padding < 0:
             raise ValueError("padding must be greater than or equal to 0")
@@ -158,6 +166,8 @@ class TrackProcessor:
         self.include_not_rally = include_not_rally
         self.mark_ball = mark_ball
         self.padding = padding
+        self.quality_crf = quality_crf
+        self.quality_encoder = quality_encoder
         self.tracks: List[LoadedTrack] = []
         self.total_processed_frames = 0
         self.total_processing_time = 0.0
@@ -222,7 +232,8 @@ class TrackProcessor:
         if self.split_dir:
             return SplitClipsExporter(self.split_dir, fps, size)
         if self.output_path:
-            return CombinedVideoExporter(self.output_path, fps, size)
+            return CombinedVideoExporter(
+                self.output_path, fps, size, self.quality_crf, self.quality_encoder)
         return None
 
     @staticmethod
@@ -547,6 +558,8 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Do not draw the ball marker, track ID or coordinates on video frames",
     )
+    parser.add_argument("--quality-crf", type=int, default=None)
+    parser.add_argument("--quality-encoder", choices=["cpu", "gpu"], default="cpu")
     parser.add_argument("--verbose", action="store_true", help="Enable debug logging")
     return parser
 
@@ -585,6 +598,8 @@ def main() -> None:
         include_not_rally=args.include_not_rally,
         mark_ball=not args.no_mark,
         padding=args.padding,
+        quality_crf=args.quality_crf,
+        quality_encoder=args.quality_encoder,
     )
     processor._load_tracks_from_json()
     processor.visualize_tracks()

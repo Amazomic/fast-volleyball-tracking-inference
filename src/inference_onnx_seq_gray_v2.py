@@ -1,4 +1,5 @@
 import argparse
+import csv
 import logging
 import os
 import queue
@@ -86,6 +87,8 @@ def parse_args():
                         help="Explicit ONNX Runtime execution provider")
     parser.add_argument("--num-threads", type=int, default=8,
                         help="CPU intra-op threads when using ONNX Runtime CPU")
+    parser.add_argument("--gpu-device-id", type=int, default=0)
+    parser.add_argument("--gpu-memory-limit-mb", type=int, default=0)
     return parser.parse_args()
 
 
@@ -120,15 +123,20 @@ def resolve_dim(dim, fallback: int) -> int:
     return fallback
 
 
-def load_onnx_model(model_path, device="auto", num_threads=8):
+def load_onnx_model(model_path, device="auto", num_threads=8, gpu_device_id=0, gpu_memory_limit_mb=0):
     if not os.path.exists(model_path):
         raise FileNotFoundError(f"Model not found: {model_path}")
     model_params = infer_model_params(model_path)
     available = ort.get_available_providers()
     if device == "cuda" and "CUDAExecutionProvider" not in available:
         raise RuntimeError("CUDAExecutionProvider недоступен в ONNX Runtime. Выберите CPU.")
+    if not 0 <= gpu_device_id <= 15 or not 0 <= gpu_memory_limit_mb <= 131072:
+        raise ValueError("Invalid CUDA device_id or gpu_mem_limit")
+    cuda_options = {"device_id": str(gpu_device_id)}
+    if gpu_memory_limit_mb:
+        cuda_options["gpu_mem_limit"] = str(gpu_memory_limit_mb * 1024 * 1024)
     preferred = ["CPUExecutionProvider"] if device == "cpu" else (
-        ["CUDAExecutionProvider", "CPUExecutionProvider"]
+        [("CUDAExecutionProvider", cuda_options), "CPUExecutionProvider"]
         if "CUDAExecutionProvider" in available else ["CPUExecutionProvider"])
     options = ort.SessionOptions()
     options.intra_op_num_threads = max(1, int(num_threads))
@@ -249,6 +257,38 @@ def append_to_csv(result, csv_path):
     if csv_path is None:
         return
     pd.DataFrame([result]).to_csv(csv_path, mode="a", header=False, index=False)
+
+
+def raw_ball_candidates(output, model_params):
+    """Threshold-independent best ball proposal from each network output frame.
+
+    For VballNet heatmaps the proposal is the highest-response pixel; for grid
+    models it is the highest-confidence cell. No confidence floor is applied,
+    so a user can lower or raise it later without repeating inference.
+    """
+    result = []
+    if model_params["family"] == "grid":
+        seq = model_params["seq"]
+        rows, cols = model_params["grid_rows"], model_params["grid_cols"]
+        grid = output[0].reshape(seq, model_params["planes"], rows, cols)
+        for frame in range(seq):
+            peak = int(np.argmax(grid[frame, 0]))
+            y, x = divmod(peak, cols)
+            score = float(grid[frame, 0, y, x])
+            xx = (x + float(grid[frame, 1, y, x])) * model_params["input_width"] / cols
+            yy = (y + float(grid[frame, 2, y, x])) * model_params["input_height"] / rows
+            radius = (float(grid[frame, 3, y, x])
+                      if model_params["planes"] == 4 else None)
+            result.append((score, xx, yy, radius))
+    else:
+        for frame in range(model_params["seq"]):
+            heatmap = output[0, frame]
+            peak = int(np.argmax(heatmap))
+            y, x = np.unravel_index(peak, heatmap.shape)
+            radius = (float(output[0, model_params["seq"] + frame, y, x])
+                      if model_params["planes"] == 2 else None)
+            result.append((float(heatmap[y, x]), float(x), float(y), radius))
+    return result
 
 
 def preprocess_frames(
@@ -575,7 +615,7 @@ def frame_reader(cap, frame_queue, batch_size, stop_event, error_queue):
                     break
                 frames.append(frame)
             if frames:
-                frame_queue.put(frames, timeout=1.0)
+                frame_queue.put(frames)
             else:
                 frame_queue.put(None, timeout=1.0)
                 break
@@ -620,7 +660,8 @@ def main():
         input_names,
         output_names,
         model_params,
-    ) = load_onnx_model(args.model_path,args.device,args.num_threads)
+    ) = load_onnx_model(args.model_path,args.device,args.num_threads,
+                        args.gpu_device_id,args.gpu_memory_limit_mb)
     input_width = model_params["input_width"]
     input_height = model_params["input_height"]
 
@@ -632,6 +673,22 @@ def main():
         video_basename, args.output_dir, frame_width, frame_height, fps, args.only_csv
     )
     csv_path = setup_csv_file(video_basename, args.output_dir)
+    # Separate sidecar: the legacy ball.csv continues to describe the original
+    # detection threshold, while the raw candidates permit preview re-filtering.
+    raw_handle = None
+    raw_writer = None
+    if csv_path is not None:
+        raw_path = os.path.join(os.path.dirname(csv_path), "ball.raw.csv")
+        raw_handle = open(raw_path, "w", newline="", encoding="utf-8")
+        raw_writer = csv.writer(raw_handle)
+        raw_writer.writerow(("Frame", "Confidence", "X", "Y", "Radius"))
+        import json
+        with open(os.path.join(os.path.dirname(csv_path), "ball.raw.json"),
+                  "w", encoding="utf-8") as metadata:
+            json.dump({"format": "ball-raw-peak-v2",
+                       "analysis_threshold": args.confidence_threshold,
+                       "candidate": "maximum_heatmap_response",
+                       "model": os.path.basename(args.model_path)}, metadata)
 
     frame_buffer = []
     track_state = BallTrackState(maxlen=args.track_length, max_missing=args.track_length)
@@ -698,8 +755,23 @@ def main():
                 h0 = new_h0
 
             predictions = decode_predictions(output, model_params, args.confidence_threshold)
+            # Preserve model responses from ALL frames, including below threshold.
+            raw_candidates = raw_ball_candidates(output, model_params)
 
             for i, (visibility, x, y, radius_norm) in enumerate(predictions[: len(frames)]):
+                if raw_writer is not None:
+                    score, raw_x, raw_y, raw_radius = raw_candidates[i]
+                    if np.isfinite(score) and np.isfinite(raw_x) and np.isfinite(raw_y):
+                        radius_px = (model_radius_to_pixels(raw_radius, frame_width)
+                                     if raw_radius is not None and np.isfinite(raw_radius)
+                                     else 0)
+                        raw_writer.writerow((
+                            frame_index + i, round(float(np.clip(score, 0, 1)), 6),
+                            round(float(raw_x * frame_width / input_width), 2),
+                            round(float(raw_y * frame_height / input_height), 2),
+                            radius_px,
+                        ))
+
                 frame_gray = cv2.cvtColor(frames[i], cv2.COLOR_BGR2GRAY)
                 x_orig = x * frame_width / input_width if visibility else -1
                 y_orig = y * frame_height / input_height if visibility else -1
@@ -760,6 +832,8 @@ def main():
             frame_index += len(frames)
     finally:
         stop_event.set()
+        if raw_handle is not None:
+            raw_handle.close()
         reader_thread.join(timeout=2.0)
         pbar.close()
         cap.release()

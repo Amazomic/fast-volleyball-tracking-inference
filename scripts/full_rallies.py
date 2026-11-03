@@ -1,80 +1,107 @@
 """Whole-rally selection from cached game tracks. No neural-network inference.
 
-Boundary status is heuristic: with no court annotation, exact serve/contact/point
-events cannot be guaranteed. Adjacent rally tracks within 45 frames are treated
-as one continuous rally so a brief ball-detector dropout does not cut the point.
+Boundary status is heuristic: exact serve-to-point events are not guaranteed.
+Both montage and Results share scripts/rally_boundaries.py. Nearby rally tracks
+within 90 frames may be joined, except across high-confidence technical returns
+or a new detected serve.
 """
 from __future__ import annotations
 
 import json
+import subprocess
+from functools import lru_cache
 from pathlib import Path
 
 FPS = 30
-MERGE_GAP_FRAMES = 45
+MERGE_GAP_FRAMES = 90
 LEAD_FRAMES = 60
 TAIL_FRAMES = 45
 
 
+@lru_cache(maxsize=24)
+def _video_duration_frames(file: str, mtime_ns: int, size: int) -> int | None:
+    # Same normalized analysis duration used by Results, including final-rally context.
+    try:
+        probe = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+             "-of", "default=noprint_wrappers=1:nokey=1", file],
+            capture_output=True, text=True, check=True, timeout=6)
+        value = float(probe.stdout.strip())
+        return max(1, round(value * FPS)) if 0 < value < 86400 else None
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None
+
+
 def load_groups(cache: Path, ranking: list[dict] | None = None,
-                merge_gap: int = MERGE_GAP_FRAMES) -> list[dict]:
-    tracks_path = cache / "analysis" / "game-tracks.json"
+                merge_gap: int = MERGE_GAP_FRAMES,
+                context_padding: float | None = None,
+                min_sec: float = 0, duration_frames: int | None = None) -> list[dict]:
+    """Use the SAME boundaries as results, with ranking of every merged part."""
+    from scripts.rally_boundaries import rebuild
+    tracks_path=cache/"analysis/game-tracks.json"
     if not tracks_path.is_file():
         raise FileNotFoundError(f"Missing saved game tracks: {tracks_path}")
-    tracks = sorted(json.loads(tracks_path.read_text(encoding="utf-8")),
-                    key=lambda t: (int(t["start_frame"]), int(t["last_frame"])))
-    ranked = {(int(r["start"]), int(r["end"])): r for r in ranking or []}
-    groups = []
-    current = []
-
-    def flush() -> None:
-        if not current:
-            return
-        start = int(current[0]["start_frame"])
-        end = max(int(x["last_frame"]) for x in current)
-        entries = [ranked[(int(x["start_frame"]), int(x["last_frame"]))]
-                   for x in current
-                   if (int(x["start_frame"]), int(x["last_frame"])) in ranked]
-        groups.append({
-            "detected_start_frame": start,
-            "detected_end_frame": end,
-            "source_start_frame": start,
-            "source_end_frame": end,
-            "track_ids": [x.get("track_id") for x in current],
-            "joined_parts": len(current),
-            "ranking_score": round(max([float(r["score"]) for r in entries], default=0.0)
-                                   + 0.3 * (sum(float(r["score"]) for r in entries)
-                                            - max([float(r["score"]) for r in entries], default=0.0)), 4),
-            "ranked": bool(entries),
-            "confidence": round(max((float(r.get("confidence", 0)) for r in entries), default=0), 4),
-            "boundary_method": "merged_rally_tracks_with_context; serve/point not verified",
-        })
-
-    for t in tracks:
-        classification = t.get("rally_classification") or {}
-        if classification.get("label") != "rally":
-            flush()
-            current = []
-            continue
-        if current and int(t["start_frame"]) - int(current[-1]["last_frame"]) - 1 > merge_gap:
-            flush()
-            current = []
-        current.append(t)
-    flush()
-
-    # Prevent context padding from entering a neighboring recorded segment.
-    # The adjacent segments may be non-rallies, so use ALL track boundaries.
-    for group in groups:
-        a = group["detected_start_frame"]
-        b = group["detected_end_frame"]
-        prev_ends = [int(x["last_frame"]) for x in tracks if int(x["last_frame"]) < a]
-        next_starts = [int(x["start_frame"]) for x in tracks if int(x["start_frame"]) > b]
-        nearest_prev = max(prev_ends, default=-1)
-        nearest_next = min(next_starts, default=10**10)
-        group["source_start_frame"] = max(0, a - LEAD_FRAMES, nearest_prev + 1)
-        group["source_end_frame"] = min(b + TAIL_FRAMES, nearest_next - 1)
-        group["context_before_frames"] = a - group["source_start_frame"]
-        group["context_after_frames"] = group["source_end_frame"] - b
-        group["duration_sec"] = round((group["source_end_frame"] - group["source_start_frame"] + 1) / FPS, 4)
+    tracks=json.loads(tracks_path.read_text(encoding="utf-8"))
+    event_path=cache/"analysis/events.json"
+    payload=json.loads(event_path.read_text(encoding="utf-8")) if event_path.is_file() else {}
+    ranked={(int(r["start"]),int(r["end"])):r for r in ranking or []}
+    if duration_frames is None:
+        media = cache / "analysis.mp4"
+        if media.is_file():
+            stat = media.stat()
+            duration_frames = _video_duration_frames(str(media), stat.st_mtime_ns, stat.st_size)
+    pad=max(0,round(context_padding*FPS)) if context_padding is not None else LEAD_FRAMES
+    groups=rebuild(tracks,events=payload.get("events",[]),fps=FPS,
+                   max_gap_frames=merge_gap,padding_frames=pad,
+                   min_frames=round(min_sec*FPS),
+                   duration_frames=duration_frames)
+    from scripts.volleyball_ui.rally_players import player_info
+    occupancy=player_info(cache,[(g["detected_start_frame"],g["detected_end_frame"])
+                                 for g in groups])
+    for g, players in zip(groups,occupancy):
+        g.update(players)
+        entries=[ranked[(int(t["start_frame"]),int(t["last_frame"]))]
+                 for t in g["tracks"]
+                 if (int(t["start_frame"]),int(t["last_frame"])) in ranked]
+        scores=[float(e["score"]) for e in entries]
+        g["ranking_score"]=round(max(scores,default=0)+
+                                 .3*(sum(scores)-max(scores,default=0)),4)
+        g["ranked"]=bool(entries)
+        g["confidence"]=round(max(
+            [g["confidence"]]+[float(e.get("confidence",0)) for e in entries]),4)
+        # Reuse classified analysis events for montage selection. The intervals
+        # are the same reconstructed ranges shown in Results.
+        action_types=("attack", "block", "dig", "overhead_pass", "serve", "low_touch")
+        counts={name:0 for name in action_types}
+        observed=set()
+        for event in payload.get("events") or []:
+            if not isinstance(event,dict) or event.get("type") not in counts:
+                continue
+            try:
+                frame=int(event["frame"])
+            except (KeyError,TypeError,ValueError):
+                continue
+            inside=(g["detected_start_frame"]<=frame<=g["detected_end_frame"])
+            if event["type"]=="serve" and g.get("serve_frame")==frame:
+                inside=True
+            if not inside:continue
+            identity=event.get("id") or (frame,event["type"],event.get("player_track_id"))
+            if identity in observed:continue
+            observed.add(identity)
+            counts[event["type"]]+=1
+        # Older analyses may only have per-track aggregate action features.
+        # Use them only when no classified event matches this rally.
+        if not any(counts.values()):
+            for track in g["tracks"]:
+                features=track.get("rally_features") or {}
+                for kind in action_types:
+                    key={"dig":"dig_count", "overhead_pass":"overhead_count",
+                         "low_touch":"low_touch_count"}.get(kind,kind+"_count")
+                    counts[kind]+=max(0,int(features.get(key,0) or 0))
+        g["action_counts"]=counts
+        g["actions_total"]=sum(counts.values())
+        # Internal heavy track payloads are not needed by montage selection.
+        del g["tracks"]
     return groups
 
 

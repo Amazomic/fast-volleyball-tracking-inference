@@ -1,12 +1,16 @@
 """Persistent projects for one or many source recordings.
 
-Source videos remain in project/; generated project output is stored under
-results/projects/<uuid> and inference caches remain under results/analysis.
+Source videos remain in project/; analysis caches and immutable montage
+branches live under results/projects/<id>/, while normalized preview videos
+are shared by projects under results/prepared/.
 """
 from __future__ import annotations
 
+import fcntl
+import os
 import threading
 import uuid
+from contextlib import contextmanager
 import math
 import unicodedata
 from pathlib import Path
@@ -16,6 +20,22 @@ from . import data
 PROJECTS_DIR = data.RESULTS / "projects"
 REGISTER = PROJECTS_DIR / "projects.json"
 _LOCK = threading.RLock()
+
+
+@contextmanager
+def _registry_write_lock():
+    """Serialize the active project registry across both Volley UI servers.
+
+    _LOCK protects threads only; without flock, simultaneous POSTs on ports
+    8765 and 8766 can both read the same list and silently lose one project.
+    """
+    PROJECTS_DIR.mkdir(parents=True, exist_ok=True)
+    with (PROJECTS_DIR / ".registry.lock").open("a+b") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
 def _load() -> list:
@@ -29,7 +49,15 @@ def all_projects() -> list:
         return [dict(p) for p in _load()]
 
 
+def deletion_requested(identifier: str) -> bool:
+    """Cross-process tombstone blocks work for a project being archived."""
+    return (isinstance(identifier, str) and bool(identifier)
+            and (PROJECTS_DIR / identifier / ".delete-requested").is_file())
+
+
 def get_project(identifier: str) -> dict:
+    if deletion_requested(identifier):
+        raise ValueError("Проект удаляется: запуск новых задач запрещён")
     for p in all_projects():
         if p["id"] == identifier:
             return p
@@ -84,9 +112,40 @@ def _unique_name(projects: list, name: str, exclude_id: str | None = None) -> st
     return clean
 
 
+def _restore_recorded_source(project: dict, video: str) -> None:
+    """Repair a vanished import symlink only using this project's saved path.
+
+    Never guess an original from the basename, overwrite a different source,
+    or create a link if the source itself no longer exists.
+    """
+    recorded = project.get("source_paths", {})
+    if not isinstance(recorded, dict) or not isinstance(recorded.get(video), str):
+        return
+    source = Path(recorded[video])
+    link = data.PROJECT / video
+    if not source.is_absolute() or not source.is_file() or source == link:
+        return
+    if link.exists() or link.is_symlink():
+        return
+    data.PROJECT.mkdir(parents=True, exist_ok=True)
+    try:
+        os.symlink(source, link)
+    except FileExistsError:
+        pass
+
+
 def assert_project_video(project_id: str, video: str) -> None:
-    if video not in get_project(project_id)["videos"]:
+    project = get_project(project_id)
+    if video not in project["videos"]:
         raise ValueError("Это видео не входит в выбранный проект")
+    _restore_recorded_source(project, video)
+    recorded = project.get("source_paths", {})
+    if isinstance(recorded, dict) and video in recorded:
+        try:
+            if data.video_path(video).resolve(strict=True) != Path(recorded[video]).resolve(strict=True):
+                raise ValueError("Источник видео изменился после создания проекта: " + video)
+        except (OSError, RuntimeError):
+            raise ValueError("Исходный файл видео недоступен: " + video) from None
 
 
 def project_cache_root(project_id: str) -> Path:
@@ -101,18 +160,34 @@ def project_logs_root(project_id: str) -> Path:
     return project_dir(project_id) / "logs"
 
 
-def create_project(name: str, videos: list[str] | None = None, ranges: dict | None = None) -> dict:
+def _validate_player_ids(player_ids) -> list[str]:
+    if not isinstance(player_ids, list) or len(player_ids) > 200:
+        raise ValueError("Выберите не более 200 игроков")
+    chosen = list(dict.fromkeys(player_ids))
+    if not chosen:
+        return []
+    catalog = {p["id"] for p in data.global_players()}
+    if any(not isinstance(pid, str) or pid not in catalog for pid in chosen):
+        raise ValueError("Один из выбранных игроков не найден в общей базе")
+    return chosen
+
+
+def create_project(name: str, videos: list[str] | None = None, ranges: dict | None = None,
+                   player_ids: list | None = None) -> dict:
     clean_name = normalized_name(name)
     videos = videos if videos is not None else []
     checked = validate_videos(videos)
     if not checked:
         raise ValueError("Выберите хотя бы одно видео для проекта")
     checked_ranges = validate_ranges(checked, ranges)
-    with _LOCK:
+    sources = {video: str(data.video_path(video).resolve(strict=True)) for video in checked}
+    selected_players = _validate_player_ids(player_ids or [])
+    with _LOCK, _registry_write_lock():
         projects = _load()
         _unique_name(projects, clean_name)
         record = {"id": uuid.uuid4().hex[:12], "name": clean_name,
-                  "videos": checked, "ranges": checked_ranges}
+                  "videos": checked, "ranges": checked_ranges,
+                  "source_paths": sources, "player_ids": selected_players}
         folder = PROJECTS_DIR / record["id"]
         folder.mkdir(parents=True, exist_ok=False)
         try:
@@ -137,14 +212,17 @@ def validate_videos(videos: list) -> list[str]:
     return clean
 
 
-def update_project(identifier: str, name=None, videos=None, ranges=None) -> dict:
-    with _LOCK:
+def update_project(identifier: str, name=None, videos=None, ranges=None,
+                   player_ids=None) -> dict:
+    with _LOCK, _registry_write_lock():
         projects = _load()
         found = next((p for p in projects if p.get("id") == identifier), None)
         if found is None:
             raise ValueError("Проект не найден")
         if name is not None:
             found["name"] = _unique_name(projects, name, exclude_id=identifier)
+        if player_ids is not None:
+            found["player_ids"] = _validate_player_ids(player_ids)
         if videos is not None or ranges is not None:
             selected = validate_videos(videos) if videos is not None else found["videos"]
             if not selected:
@@ -152,6 +230,9 @@ def update_project(identifier: str, name=None, videos=None, ranges=None) -> dict
             existing = {key: value for key, value in found.get("ranges", {}).items() if key in selected}
             found["ranges"] = validate_ranges(selected, ranges if ranges is not None else existing)
             found["videos"] = selected
+            found["source_paths"] = {
+                name: str(data.video_path(name).resolve(strict=True)) for name in selected
+            }
         data.save_json(project_dir(identifier) / "project.json", found)
         data.save_json(REGISTER, {"schema": 1, "projects": projects})
         return dict(found)
@@ -163,7 +244,7 @@ def archive_project(identifier: str) -> dict:
     Never unlink source recordings from project/ or a shared legacy cache.
     The project-specific analysis, settings and renders are recoverable.
     """
-    with _LOCK:
+    with _LOCK, _registry_write_lock():
         projects = _load()
         original = next((p for p in projects if p.get("id") == identifier), None)
         if original is None:
@@ -204,15 +285,35 @@ def project_output(identifier: str) -> Path:
 
 
 def project_summary(identifier: str) -> dict:
+    """Project selection must survive missing/unlinked source recordings.
+
+    A missing video is a project-level warning, never a reason to hide every
+    project from the picker. Stored ranges were validated when registered.
+    """
     p = get_project(identifier)
     output = project_output(identifier)
-    return {**p, "ranges": project_ranges(identifier), "analyses": [
-        {"video": name, "analyzed": data.find_cache(name, identifier) is not None}
-        for name in p["videos"]
-    ], "highlight_ready": output.is_file() and output.stat().st_size > 0}
+    analyses = []
+    missing = []
+    for name in p["videos"]:
+        _restore_recorded_source(p, name)
+        try:
+            assert_project_video(identifier, name)
+            data.video_path(name)
+        except (ValueError, OSError):
+            missing.append(name)
+            analyses.append({"video": name, "available": False, "analyzed": False})
+            continue
+        try:
+            analyzed = data.find_cache(name, identifier) is not None
+        except (ValueError, OSError):
+            analyzed = False
+        analyses.append({"video": name, "available": True, "analyzed": analyzed})
+    return {**p, "ranges": p.get("ranges", {}), "analyses": analyses,
+            "missing_videos": missing,
+            "highlight_ready": output.is_file() and output.stat().st_size > 0}
 
 
-def project_report(identifier: str) -> dict:
+def project_report(identifier: str, run_id: str | None = None) -> dict:
     """Aggregate event counts across the included source videos.
 
     Track IDs are video-scoped and are never treated as shared identities.
@@ -226,8 +327,22 @@ def project_report(identifier: str) -> dict:
     participants = {}
     analyzed = 0
     sources = []
+    session = None
+    if run_id:
+        from .analysis_runs import list_runs
+        session = next((r for r in list_runs(identifier) if r["id"] == run_id), None)
+        if session is None:
+            raise ValueError("?????? ??????? ?? ??????")
     for name in p["videos"]:
-        report = data.report(name, identifier)
+        if session and name not in session["videos"]:
+            continue
+        try:
+            report = data.report(name, identifier,
+                                 session["videos"][name] if session else None)
+        except (ValueError, OSError):
+            # A disconnected original must not make the whole project report
+            # (or subsequent project switching) fail with HTTP 400.
+            report = {"analyzed": False, "rallies": 0, "counts": {}, "groups": []}
         sources.append({"name": name, "analyzed": report["analyzed"],
                         "rallies": report["rallies"], "counts": report["counts"]})
         if not report["analyzed"]:
@@ -255,5 +370,8 @@ def project_report(identifier: str) -> dict:
         } for item in participants.values()),key=lambda x:-x["total_actions"]),
         "sources": sources
     }
-    data.save_json(project_dir(identifier) / "reports" / "summary.json", result)
+    if run_id:
+        data.save_json(project_dir(identifier) / "reports" / ("summary." + run_id + ".json"), result)
+    else:
+        data.save_json(project_dir(identifier) / "reports" / "summary.json", result)
     return result

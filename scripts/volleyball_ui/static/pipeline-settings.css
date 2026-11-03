@@ -1,0 +1,68 @@
+.pipeline-advanced{border:1px solid #34534b;border-radius:12px;padding:17px 19px;margin:17px 0 22px;background:#132420}
+.pipeline-advanced>summary{font-size:13px;font-weight:800;color:#a9ed94;cursor:pointer;line-height:1.6}
+.pipeline-advanced>.footnote{margin-top:14px}
+.pipeline-settings-group{border-top:1px solid #324942;padding-top:18px;margin-top:20px}
+.pipeline-settings-group h4{margin:0 0 14px;font-size:13px;font-weight:800;color:#d3e7d9}
+.pipeline-settings-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px 17px;align-items:start}
+.pipeline-settings-grid>.field{margin:0}
+.pipeline-settings-grid>.checkbox-field{min-height:44px;line-height:1.5;padding:5px 0}
+.pipeline-settings-grid>.field>span{line-height:1.45}
+@media(max-width:700px){.pipeline-settings-grid{grid-template-columns:minmax(0,1fr)}}
+
+/* Montage: show the mode and duration first, keep everything else optional. */
+.montage-workspace{align-items:stretch}
+.montage-workspace>.preview-panel{min-height:0}
+.montage-workspace>.preview-panel .montage-preview-shell{
+  display:flex;flex-direction:column;flex:1 1 auto;min-height:420px;
+}
+.montage-workspace>.preview-panel .montage-preview-shell>.preview-stage{
+  flex:1 1 auto;min-height:350px;
+}
+.montage-workspace>.preview-panel .preview-stage video{
+  max-height:100%;object-fit:contain;
+}
+@media(max-width:860px){
+  .montage-workspace>.preview-panel .montage-preview-shell{min-height:0}
+  .montage-workspace>.preview-panel .montage-preview-shell>.preview-stage{min-height:290px}
+}
+.montage-create-panel{min-width:0}
+.montage-create-panel .field{margin-bottom:16px}
+.montage-create-panel #montage-mode,
+.montage-create-panel #montage-video,
+.montage-create-panel #montage-duration{width:100%;max-width:100%}
+.montage-mode-note{font-size:12px;color:#91ada0;line-height:1.55;margin:4px 0 16px}
+.montage-advanced{padding:0;margin:4px 0 16px;border-color:#344e40;background:#13231e}
+.montage-advanced>summary{padding:14px 16px;font-weight:650;color:#cce2d0}
+.montage-advanced .pipeline-settings-grid{padding:8px 16px 16px}
+.montage-advanced .field{margin:0}
+.montage-advanced .checkbox-field{padding:8px 0}
+.montage-advanced [hidden],.montage-create-panel [hidden]{display:none!important}
+.montage-library-panel{margin-top:16px}
+.montage-render-list{display:grid;gap:8px}
+.montage-output-row{display:flex;align-items:center;gap:16px;border:1px solid #304c40;border-radius:10px;padding:12px 14px;background:#15241f;min-width:0}
+.montage-output-info{display:flex;flex:1;min-width:0;flex-direction:column;gap:6px}
+.montage-output-info strong{font-size:13px;font-weight:680;color:#d9e9db;overflow-wrap:anywhere}
+.montage-output-info small{font-size:11px;color:#9fb7a7;line-height:1.4}
+.montage-output-actions{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+.montage-output-actions .secondary{font-size:11px;min-height:34px;display:inline-flex;align-items:center;justify-content:center;text-decoration:none;padding:7px 10px;border-radius:7px;white-space:nowrap}
+.montage-output-actions .montage-delete{color:#f2b1a6;border-color:#70483f}
+.montage-output-actions .montage-delete:hover{background:#4d2925}
+.montage-preview-status{font-size:12px;line-height:1.5;color:#a9d4b4;margin:10px 0}
+@media(max-width:870px){.montage-output-row{align-items:stretch;flex-direction:column}.montage-output-actions{justify-content:flex-start}}
+@media(max-width:580px){.montage-output-actions .secondary{flex:1 1 40%}}
+
+/* A single authoritative stage timeline for the montage job. */
+.montage-job-panel{margin-top:16px;padding:18px 20px}
+.montage-job-panel[hidden]{display:none}
+.montage-job-panel .panel-heading{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;margin-bottom:16px}
+.montage-job-summary{display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap;margin-bottom:11px}
+.montage-job-count{font-size:22px;line-height:1.35;font-weight:800;font-variant-numeric:tabular-nums;color:#d9f0dc}
+.montage-job-summary .muted{font-size:12px;font-variant-numeric:tabular-nums}
+.montage-job-track{height:8px;margin:0}
+.montage-job-track #montage-job-progress{transition:width .2s linear}
+.montage-job-stage{color:#b2d3b8;font-size:12px;margin:12px 0 14px;line-height:1.55}
+.montage-job-journal{margin-top:14px;border-top:1px solid #324a3b;padding-top:11px}
+.montage-job-journal>summary{cursor:pointer;color:#b4d4bc;font-size:12px;font-weight:650;padding:4px 0}
+.montage-job-journal pre{margin:12px 0 0;max-height:270px;font-size:11px;white-space:pre-wrap;overflow-wrap:anywhere}
+.montage-output-info strong{font-variant-numeric:tabular-nums}
+.montage-output-info small{overflow-wrap:anywhere}

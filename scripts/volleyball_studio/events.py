@@ -5,7 +5,12 @@ def event_timeline(tracks, source, offset, width, height, court):
     events = []
     for track in tracks:
         track_id = key([str(source), track["start_frame"], track["last_frame"]])
-        boundaries = [(track["start_frame"], "rally_start"), (track["last_frame"], "rally_end")]
+        classification = track.get("rally_classification") or {}
+        accepted_rally = classification.get("is_rally") is True or classification.get("label") == "rally"
+        # A tracked flight is not necessarily a rally. Never label an
+        # unclassified or explicitly non-rally trajectory as a full point.
+        boundaries = ([(track["start_frame"], "rally_start"),
+                       (track["last_frame"], "rally_end")] if accepted_rally else [])
         confidence = float(track.get("rally_classification", {}).get("rally_confidence", 0))
         for frame, kind in boundaries:
             events.append({"id": key([track_id, frame, kind]), "track_id": track_id, "source": str(source), "frame": frame, "frame_domain": "analysis_cfr_30", "time_sec": frame / 30 + offset, "type": kind, "ball": None, "player_track_id": None, "confidence": confidence, "status": "heuristic", "recommended_effect": "none"})

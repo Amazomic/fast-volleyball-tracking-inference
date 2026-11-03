@@ -106,19 +106,38 @@ def build_statistics(cache: Path, events: dict) -> tuple[list[dict], Counter]:
     return records, totals
 
 
-def run(cmd: list[str], logfile: Path) -> bool:
+def run(cmd: list[str], logfile: Path, *, on_frame=None) -> bool:
     with logfile.open("a", encoding="utf-8") as log:
         log.write("\n$ " + " ".join(map(str, cmd)) + "\n")
         log.flush()
-        p = subprocess.run(cmd, stdout=log, stderr=subprocess.STDOUT, check=False)
-        return p.returncode == 0
+        if on_frame is None:
+            p = subprocess.run(cmd, stdout=log, stderr=subprocess.STDOUT, check=False)
+            return p.returncode == 0
+        # FFmpeg's machine-readable frame counter, not a guessed duration.
+        command=[*cmd[:4],"-stats_period","0.5","-progress","pipe:1",*cmd[4:]]
+        process=subprocess.Popen(command,stdout=subprocess.PIPE,
+                                  stderr=subprocess.STDOUT,text=True,errors="replace",
+                                  bufsize=1)
+        assert process.stdout is not None
+        for line in process.stdout:
+            log.write(line)
+            if line.startswith("frame="):
+                try:
+                    on_frame(int(line.split("=",1)[1].strip()))
+                except ValueError:
+                    pass
+        return process.wait()==0
 
 
-def render(video: Path, normalized: Path, selected: list[dict], output_path: Path | None = None, segments_folder: Path | None = None) -> None:
+def render(video: Path, normalized: Path, selected: list[dict], output_path: Path | None = None, segments_folder: Path | None = None, *, progress_callback=None, original_quality: bool = False, analysis_offset: float = 0) -> None:
     ffmpeg = shutil.which("ffmpeg")
     if not ffmpeg:
         raise RuntimeError("ffmpeg not found in PATH")
-    fingerprint = hashlib.sha256((str(video) + str(normalized) + json.dumps(selected, sort_keys=True)).encode()).hexdigest()[:12]
+    identity = (str(video.resolve()) + str(video.stat().st_size) +
+                str(video.stat().st_mtime_ns) + str(normalized) +
+                json.dumps(selected, sort_keys=True) +
+                str(original_quality) + str(analysis_offset))
+    fingerprint = hashlib.sha256(identity.encode()).hexdigest()[:12]
     work = (segments_folder or (RESULTS / "highlight_segments")) / fingerprint
     work.mkdir(parents=True, exist_ok=True)
     log = RESULTS / "highlights_render.log"
@@ -129,15 +148,36 @@ def render(video: Path, normalized: Path, selected: list[dict], output_path: Pat
     for item in selected:
         index = item["sequence"]
         start = item["source_start_frame"] / 30
+        original_start = start + analysis_offset
         count = item["source_end_frame"] - item["source_start_frame"] + 1
         duration = count / 30
         output = work / f"clip_{index:03d}.mp4"
         segments.append(output)
+        if progress_callback:
+            progress_callback("clip","start",index,len(selected),0,count)
         if output.exists() and output.stat().st_size > 100000:
             print(f"Using cached segment {index}/{len(selected)}", flush=True)
+            if progress_callback:
+                progress_callback("clip","complete",index,len(selected),count,count)
             continue
         print(f"Encoding segment {index}/{len(selected)}, source time {start:.1f}s for {duration:.1f}s...", flush=True)
         def command(enc: str) -> list[str]:
+            if original_quality:
+                from scripts.volleyball_ui.montage_encoding import encoder_flags
+                from scripts.volleyball_ui.montage_source import source_frame_rate
+                native_fps, native_rate = source_frame_rate(video)
+                native_count = round(duration * native_fps)
+                flags = encoder_flags(
+                    duration, prefer="cpu" if enc == "libx264" else None)
+                return [
+                    ffmpeg, "-hide_banner", "-nostdin", "-y", "-loglevel", "error",
+                    "-ss", f"{original_start:.6f}", "-i", str(video),
+                    "-map", "0:v:0", "-map", "0:a:0?",
+                    "-t", f"{duration:.6f}", "-vf",
+                    f"fps={native_rate},setsar=1",
+                    "-frames:v", str(native_count), *flags,
+                    "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
+                    "-movflags", "+faststart", str(output)]
             return [
                 ffmpeg, "-hide_banner", "-nostdin", "-y", "-loglevel", "error",
                 "-ss", f"{start:.6f}", "-i", str(normalized),
@@ -149,22 +189,38 @@ def render(video: Path, normalized: Path, selected: list[dict], output_path: Pat
                 "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "128k",
                 "-ar", "48000", "-ac", "2", "-movflags", "+faststart", str(output),
             ]
-        if not run(command(encoder), log):
-            if encoder == "h264_nvenc" and run(command("libx264"), log):
+        def track_frame(frame):
+            if progress_callback:
+                progress_callback("clip","running",index,len(selected),
+                                  min(count,max(0,frame)),count)
+        if original_quality:
+            from scripts.volleyball_ui.montage_encoding import encoder_flags
+            encoder = ("h264_nvenc" if "h264_nvenc" in encoder_flags(duration)
+                       else "libx264")
+        if not run(command(encoder), log, on_frame=track_frame if progress_callback else None):
+            if progress_callback:
+                progress_callback("clip","start",index,len(selected),0,count)
+            if encoder == "h264_nvenc" and run(command("libx264"), log, on_frame=track_frame if progress_callback else None):
                 encoder = "libx264"
             else:
                 raise RuntimeError(f"Segment {index} failed. See {log}")
         if output.stat().st_size < 100000:
             raise RuntimeError(f"Segment {index} unexpectedly small")
+        if progress_callback:
+            progress_callback("clip","complete",index,len(selected),count,count)
     concat = work / "concat.txt"
     concat.write_text("\n".join("file '" + f.name + "'" for f in segments) + "\n", encoding="utf-8")
     out = output_path or (RESULTS / "highlights_120s.mp4")
     print("Joining clips into final highlights...", flush=True)
+    if progress_callback:
+        progress_callback("join","start",1,1,0,1)
     cmd = [ffmpeg, "-hide_banner", "-nostdin", "-y", "-loglevel", "error",
            "-f", "concat", "-safe", "0", "-i", str(concat),
            "-c", "copy", "-movflags", "+faststart", str(out)]
     if not run(cmd, log):
         raise RuntimeError(f"Concatenation failed. See {log}")
+    if progress_callback:
+        progress_callback("join","complete",1,1,1,1)
     print(f"VIDEO READY: {out} ({out.stat().st_size / (1024**2):.1f} MiB)", flush=True)
 
 

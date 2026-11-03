@@ -10,25 +10,17 @@ import time
 from .common import cached, digest, key
 
 
-def limit_cpus(count):
+def configure_cpu_threads(count):
+    """Configure CPU math-library thread pools without pinning CPU cores.
+
+    ONNX Runtime and OpenVINO receive their own explicit --num-threads limits
+    from the inference pipeline. Do not conflate a thread count with the
+    OS CPU-affinity mask: they control different resources.
+    """
     if count < 1:
-        raise ValueError("Число CPU должно быть положительным")
+        raise ValueError("Количество потоков CPU должно быть положительным")
     for name in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS", "NUMEXPR_NUM_THREADS"):
         os.environ[name] = str(count)
-    if hasattr(os, "sched_getaffinity"):
-        available = sorted(os.sched_getaffinity(0))
-        os.sched_setaffinity(0, available[:count])
-    elif os.name == "nt":
-        import ctypes
-        kernel = ctypes.windll.kernel32
-        kernel.GetCurrentProcess.restype = ctypes.c_void_p
-        handle = kernel.GetCurrentProcess()
-        mask, system = ctypes.c_size_t(), ctypes.c_size_t()
-        if not kernel.GetProcessAffinityMask(ctypes.c_void_p(handle), ctypes.byref(mask), ctypes.byref(system)):
-            raise OSError("Не удалось прочитать CPU affinity")
-        bits = [1 << index for index in range(64) if mask.value & (1 << index)]
-        if not kernel.SetProcessAffinityMask(ctypes.c_void_p(handle), ctypes.c_size_t(sum(bits[:count]))):
-            raise OSError("Не удалось ограничить CPU affinity")
 
 
 def measure_resources():
