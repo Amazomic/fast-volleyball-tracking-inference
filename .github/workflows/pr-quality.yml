@@ -80,7 +80,7 @@ jobs:
             tests/test_player_id_stability.py \
             tests/test_player_reference_matching.py \
             tests/test_rally_reconstruction.py \
-            tests/test_touch_peaks.py
+            tests/test_ravel_touch_peak_default.py
 
   integration:
     name: 04 / Project-to-reel contracts
