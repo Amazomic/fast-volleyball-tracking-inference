@@ -35,6 +35,26 @@ For setup and the original CLI,
 see [Installation](#installation) and [Quick start](#quick-start-tested) below.
 For the interface, see the [Russian UI guide](docs/VOLLEY_STUDIO_UI.md).
 
+## Docker (CPU-only)
+
+The Docker image runs the Studio UI with FFmpeg, the locked Python dependencies,
+and the included ONNX/OpenVINO model files. It does **not** include NVIDIA/CUDA
+runtime components. Run from the repository root:
+
+```bash
+docker build -t volley-studio:cpu .
+docker run --rm -p 127.0.0.1:8765:8765 \
+  -v volley-results:/app/results \
+  -v volley-project:/app/project \
+  volley-studio:cpu
+```
+
+Open http://127.0.0.1:8765. The container must listen on `0.0.0.0` internally,
+but **only publish port 8765 to host loopback**: the Studio API has no remote
+authentication. Saved analyses and uploaded videos persist in Docker volumes.
+For a structure/entry-point audit and deployment limitations, see
+[the container audit](docs/CONTAINER_AND_ENTRYPOINT_AUDIT.md).
+
 ## Studio architecture
 
 The key design rule is **infer once, interpret many times**. Model execution
