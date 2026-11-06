@@ -1,85 +1,72 @@
 #!/usr/bin/env python3
+"""Compatibility CLI for the current Volley Studio analysis pipelines.
+
+The browser application is started with ``python -m scripts.volleyball_ui``.
+This entry point keeps the older ``--mode`` interface working where a real
+implementation exists; it must never report success without doing work.
 """
-Main entry point for the fast volleyball tracking inference system.
-"""
+
+from __future__ import annotations
 
 import argparse
-import os
+from pathlib import Path
+import subprocess
 import sys
 
-def main():
-    parser = argparse.ArgumentParser(description="Fast Volleyball Tracking Inference")
-    parser.add_argument("--mode", type=str, choices=["track", "pose", "analyze"], 
-                        default="track", help="Processing mode")
-    parser.add_argument("--video_path", type=str, help="Path to input video file")
-    parser.add_argument("--track_file", type=str, help="Path to track JSON file (for pose mode)")
-    parser.add_argument("--model_path", type=str, default="models/vballNetV1.onnx", 
-                        help="Path to ONNX model file")
-    parser.add_argument("--output_dir", type=str, default="output", 
-                        help="Directory to save output files")
-    parser.add_argument("--visualize", action="store_true", 
-                        help="Enable visualization on display using cv2")
-    
-    args = parser.parse_args()
-    
+ROOT = Path(__file__).resolve().parent
+DEFAULT_MODEL = ROOT / "models/VballNetV4c_seq9_grayscale_20260908_213829.onnx"
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Volleyball inference CLI (legacy wrapper)")
+    parser.add_argument("--mode", choices=("track", "analyze", "pose"), default="track")
+    parser.add_argument("--video_path", help="Source video for --mode track")
+    parser.add_argument("--model_path", default=str(DEFAULT_MODEL), help="ONNX ball model")
+    parser.add_argument("--output_dir", default="output")
+    parser.add_argument("--visualize", action="store_true")
+    parser.add_argument("--only-csv", "--only_csv", dest="only_csv", action="store_true")
+    parser.add_argument("--track_file", help="Legacy pose input (pose mode is unavailable)")
+    parser.add_argument("--project-id", help="Registered Studio project for --mode analyze")
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = build_parser()
+    args, extra = parser.parse_known_args(argv)
+
     if args.mode == "track":
-        # Ball tracking mode
         if not args.video_path:
-            print("Error: --video_path is required for tracking mode")
-            return 1
-            
-        # Import and run ball tracking
-        try:
-            from src.inference_onnx import main as track_main
-            # We would need to pass the args to the tracking module
-            print("Ball tracking mode selected")
-            print(f"Video: {args.video_path}")
-            print(f"Model: {args.model_path}")
-            print(f"Visualize: {args.visualize}")
-            # In a full implementation, we would call track_main with appropriate arguments
-        except ImportError as e:
-            print(f"Error importing tracking module: {e}")
-            return 1
-            
-    elif args.mode == "pose":
-        # Pose detection mode
-        if not args.track_file or not args.video_path:
-            print("Error: --track_file and --video_path are required for pose mode")
-            return 1
-            
-        # Import and run pose detection
-        try:
-            from src.pose_detector import add_pose_to_track_json
-            print("Pose detection mode selected")
-            print(f"Track file: {args.track_file}")
-            print(f"Video: {args.video_path}")
-            print(f"Visualize: {args.visualize}")
-            
-            add_pose_to_track_json(
-                track_file=args.track_file,
-                video_path=args.video_path,
-                output_dir=args.output_dir,
-                visualize=args.visualize
-            )
-        except ImportError as e:
-            print(f"Error importing pose detection module: {e}")
-            return 1
-        except Exception as e:
-            print(f"Error during pose detection: {e}")
-            return 1
-            
+            parser.error("--video_path is required for --mode track")
+        if not Path(args.video_path).is_file():
+            parser.error(f"Video not found: {args.video_path}")
+        if not Path(args.model_path).is_file():
+            parser.error(f"Model not found: {args.model_path}")
+        if args.project_id or args.track_file:
+            parser.error("--project-id/--track_file are not valid for --mode track")
+        command = [sys.executable, str(ROOT / "src/inference_onnx_seq_gray_v2.py"),
+                   "--video_path", args.video_path, "--model_path", args.model_path,
+                   "--output_dir", args.output_dir]
+        if args.visualize:
+            command.append("--visualize")
+        if args.only_csv:
+            command.append("--only_csv")
     elif args.mode == "analyze":
-        # Analysis mode
-        print("Analysis mode selected")
-        print("This mode is not yet implemented")
-        
+        if not args.project_id:
+            parser.error("--project-id is required for --mode analyze")
+        if args.video_path or args.track_file or args.visualize or args.only_csv:
+            parser.error("Track/pose options cannot be combined with --mode analyze")
+        command = [sys.executable, "-m", "scripts.run_project_analysis",
+                   "--project-id", args.project_id]
     else:
-        print("Hello from fast-volleyball-tracking-inference!")
-        print("Use --mode to specify the processing mode")
-        print("Available modes: track, pose, analyze")
-        
-    return 0
+        parser.error("--mode pose is not implemented: the legacy pose detector "
+                     "does not supply player detections. Use Studio's RAVEL "
+                     "player tracking instead.")
+
+    # Unknown mode-specific switches are forwarded to the real parser, which
+    # validates them instead of silently ignoring unsupported settings.
+    command.extend(extra)
+    return subprocess.run(command, cwd=ROOT, check=False).returncode
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    raise SystemExit(main())

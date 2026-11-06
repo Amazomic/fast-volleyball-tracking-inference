@@ -1339,7 +1339,9 @@ def main():
     parser.add_argument("--port", type=int, default=8765)
     args = parser.parse_args()
     if args.host not in ("127.0.0.1", "localhost"):
-        parser.error("Для безопасности UI доступен только локально")
+        if args.host != "0.0.0.0" or os.environ.get("VOLLEY_UI_ALLOW_REMOTE") != "1":
+            parser.error("Для безопасности UI доступен только локально; "
+                         "для Docker требуется VOLLEY_UI_ALLOW_REMOTE=1")
     RESULTS.mkdir(parents=True, exist_ok=True)
     try:
         server = ThreadingHTTPServer((args.host, args.port), Handler)
