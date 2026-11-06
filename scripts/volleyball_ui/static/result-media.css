@@ -18,14 +18,14 @@
   .result-player-clock{font-size:10px}
 }
 .result-media-panel{
-  padding:clamp(16px,1.9vw,26px);
+  padding:clamp(12px,1.4vw,19px);
   margin:0 0 20px;
   min-width:0;
 }
 .result-media-panel .result-video-layout{
   display:grid;
-  grid-template-columns:minmax(0,1fr) 304px;
-  gap:18px;
+  grid-template-columns:minmax(0,1fr) 288px;
+  gap:13px;
   align-items:stretch;
   margin:0;
 }
@@ -46,9 +46,9 @@
 .result-media-panel .result-video-main .result-player-wrap{
   flex:0 0 auto;
   width:100%;
-  height:clamp(380px,62vh,680px);
-  min-height:380px;
-  max-height:680px;
+  height:clamp(340px,58vh,620px);
+  min-height:340px;
+  max-height:620px;
   aspect-ratio:auto;
   margin:0;
   background:radial-gradient(ellipse at center,#192a27 0%,#14211f 65%,#101d1a 100%);
@@ -70,7 +70,7 @@
   height:0;
   min-height:100%;
   max-height:none;
-  padding:0 0 0 18px;
+  padding:0 0 0 13px;
   background:transparent;
   border:0;
   border-left:1px solid #314840;
@@ -81,14 +81,14 @@
 }
 .result-media-panel .result-rally-sidebar-head{
   flex:0 0 auto;
-  margin:0 0 12px;
-  min-height:45px;
+  margin:0 0 8px;
+  min-height:38px;
 }
 .result-rally-title{display:flex;justify-content:space-between;align-items:center;gap:8px}
 .result-rally-title h3{font-size:14px;margin:0}
 .result-rally-title .muted{font-size:11px;white-space:nowrap}
-.result-rally-sort-label{display:grid;gap:5px;margin-top:10px;font-size:11px;color:#9db9aa}
-#result-rally-sort{width:100%;min-width:0;padding:8px 9px;border-radius:7px;
+.result-rally-sort-label{display:grid;gap:4px;margin-top:7px;font-size:11px;color:#9db9aa}
+#result-rally-sort{width:100%;min-width:0;padding:6px 8px;border-radius:7px;
   border:1px solid #375447;background:#14261f;color:#e3f2e8;font:inherit;font-size:11px}
 .result-rally-item.active{box-shadow:inset 3px 0 var(--green)}
 .result-track-rally.active{background:#80c961;outline:1px solid #c3f2a4;z-index:1}
@@ -232,7 +232,7 @@
   flex-direction:column;
   min-height:0;
   max-height:none;
-  gap:8px;
+  gap:5px;
   overflow-y:auto;
   overflow-x:hidden;
 }
@@ -276,17 +276,17 @@
 }
 @media(max-width:1100px){
   .result-media-panel .result-video-layout{
-    grid-template-columns:minmax(0,1fr) 266px;
+    grid-template-columns:minmax(0,1fr) 255px;
   }
 }
 @media(max-width:780px){
   .result-media-panel .result-video-layout{
     grid-template-columns:minmax(0,1fr);
-    gap:14px;
+    gap:11px;
   }
   .result-media-panel .result-video-main .result-player-wrap{
-    height:clamp(300px,52vh,550px);
-    min-height:300px;
+    height:clamp(280px,50vh,520px);
+    min-height:280px;
   }
   .result-media-panel .result-rally-sidebar{
     height:auto;
@@ -710,14 +710,14 @@
 .raw-touch-mode .result-media-panel .result-video-layout{grid-template-columns:minmax(0,1fr)}
 
 /* Individual manual-montage selection beside each preview rally, not video. */
-.result-rally-entry{display:flex;align-items:stretch;gap:7px;min-width:0}
+.result-rally-entry{display:flex;align-items:stretch;gap:5px;min-width:0}
 .result-media-panel .result-rallies-panel .result-rally-entry .result-rally-item{
   flex:1 1 auto;min-width:0;width:auto;
 }
 .result-rally-entry.is-selected .result-rally-item{border-color:#628f65}
 .result-rally-montage{
   display:flex;flex:0 0 auto;flex-direction:column;align-items:center;justify-content:center;
-  gap:4px;padding:5px 7px;border:1px solid #365b42;border-radius:7px;
+  gap:3px;padding:4px 6px;border:1px solid #365b42;border-radius:7px;
   background:#14291e;color:#b1d7b4;font-size:9px;cursor:pointer;user-select:none;
 }
 .result-rally-montage input{width:17px;height:17px;min-height:17px;margin:0;accent-color:#9fef56}
@@ -819,8 +819,27 @@
   font-variant-numeric:tabular-nums;
 }
 
-.result-rally-person{display:flex;align-items:center;gap:8px;margin-top:7px;text-align:left}
-.result-rally-person img{width:30px;height:42px;object-fit:cover;border-radius:5px;background:var(--border)}
+.result-rally-person{display:flex;align-items:center;gap:8px;margin-top:4px;text-align:left}
+.result-rally-person img{width:25px;height:34px;object-fit:cover;border-radius:5px;background:var(--border)}
 .result-rally-person>span{min-width:0}
 .result-rally-person b{font-size:10px}
 .result-rally-person small{display:block;overflow-wrap:anywhere}
+
+/* Compact preview cards: keep every rally action accessible without crowding video. */
+.result-media-panel .result-rallies-panel .result-rally-entry .result-rally-item{
+  gap:6px;
+  padding:7px 8px;
+  border-radius:7px;
+  line-height:1.3;
+}
+.result-rallies-panel .result-rally-number{min-width:34px;font-size:10px}
+.result-rallies-panel .result-rally-details b{font-size:10px;line-height:1.3}
+.result-rallies-panel .result-rally-details small{margin-top:2px;font-size:10px;line-height:1.3}
+.result-rallies-panel .result-rally-play{font-size:11px}
+.result-rally-entry .result-rally-person{gap:5px}
+.result-rally-entry .result-rally-person b{font-size:10px}
+.result-rally-entry .result-rally-montage{min-width:43px}
+.result-rally-entry .result-rally-montage input{width:16px;height:16px;min-height:16px}
+@media(max-width:780px){
+  .result-media-panel .result-rally-sidebar{max-height:300px}
+}
