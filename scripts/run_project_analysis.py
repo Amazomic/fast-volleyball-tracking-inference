@@ -67,7 +67,8 @@ def main():
     output.mkdir(parents=True, exist_ok=True)
     total=len(videos)
     from scripts.volleyball_studio.analysis_stages import STAGES
-    stage_names=STAGES
+    # Primary analysis saves only neural outputs. CPU versions are independent.
+    stage_names=STAGES[:3]
     total_steps=total*len(stage_names)
     completed_steps=0
     started=time.monotonic()
@@ -75,12 +76,14 @@ def main():
     summary={"project_id":args.project_id,"profile_id":args.profile_id,
              "profile_name":args.profile_name,
              # Snapshot actual options, independent of future global profile edits.
-             "settings":{key:value for key,value in vars(args).items()
+             "settings":{**{key:value for key,value in vars(args).items()
                          if key not in ("profile_id","profile_name")},
+                         "inference_only":True},
              "started_at":started_at,
              "log_name":os.environ.get("VOLLEY_JOB_LOG_NAME"),
              "videos_total":total,"stages_per_video":len(stage_names),
-             "stage_names":list(stage_names),"videos":[],"status":"running"}
+             "stage_names":list(stage_names),"videos":[],"status":"running",
+             "result_kind":"neural_inference","inference_only":True}
     history_dir=project_run_root(args.project_id)/"analysis_timings"
     history_dir.mkdir(parents=True,exist_ok=True)
     run_id=datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_%f")
@@ -134,7 +137,7 @@ def main():
                 ". Дождитесь готовности кэша проекта.")
         cmd=[sys.executable,"-m","scripts.volleyball_studio",
               "--input",str(source),"--output",str(output),
-             "--work",str(work),"--analyze-only",
+             "--work",str(work),"--analyze-only","--inference-only",
              "--non-interactive","--backend",args.backend,
              "--ball-model",args.ball_model,
              "--ball-threshold",str(args.ball_threshold),
@@ -160,6 +163,9 @@ def main():
         if args.beach:
             cmd.append("--beach")
         current={"video":source.name,"video_index":idx,"status":"running",
+                 # Immutable segment snapshot. Later project range edits must
+                 # not relabel this original inference branch.
+                 "range_start": seg_start, "range_end": seg_end,
                  "stages":[],"started_at":datetime.now(timezone.utc).isoformat()}
         summary["videos"].append(current)
         write_summary()
@@ -230,21 +236,80 @@ def main():
                 actual = Path(item["cache"]).resolve()
                 if (Path(item.get("source", "")).resolve() == source.resolve()
                         and actual.parent == work.resolve()
-                        and (actual / "analysis/events.json").is_file()):
+                        and (actual / "inference.manifest.json").is_file()
+                        and (actual / "players.json").is_file()):
                     current["cache_id"] = actual.name
                     break
             except (OSError, ValueError, KeyError, TypeError):
                 continue
         if not current.get("cache_id"):
             raise RuntimeError("Не удалось сохранить ссылку на результаты анализа " + source.name)
+        if args.player_identity_mode == "amateur":
+            # Reuse immutable RAVEL outputs. CPU ReID is tied to the same
+            # inference cache, never included in the neural cache signature.
+            from scripts.volleyball_ui.player_identity_groups import (
+                configure_identity, overview)
+            import time as _identity_time
+            configure_identity(args.project_id, source.name, current["cache_id"],
+                mode="amateur",
+                threshold_percent=args.player_reid_threshold_percent,
+                auto_assign_threshold_percent=args.player_auto_assign_threshold_percent,
+                auto_assign_enabled=args.player_auto_assign,
+                session_gap_sec=args.player_session_gap_sec)
+            current["identity_status"] = "running"
+            write_summary()
+            while True:
+                identity = overview(args.project_id, source.name, current["cache_id"])
+                if identity["status"] != "running":
+                    break
+                print(json.dumps({"event":"UI_PROGRESS","kind":"analyze",
+                    "stage":"CPU ReID · связь игроков между розыгрышами",
+                    "phase":"running", "overall_percent":99.0,
+                    "stage_percent":identity.get("progress",0),
+                    "elapsed_sec":round(time.monotonic()-started,1),
+                    "profile_name":args.profile_name},ensure_ascii=False),flush=True)
+                _identity_time.sleep(.4)
+            current["identity_status"] = identity["status"]
+            current["identity_groups"] = len(identity.get("groups",[]))
+            current["identity_auto_linked_ids"] = sum(len(x)
+                for x in identity.get("auto_links",{}).values())
+            if identity["status"] == "error":
+                current["identity_error"] = identity.get("error","Не удалось сопоставить игроков")
+                print("CPU REID WARNING: "+current["identity_error"],flush=True)
         current.update(status="complete",duration_sec=round(
             sum(stage["duration_sec"] for stage in current["stages"]),2))
         write_summary()
         print(f"PROJECT ANALYSIS COMPLETE {idx}/{total}: {source.name}",flush=True)
       summary["status"]="complete"
-      summary["finished_at"]=datetime.now(timezone.utc).isoformat()
+      summary["gpu_finished_at"]=datetime.now(timezone.utc).isoformat()
+      summary["finished_at"]=summary["gpu_finished_at"]
       summary["duration_sec"]=round(time.monotonic()-started,2)
       write_summary()
+      # GPU inference is finished and immutable. Create the recommended
+      # interpretation as an independent, versioned CPU replay. This can be
+      # tuned repeatedly later without rerunning either neural network.
+      if args.player_identity_mode == "amateur" and args.player_model == "RAVEL-VB-013-9f":
+          try:
+              from scripts.run_project_reprocess import process_project
+              print(json.dumps({"event":"UI_PROGRESS","kind":"reprocess",
+                  "stage":"Рекомендуемая CPU-интерпретация · касания и игроки",
+                  "phase":"running","overall_percent":0,
+                  "profile_name":args.profile_name},ensure_ascii=False),flush=True)
+              cpu = process_project(args.project_id,"run_"+run_id,
+                  mode="combined",touch_threshold=.45,
+                  player_threshold=.30,track_player_threshold=.30,
+                  touch_min_interval_sec=.35,
+                  touch_max_reach_ratio=.35,
+                  beach=args.beach)
+              summary["default_cpu_status"]="complete"
+              summary["default_cpu_versions"]=cpu["videos"]
+              print("DEFAULT CPU INTERPRETATION COMPLETE",flush=True)
+          except Exception as cpu_error:
+              summary["default_cpu_status"]="error"
+              summary["default_cpu_error"]=str(cpu_error)
+              print("DEFAULT CPU INTERPRETATION WARNING: "+str(cpu_error),flush=True)
+          finally:
+              write_summary()
       print(json.dumps({"event":"UI_PROGRESS","kind":"analyze",
                         "stage":"Все видео обработаны","phase":"complete",
                         "overall_percent":100,"stage_percent":100,

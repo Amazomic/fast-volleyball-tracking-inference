@@ -54,7 +54,8 @@ def profile_schema() -> dict:
 
 
 # Built-in presets are global too; their definitions are bundled with the UI.
-BUILTIN_PROFILES = {"accuracy": "Точность", "speed": "Скорость", "new": "Новый"}
+BUILTIN_PROFILES = {"accuracy": "Точность", "speed": "Скорость",
+                    "new": "Новый", "amateur": "Любительский матч · ReID"}
 
 
 def resolve_profile_reference(profile_id, profile_name):

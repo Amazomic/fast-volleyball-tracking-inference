@@ -67,3 +67,25 @@
     font-size:11px;
   }
 }
+
+/* One document-level tooltip avoids clipping in fixed-height/scrollable tabs. */
+.settings-tooltips-floating .setting-help-label::after{display:none}
+.settings-tooltip-portal{
+  position:fixed;
+  z-index:100000;
+  width:min(350px,calc(100vw - 24px));
+  max-height:min(320px,70vh);
+  overflow:auto;
+  padding:12px 14px;
+  box-sizing:border-box;
+  border:1px solid #5c9679;
+  border-radius:9px;
+  background:#10241c;
+  color:#e6f8eb;
+  box-shadow:0 10px 25px #000b;
+  font:500 12px/1.55 system-ui,sans-serif;
+  white-space:pre-line;
+  overflow-wrap:break-word;
+  pointer-events:none;
+}
+.settings-tooltip-portal[hidden]{display:none}

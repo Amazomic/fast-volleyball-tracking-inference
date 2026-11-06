@@ -41,6 +41,12 @@ class DependencyTreeTests(unittest.TestCase):
                 "duration_sec": 8, "width": 320, "height": 180, "auto_width": 320})
             stub.start()
             self.addCleanup(stub.stop)
+        # Fixtures intentionally contain synthetic MP4 bytes, not a decodable
+        # stream. Do not invoke the real ffprobe readiness check in this test.
+        ready_check = patch("scripts.volleyball_ui.prepared_videos.is_analysis_ready",
+                            return_value=False)
+        ready_check.start()
+        self.addCleanup(ready_check.stop)
         self.p1 = projects.create_project("First", ["match.mp4"])["id"]
         self.p2 = projects.create_project("Second", ["match (2).mp4"])["id"]
 
@@ -141,6 +147,7 @@ class DependencyTreeTests(unittest.TestCase):
             (cache / "analysis" / "events.json").write_text(json.dumps({
                 "source": str(self.original),
                 "events": [{"type": "attack", "frame": n * 8}]}), encoding="utf-8")
+            (cache / "analysis" / "game-tracks.json").write_text("[]", encoding="utf-8")
             name = f"20261102_12000{n}_000001"
             (history / (name + ".json")).write_text(json.dumps({
                 "status": "complete", "profile_name": "Одинаковый профиль",

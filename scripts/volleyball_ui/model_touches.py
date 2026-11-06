@@ -73,6 +73,9 @@ def touch_predictions(project_id: str, video: str, cache_id: str | None,
         raise ValueError("Invalid RAVEL Touch query")
     cache = cache_for(video, project_id, cache_id)
     path = (cache / "players.json") if cache else None
+    if cache and (cache / "players.touch-preview.json").is_file():
+        # A replay may expose valid model Touch below the original decoder floor.
+        path = cache / "players.touch-preview.json"
     if not path or not path.is_file():
         return {"available": False, "reason": "missing"}
     stat = path.stat()

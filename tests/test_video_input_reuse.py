@@ -95,6 +95,50 @@ class VideoInputReuseTests(unittest.TestCase):
                 self.assertEqual(result,"created" if name=="profile_a" else "reused")
         self.assertEqual(len(calls),1)
 
+    def test_long_clip_with_low_disk_is_blocked_before_ffmpeg(self):
+        from types import SimpleNamespace
+        long_probe = {"format": {"duration": "3064.88"},
+                      "streams": [{"codec_type": "video", "width": 1080}]}
+        # Sparse file: simulate a large prepared video without allocating GBs.
+        with self.prepared.open("r+b") as stream:
+            stream.truncate(1366415538)
+        output = self.folder / "analysis" / "very_long_run" / "analysis.mp4"
+        with (patch("scripts.volleyball_studio.video_inputs.shutil.disk_usage",
+                    return_value=SimpleNamespace(free=2*2**30)),
+              patch("scripts.volleyball_studio.common.probe",
+                    return_value=long_probe),
+              patch("scripts.volleyball_studio.video_inputs.run") as ffmpeg):
+            with self.assertRaisesRegex(RuntimeError,
+                                        "Недостаточно места.*30–90 секунд"):
+                prepare_proxy(source=self.original,prepared=self.prepared,
+                              proxy=output,start=114.788,seconds=None,
+                              width=1080,threads=32)
+            ffmpeg.assert_not_called()
+        self.assertFalse(output.is_file())
+        self.assertEqual(list(self.prepared.parent.glob("segments/*.part.mp4")),[])
+
+    def test_short_clip_still_runs_with_same_low_disk(self):
+        from types import SimpleNamespace
+        long_probe = {"format": {"duration": "3064.88"},
+                      "streams": [{"codec_type": "video", "width": 1080}]}
+        with self.prepared.open("r+b") as stream:
+            stream.truncate(1366415538)
+        output = self.folder / "analysis" / "short_run" / "analysis.mp4"
+        def create_segment(cmd, _log):
+            Path(cmd[-1]).write_bytes(b"short clip")
+        with (patch("scripts.volleyball_studio.video_inputs.shutil.disk_usage",
+                    return_value=SimpleNamespace(free=2*2**30)),
+              patch("scripts.volleyball_studio.common.probe",
+                    return_value=long_probe),
+              patch("scripts.volleyball_studio.video_inputs.run",
+                    side_effect=create_segment) as ffmpeg):
+            self.assertEqual(
+                prepare_proxy(source=self.original,prepared=self.prepared,
+                              proxy=output,start=114.788,seconds=60,
+                              width=1080,threads=32),"created")
+            ffmpeg.assert_called_once()
+        self.assertEqual(output.read_bytes(),b"short clip")
+
     def test_changed_clip_or_video_source_invalidates_cache(self):
         calls=[]
         def fake_encode(args, log):

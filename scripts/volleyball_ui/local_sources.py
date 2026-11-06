@@ -14,6 +14,7 @@ import re
 import subprocess
 import sys
 import threading
+import time
 import uuid
 from urllib.parse import urlsplit, unquote
 from pathlib import Path
@@ -23,6 +24,9 @@ from . import data
 VIDEO_TYPES = {".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v", ".mts"}
 _LOCK = threading.RLock()
 _PICKERS: dict[str, dict] = {}
+# Abandoned browser dialogs must not block new file selection indefinitely.
+_PICKER_IDLE_SEC = 15
+_PICKER_MAX_SEC = 180
 
 _PICKER_SCRIPT = r"""
 Add-Type -AssemblyName System.Windows.Forms
@@ -110,7 +114,8 @@ def register_paths(paths: list[str]) -> list[dict]:
     return output
 
 
-def _open_windows_picker(kind: str = "video") -> list[str]:
+def _open_windows_picker(kind: str = "video", *,
+                         cancel_event: threading.Event | None = None) -> list[str]:
     if not sys.platform.startswith("linux"):
         raise ValueError("Автоматический проводник доступен при запуске Volley Studio в WSL")
     windows_powershell = Path("/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe")
@@ -143,14 +148,43 @@ def _open_windows_picker(kind: str = "video") -> list[str]:
             script = script.replace("Select volleyball source videos",
                                     "Select music for volleyball montage", 1)
         encoded = base64.b64encode(script.encode("utf-16le")).decode("ascii")
-        completed = subprocess.run(
-            [str(windows_powershell), "-NoProfile", "-STA", "-NonInteractive",
-             "-EncodedCommand", encoded],
-            capture_output=True, timeout=600, check=True)
-        lines = completed.stdout.decode("ascii", errors="replace").splitlines()
+        command = [str(windows_powershell), "-NoProfile", "-STA",
+                   "-NonInteractive", "-EncodedCommand", encoded]
+        if cancel_event is None:
+            # Keep direct calls mockable, e.g. isolated picker integration tests.
+            output_bytes = subprocess.run(
+                command, capture_output=True, timeout=_PICKER_MAX_SEC,
+                check=True).stdout
+        else:
+            # A separate process can be cancelled when the page is closed,
+            # reloaded or stops polling. Never kill unrelated Windows windows.
+            process = subprocess.Popen(command, stdout=subprocess.PIPE,
+                                       stderr=subprocess.PIPE)
+            started = time.monotonic()
+            try:
+                while process.poll() is None:
+                    if cancel_event.is_set():
+                        raise ValueError("Выбор файлов отменён")
+                    if time.monotonic() - started > _PICKER_MAX_SEC:
+                        raise ValueError("Проводник не ответил. Выберите файлы повторно.")
+                    cancel_event.wait(.25)
+                output_bytes, stderr = process.communicate(timeout=5)
+                if process.returncode:
+                    raise RuntimeError("Проводник завершился с ошибкой: " +
+                                       stderr.decode("utf-8", errors="replace")[-200:])
+            finally:
+                if process.poll() is None:
+                    process.kill()
+                    process.communicate(timeout=5)
+        lines = output_bytes.decode("ascii", errors="replace").splitlines()
         result = json.loads(base64.b64decode(lines[-1]).decode("utf-8")) if lines else []
-    except (OSError, ValueError, IndexError, subprocess.SubprocessError) as exc:
-        raise ValueError("Проводник Windows недоступен. Вставьте полные пути к файлам вручную.") from exc
+    except ValueError as exc:
+        if str(exc) in ("Выбор файлов отменён",
+                        "Проводник не ответил. Выберите файлы повторно."):
+            raise
+        raise ValueError("Проводник Windows недоступен. Попробуйте открыть его повторно.") from exc
+    except (OSError, IndexError, subprocess.SubprocessError) as exc:
+        raise ValueError("Проводник Windows недоступен. Попробуйте открыть его повторно.") from exc
     if isinstance(result, str):
         result = [result]
     if not isinstance(result, list):
@@ -162,19 +196,34 @@ def begin_picker(kind: str = "video") -> dict:
     if kind not in ("video", "audio"):
         raise ValueError("Недопустимый тип файлов для проводника")
     token = uuid.uuid4().hex
+    now = time.monotonic()
     with _LOCK:
-        if sum(item["status"] == "pending" for item in _PICKERS.values()) >= 1:
-            raise ValueError("Проводник уже открыт. Завершите текущий выбор файлов.")
-        _PICKERS[token] = {"status": "pending", "paths": [], "error": ""}
+        for old_token, old in list(_PICKERS.items()):
+            if old["status"] == "pending":
+                expired = (now - old["created"] >= _PICKER_MAX_SEC or
+                           now - old["last_poll"] >= _PICKER_IDLE_SEC)
+                if expired:
+                    old["cancel_event"].set()
+                    old.update(status="cancelled", paths=[],
+                               error="Предыдущий выбор файлов больше не активен")
+                else:
+                    raise ValueError("Проводник уже открыт. Завершите текущий выбор файлов.")
+            if old["status"] != "pending" and now - old["created"] > 600:
+                _PICKERS.pop(old_token, None)
+        event = threading.Event()
+        _PICKERS[token] = {"status": "pending", "paths": [], "error": "",
+                           "created": now, "last_poll": now,
+                           "cancel_event": event}
     def worker():
         try:
-            paths = (_open_windows_picker() if kind == "video"
-                     else _open_windows_picker(kind=kind))
+            paths = _open_windows_picker(kind, cancel_event=event)
             outcome = {"status": "done", "paths": paths, "error": ""}
         except Exception as error:
             outcome = {"status": "error", "paths": [], "error": str(error)}
         with _LOCK:
-            _PICKERS[token] = outcome
+            # A retired worker must not overwrite a cancellation/new picker.
+            if token in _PICKERS and not event.is_set():
+                _PICKERS[token].update(outcome)
     threading.Thread(target=worker, daemon=True, name="volley-source-picker").start()
     return {"picker_id": token}
 
@@ -186,4 +235,16 @@ def picker_status(token: str) -> dict:
         result = _PICKERS.get(token)
         if result is None:
             raise ValueError("Выбор файлов не найден")
-        return dict(result)
+        result["last_poll"] = time.monotonic()
+        return {key: result[key] for key in ("status", "paths", "error")}
+
+
+def cancel_picker(token: str) -> dict:
+    if not isinstance(token, str) or not re.fullmatch(r"[a-f0-9]{32}", token):
+        raise ValueError("Недопустимый идентификатор проводника")
+    with _LOCK:
+        entry = _PICKERS.get(token)
+        if entry is not None and entry["status"] == "pending":
+            entry["cancel_event"].set()
+            entry.update(status="cancelled", paths=[], error="Выбор файлов отменён")
+    return {"cancelled": True}

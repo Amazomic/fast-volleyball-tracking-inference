@@ -7,7 +7,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class ResultTimelineAndLocalInference(unittest.TestCase):
-    def test_results_timeline_spans_both_video_and_sidebar(self):
+    def test_results_timeline_is_directly_below_video_only(self):
         html = (ROOT / "scripts/volleyball_ui/static/index.html").read_text(encoding="utf-8")
         results = html.split('<section id="view-analysis-results"', 1)[1].split(
             '<section id="view-players"', 1)[0]
@@ -15,22 +15,38 @@ class ResultTimelineAndLocalInference(unittest.TestCase):
         self.assertEqual(results.count('id="result-rally-track"'), 1)
         self.assertEqual(results.count('id="result-timeline-ticks"'), 1)
         self.assertEqual(results.count('class="panel result-media-panel"'), 1)
-        self.assertEqual(results.count('id="result-source-list"'), 1)
+        self.assertNotIn('id="result-source-list"', results)
+        self.assertNotIn('id="result-source-select"', results)
+        self.assertNotIn('class="result-project-sources"', results)
+        self.assertIn('id="chain-inference"', html)
+        self.assertNotIn('id="chain-video"', html)
         self.assertEqual(results.count('id="result-rally-list"'), 1)
-        self.assertLess(results.index('id="result-source-list"'), results.index('class="result-video-layout"'))
         self.assertLess(results.index('class="result-video-layout"'), results.index('id="result-rally-list"'))
         self.assertIn('class="result-rally-sidebar result-rallies-panel"', results)
-        self.assertLess(results.index('          </aside>'), results.index('class="result-timeline"'))
-        self.assertLess(results.index('id="result-rally-list"'), results.index('class="result-timeline"'))
         self.assertNotIn('class="panel result-rallies-panel"', results)
-        self.assertLess(results.index('class="analysis-video-divider"'), results.index('class="result-timeline"'))
+        self.assertNotIn('class="analysis-video-divider"', results)
+        self.assertRegex(
+            results,
+            r'(?s)id="result-playback-mode".*?</button>\s*</div>\s*<div class="result-timeline">',
+            "Timeline should be immediately after the video player wrapper")
+        self.assertLess(results.index('id="result-video-player"'),
+                        results.index('class="result-timeline"'))
+        self.assertLess(results.index('class="result-timeline"'),
+                        results.index('class="result-rally-sidebar result-rallies-panel"'))
+        self.assertLess(results.index('id="result-rally-track"'),
+                        results.index('id="result-timeline-ticks"'))
+        self.assertLess(results.index('id="result-timeline-ticks"'),
+                        results.index('id="result-rally-settings"'))
+        self.assertLess(results.index('class="result-rally-sidebar result-rallies-panel"'),
+                        results.index('class="result-cpu-tools"'))
         css = (ROOT / "scripts/volleyball_ui/static/result-media.css").read_text(encoding="utf-8")
-        self.assertIn(".result-media-panel .result-timeline{", css)
-        rule = css.split(".result-media-panel .result-timeline{", 1)[1].split("}", 1)[0]
+        self.assertIn(".result-media-panel .result-video-main > .result-timeline{", css)
+        rule = css.split(".result-media-panel .result-video-main > .result-timeline{", 1)[1].split("}", 1)[0]
         self.assertRegex(rule, r"width:\s*100%")
+        self.assertIn("margin:10px 0 0;", rule)
+        self.assertIn("flex:0 0 auto;", rule)
+        self.assertNotIn(".result-video-layout > .result-timeline", css)
         self.assertIn(".result-media-panel .result-rally-sidebar", css)
-        self.assertIn(".result-source-list", css)
-        self.assertIn("flex-direction:row;", css)
         self.assertIn(".result-media-panel .result-rallies-panel .result-rally-list", css)
 
     def test_rally_sidebar_reaches_video_bottom_without_status_strip(self):
@@ -58,7 +74,7 @@ class ResultTimelineAndLocalInference(unittest.TestCase):
         html = (static / "index.html").read_text(encoding="utf-8")
         app = (static / "app.js").read_text(encoding="utf-8")
         results = (static / "results-ui.js").read_text(encoding="utf-8")
-        self.assertIn("<h3>Видео проекта</h3>", html)
+        self.assertNotIn("<h3>Видео проекта</h3>", html)
         self.assertIn("<h3>Найденные розыгрыши</h3>", html)
         self.assertNotIn("???", html)
         self.assertNotIn("???", app)

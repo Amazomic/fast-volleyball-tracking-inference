@@ -545,7 +545,7 @@
 }
 .analysis-stage-navigation{
   display:grid;
-  grid-template-columns:repeat(5,minmax(0,1fr));
+  grid-template-columns:repeat(4,minmax(0,1fr));
   gap:8px;
   width:100%;
   min-width:0;
@@ -586,7 +586,7 @@
 }
 @media(max-width:900px){
   .analysis-stage-navigation{
-    grid-template-columns:repeat(5,minmax(145px,1fr));
+    grid-template-columns:repeat(4,minmax(145px,1fr));
     overflow-x:auto;
     padding-bottom:4px;
   }

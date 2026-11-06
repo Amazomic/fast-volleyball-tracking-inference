@@ -46,7 +46,14 @@ def analyze(source, work, args):
     players_model = ROOT / ("models" if player_format=="onnx" else "ov") / (advanced["player_model"] + "." + player_format)
     if not players_model.is_file():
         raise FileNotFoundError(f"Модель игроков не найдена: {players_model}")
-    player_cfg = {k:v for k,v in advanced.items() if k.startswith("player_") and k != "player_output_video"}
+    # Identity policy runs after expensive neural inference. Never invalidate
+    # the GPU cache merely because ReID/auto-link thresholds changed.
+    identity_keys = {"player_identity_mode", "player_reid_threshold_percent",
+                     "player_auto_assign", "player_auto_assign_threshold_percent",
+                     "player_session_gap_sec"}
+    player_cfg = {k:v for k,v in advanced.items()
+                  if k.startswith("player_")
+                  and k not in identity_keys | {"player_output_video"}}
     track_cfg = {k:v for k,v in advanced.items() if k.startswith("track_")}
     court_in_results = ROOT / "results" / (source.stem + "_court.json")
     if getattr(args, "court_json", None):
@@ -59,10 +66,22 @@ def analyze(source, work, args):
         court = court_in_results if court_in_results.is_file() else source.with_name(source.stem + "_court.json")
     from .video_inputs import cached_source_identity
     source_id = cached_source_identity(source, getattr(args, "prepared_video", None))
-    code = {p.name: digest(p) for p in (ROOT / "src").glob("*.py")}
-    signature_parts = [ANALYSIS_INPUT_VERSION, source_id, args.analysis_seconds,
+    # Inference cache keys depend ONLY on neural decoding code. Touch
+    # heuristics, CPU tracking, video montage and rally classifiers must not
+    # invalidate an expensive inference artifact on code changes.
+    neural_sources = (
+        "inference_onnx_seq_gray_v2.py",
+        "inference_openvino_seq_gray_v2.py",
+        "inference_player_ball_openvino.py",
+        "inference_player_ball_onnx.py",
+        "predictions_io.py", "constants.py", "models.py",
+    )
+    code = {name: digest(ROOT / "src" / name)
+            for name in neural_sources if (ROOT / "src" / name).is_file()}
+    signature_parts = ["neural-source-scope-v2", ANALYSIS_INPUT_VERSION,
+                       source_id, args.analysis_seconds,
                        args.analysis_start, args.analysis_width, model.name, code,
-                       player_cfg, track_cfg]
+                       player_cfg, track_cfg if not getattr(args, "inference_only", False) else None]
     # Keep existing successful cache keys unchanged. Only a retry after an
     # interrupted run receives a new isolated content address.
     if getattr(args, "cache_salt", ""):
@@ -133,7 +152,7 @@ def analyze(source, work, args):
     cached(folder, "ball", ball_key, ball)
     stages.end()
     player_path = folder / "players.json"
-    player_key = key(["raw-ravel-players-v1", signature, identity(players_model), identity(players_model.with_suffix(".bin")) if players_model.suffix==".xml" else None, identity(players_model.with_suffix(".json")), player_cfg, advanced["player_output_video"], args.threads, gpu_config if advanced["player_backend"]=="onnx-cuda" else None])
+    player_key = key(["raw-ravel-players-v2", signature, identity(players_model), identity(players_model.with_suffix(".bin")) if players_model.suffix==".xml" else None, identity(players_model.with_suffix(".json")), player_cfg, advanced["player_output_video"], args.threads, gpu_config if advanced["player_backend"]=="onnx-cuda" else None])
 
     print(f"PLAYER DETECTOR: model={players_model.name}, backend={advanced['player_backend']}, device={advanced['player_device']}, gpu_device_id={gpu_config[0]}, gpu_memory_limit_mb={gpu_config[1]}, threads={args.threads}, frame_step={advanced['player_frame_step']}", flush=True)
     def players():
@@ -155,7 +174,14 @@ def analyze(source, work, args):
                "--stride", str(advanced["player_stride"]),
                "--frame-step", str(advanced["player_frame_step"]),
                "--warmup-runs", str(advanced["player_warmup_runs"]),
-               "--performance-hint", advanced["player_performance_hint"]]
+               "--performance-hint", advanced["player_performance_hint"],
+               "--touch-smooth", str(advanced["player_touch_smooth"]),
+               "--touch-min-gap", str(advanced["player_touch_min_gap"]),
+               "--touch-hold", str(advanced["player_touch_hold"]),
+               "--strip-seconds", str(advanced["player_strip_seconds"]),
+               "--reader", advanced["player_reader"],
+               "--decode-hwaccel", advanced["player_decode_hwaccel"],
+               "--decode-threads", str(advanced["player_decode_threads"])]
         cmd.append("--save-raw-players")
         if advanced["player_include_features"]:
             cmd.append("--include-features")
@@ -165,14 +191,41 @@ def analyze(source, work, args):
         run(cmd, folder / "players.log")
         raw_path = player_path.with_name("players.raw.jsonl")
         raw_meta = player_path.with_name("players.raw.json")
-        if not raw_path.is_file() or not raw_meta.is_file():
-            raise RuntimeError("RAVEL не сохранил сырые рамки игроков")
-        result = [player_path, raw_path, raw_meta]
+        raw_v2 = player_path.with_name("players.raw.v2.jsonl")
+        if not raw_path.is_file() or not raw_meta.is_file() or not raw_v2.is_file():
+            raise RuntimeError("RAVEL не сохранил полный кэш кандидатов для постобработки")
+        result = [player_path, raw_path, raw_v2, raw_meta]
         return result + [annotated] if advanced["player_output_video"] else result
 
     stages.begin(3)
     cached(folder, "players", player_key, players)
+    from .inference_cache import publish
+    publish(folder, source=source, source_id=source_id, model=model.name,
+            ball_threshold=args.ball_threshold, backend=args.backend,
+            analysis_offset_sec=args.analysis_start,
+            court_present=court.is_file(),
+            player_touch_smooth=advanced["player_touch_smooth"],
+            player_touch_min_gap=advanced["player_touch_min_gap"])
     stages.end()
+    if getattr(args, "inference_only", False):
+        if court.is_file():
+            annotation = json.loads(court.read_text(encoding="utf-8"))
+            old_w = annotation.get("frame_width", annotation.get("image_width"))
+            old_h = annotation.get("frame_height", annotation.get("image_height"))
+            if not old_w or not old_h:
+                raise ValueError("Разметка площадки должна содержать размеры изображения")
+            for point in annotation["keypoints"]:
+                if point.get("x") is not None:
+                    point["x"] *= width / old_w
+                if point.get("y") is not None:
+                    point["y"] *= height / old_h
+            annotation.update(frame_width=width, frame_height=height,
+                              image_width=width, image_height=height)
+            save(folder / "court.json", annotation)
+        print(json.dumps({"status": "inference_ready", "cache": str(folder),
+                          "manifest": str(folder / "inference.manifest.json")},
+                         ensure_ascii=False), flush=True)
+        return [], [], folder
     track_key = key([ball_key, player_key, identity(court) if court.exists() else None, track_cfg, args.beach])
 
     def tracks():
@@ -290,15 +343,48 @@ def analyze(source, work, args):
     warnings = [] if court.exists() else ["Нет разметки площадки: стороны, подачи и блоки не подтверждены; классификация эвристическая."]
     event_path = folder / "analysis/events.json"
     enriched_path = folder / "analysis/game-tracks.json"
-    event_key = key([track_key, digest(Path(__file__).with_name("events.py")), digest(Path(__file__))])
+    use_ravel_peaks = advanced["player_model"] == "RAVEL-VB-013-9f"
+    event_key = key([track_key, digest(Path(__file__).with_name("events.py")),
+                     digest(Path(__file__)),
+                     digest(Path(__file__).with_name("touch_peaks.py")),
+                     digest(Path(__file__).with_name("reprocess.py"))])
 
     def game_analysis():
         tracks = [json.loads(path.read_text()) for path in paths[1:]]
         detector = image_contact_detector(player_path, width, height) if not court.exists() else None
+        touch_peaks = []
+        if use_ravel_peaks:
+            from .reprocess import _proposal_records, _ravel_contacts, _merge_contacts
+            from .touch_peaks import select_touch_peaks, associate_touch_players
+            # Use the complete cached probability sequence; raw proposals do
+            # not have Track IDs until aligned with the tracked player boxes.
+            raw_touches, _ = _proposal_records(
+                folder, {"outputs": {"players.raw.v2.jsonl": True}}, width, height,
+                advanced["player_action_threshold"], advanced["player_ball_threshold"],
+                include_balls=False)
+            touch_peaks = associate_touch_players(select_touch_peaks(
+                raw_touches, advanced["player_action_threshold"],
+                advanced["player_touch_smooth"], advanced["player_touch_min_gap"]),
+                predictions)
         for track in tracks:
             if detector:
                 track["player_interaction"] = uncalibrated_contacts(track, detector)
+            if use_ravel_peaks:
+                classification = track.get("rally_classification") or {}
+                if (classification.get("is_rally") is True
+                        or classification.get("label") == "rally"):
+                    interaction = track.get("player_interaction") or {}
+                    neural = _ravel_contacts(
+                        track, [], advanced["player_action_threshold"],
+                        selected_peaks=touch_peaks)
+                    interaction["contacts"] = _merge_contacts(
+                        interaction.get("contacts", []), neural)
+                    track["player_interaction"] = interaction
         timeline = event_timeline(tracks, source, args.analysis_start, width, height, court.exists())
+        if use_ravel_peaks:
+            for event in timeline["events"]:
+                if (event.get("contact") or {}).get("origin") == "ravel_touch":
+                    event["status"] = "model_prediction"
         save(event_path, timeline)
         save(enriched_path, tracks)
         return [event_path, enriched_path]

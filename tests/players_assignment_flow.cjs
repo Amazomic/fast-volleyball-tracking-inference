@@ -53,8 +53,14 @@ async function main(){
   ].join("\n"),ctx);
   assert(element("#raw-players").innerHTML.includes("#101"));
   assert(element("#raw-players").innerHTML.includes("#102"));
-  assert(element("#named-list").innerHTML.includes("is-assign-target"));
-  assert(element("#named-list").innerHTML.includes("Привязать"));
+  assert(!element("#named-list").innerHTML.includes("is-assign-target"), "selection target is not implied");
+  assert(element("#named-list").innerHTML.includes("Выбрать как цель"));
+  assert(element("#raw-players").innerHTML.includes('data-track-link="101"'));
+  assert(html.includes('data-player-mode="view"'));
+  assert(html.includes('data-player-mode="auto"'));
+  assert(html.includes('data-player-mode="manual"'));
+  assert(html.includes('id="player-album-gallery"'));
+  assert(html.includes('id="save-selected-ids"'));
   vm.runInContext([
     'globalThis.saved=[];',
     'api=async function(endpoint,payload){',
@@ -78,7 +84,18 @@ async function main(){
   assert.equal(element("#raw-players").innerHTML.includes("#102"),false);
   assert.equal(vm.runInContext("state.selected.size",ctx),0);
   assert(element("#players-action-feedback").textContent.includes("2 ID привязано"));
-  console.log("PASS: horizontal roster, batch assignment, disappearance from unrecognized list");
+  vm.runInContext([
+    'state.report.raw=[',
+    '{player_track_id:101,candidate_group_id:"candidate-101",duration_sec:8,detected_frames:200},',
+    '{player_track_id:102,candidate_group_id:"candidate-101",duration_sec:6,detected_frames:180}',
+    '];',
+    'state.playerFilter="all";renderPlayers();'
+  ].join("\n"),ctx);
+  assert(element("#raw-players").innerHTML.includes('data-select-candidate="candidate-101"'));
+  assert(element("#raw-players").innerHTML.includes("Выбрать цепочку"));
+  assert.equal(vm.runInContext("state.selected.size",ctx),0,
+    "proposed continuity must not silently confirm player identity");
+  console.log("PASS: roster, manual assignment, provisional group selector without auto identity");
 }
 
 main().catch(error=>{console.error(error);process.exitCode=1});

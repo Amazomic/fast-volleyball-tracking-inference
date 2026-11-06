@@ -124,7 +124,7 @@ class BrowserVideoUploadTests(unittest.TestCase):
         html=(root/"scripts/volleyball_ui/static/index.html").read_text(encoding="utf8")
         app=(root/"scripts/volleyball_ui/static/app.js").read_text(encoding="utf8")
         server_code=(root/"scripts/volleyball_ui/server.py").read_text(encoding="utf8")
-        self.assertNotIn('id="project-video-file-input"',html)
+        self.assertIn('id="project-video-file-input"',html)
         self.assertNotIn('id="project-local-paths"',html)
         self.assertNotIn('id="project-add-paths"',html)
         self.assertIn('id="project-video-dropzone"',html)

@@ -68,6 +68,21 @@ class PreparedVideoTests(unittest.TestCase):
         self.assertEqual(prepared_videos.status(project_id)["ready"],1)
         self.assertTrue(self.source.exists())
 
+    def test_ready_h264_source_skips_project_preparation(self):
+        source = data.PROJECT / "already_ready.mp4"
+        subprocess.run(["ffmpeg", "-y", "-v", "error", "-f", "lavfi",
+                        "-i", "testsrc2=size=640x360:rate=30", "-t", "1",
+                        "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                        str(source)], check=True, timeout=20)
+        project = projects.create_project("Already Ready", [source.name])
+        pid = project["id"]
+        state = prepared_videos.status(pid, auto_queue=True)
+        self.assertEqual(state["videos"][0]["state"], "ready")
+        self.assertEqual(state["videos"][0]["preparation"], "not_required")
+        self.assertEqual(prepared_videos.ready_path(pid, source.name), source.resolve())
+        _, _, cached, _, _ = prepared_videos._entry(pid, source.name)
+        self.assertFalse(cached.exists())
+
     def test_source_change_invalidates_cached_proxy(self):
         pid=self.project["id"]
         info=prepared_videos._entry(pid,"tiny.mp4")

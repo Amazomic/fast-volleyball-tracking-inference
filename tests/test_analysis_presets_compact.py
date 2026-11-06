@@ -57,9 +57,8 @@ class CompactAnalysisTests(unittest.TestCase):
         self.assertIn('id="analysis-timing-history"',html)
         for name in (
             "ball_model","ball_threshold","backend","analysis_width","threads",
-            "beach","player_model","player_hysteresis_frames",
-            "player_match_center_distance","track_max_distance",
-            "track_no_ball_fill",
+            "player_model","player_hysteresis_frames",
+            "player_match_center_distance","player_action_threshold",
         ):
             with self.subTest(name=name):
                 self.assertIn("analysis-technical-settings",p.inputs[name])
@@ -83,7 +82,8 @@ class CompactAnalysisTests(unittest.TestCase):
         self.assertNotIn('class="analysis-run-target"',form)
         self.assertNotIn('id="analysis-run-mode"',form)
         js=(STATIC/"app.js").read_text(encoding="utf-8")
-        self.assertIn('kind==="tracking"?"full-segment":"full-project"',js)
+        self.assertNotIn('kind==="tracking"?"full-segment":"full-project"',js)
+        self.assertNotIn('id="analysis-stage-tracking"',html)
         self.assertNotIn('scopeSelect.value',js)
         self.assertIn('grid-template-columns:minmax(0,1fr)',styles)
         self.assertIn('width:100%',styles)

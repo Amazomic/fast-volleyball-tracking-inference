@@ -74,6 +74,11 @@ def player_detection_capability(cache: Path) -> dict:
         obj = json.loads(meta.read_text(encoding="utf-8"))
         floor = float(obj["minimum_confidence"])
         baseline = float(obj["score_threshold"])
+        replay = cache / "postprocess.manifest.json"
+        if replay.is_file():
+            settings = json.loads(replay.read_text(encoding="utf-8")).get("settings") or {}
+            if settings.get("player_threshold") is not None:
+                baseline = float(settings["player_threshold"])
         if obj.get("format") != "ravel-raw-players-v1" or not 0 <= floor <= baseline <= 1:
             raise ValueError("raw RAVEL metadata")
     except (ValueError, TypeError, KeyError, OSError):
@@ -157,7 +162,8 @@ def player_boxes_window(project_id: str, video: str, start, length=6,
     cache=cache_for(video,project_id,cache_id) if cache_id else find_cache(video,project_id)
     if not cache or not (cache/"players.json").is_file():
         return {"available":False,"frames":[]}
-    file=cache/"players.json"
+    replay_file=cache/"players.replay.json"
+    file=replay_file if replay_file.is_file() else cache/"players.json"
     stat=file.stat()
     fps,width,height,keys,frames=_index(str(file),stat.st_mtime_ns,stat.st_size)
     lo=bisect_left(keys,math.floor(start*fps))

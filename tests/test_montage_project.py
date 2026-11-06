@@ -63,6 +63,7 @@ class MultiSourceMontageTests(unittest.TestCase):
             analysis = folder / "analysis"
             analysis.mkdir()
             (analysis / "game-tracks.json").write_text(json.dumps(game_tracks))
+            (analysis / "events.json").write_text(json.dumps({"events": []}))
             (folder / "ranking.json").write_text(json.dumps(ranking))
             self.cache[name] = folder
 
@@ -227,7 +228,8 @@ class MultiSourceMontageTests(unittest.TestCase):
         server = (root/"scripts/volleyball_ui/server.py").read_text(encoding="utf-8")
         self.assertIn('id="montage-plan-list"', html)
         self.assertIn('id="montage-plan-summary"', html)
-        self.assertIn('data-analysis-run-select aria-label="Выбрать профиль анализа для монтажа"', html)
+        self.assertIn('id="chain-postprocess"', html)
+        self.assertNotIn('data-analysis-run-select aria-label="Выбрать профиль анализа для монтажа"', html)
         self.assertIn('api("/api/montage/plan",params)', app)
         self.assertIn('run_id:selectedAnalysisRun()?.id', app)
         self.assertIn('"/api/montage/plan"', server)

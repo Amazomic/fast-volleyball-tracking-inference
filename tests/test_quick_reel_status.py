@@ -89,6 +89,57 @@ class QuickReelStatusApiTests(unittest.TestCase):
             self.assertEqual(response.read(),b"mock-mp4-content")
         self.assertFalse((self.project/"project.json").exists())
 
+    def test_history_and_archived_media_survive_a_new_run(self):
+        first=self.reel_id
+        output=self.project/"montage"/"highlights_reel.mp4"
+        output.parent.mkdir()
+        output.write_bytes(b"archived-mp4-content")
+        data.save_json(self.project/"result.json",{
+            "id":first,"video":"montage/highlights_reel.mp4",
+            "duration":16.5,"videos":["match.mp4"],
+        })
+        (self.project/"analysis"/"gpu_cache").mkdir(parents=True)
+        (self.project/"analysis"/"gpu_cache"/"scratch.bin").write_bytes(b"scratch")
+        second="b"*32
+        folder=quick_reel_jobs.quick_dir(second)
+        folder.mkdir()
+        data.save_json(folder/"request.json",{
+            "id":second,"created_at":1800000000,
+            "videos":[{"selection_id":"d"*32}],
+        })
+        quick_reel_jobs.publish_latest(second,str(self.root/"music.mp3"))
+        self.assertFalse(self.project.exists())
+        history=self.get("/api/quick-reel/history")["results"]
+        self.assertEqual(len(history),1)
+        self.assertEqual(history[0]["id"],first)
+        with urllib.request.urlopen(self.root_url+history[0]["url"]) as response:
+            self.assertEqual(response.read(),b"archived-mp4-content")
+        with urllib.request.urlopen(self.root_url+history[0]["download_url"]) as response:
+            self.assertEqual(response.read(),b"archived-mp4-content")
+        self.assertFalse((self.root/"quick_reels"/"completed"/first/"analysis").exists())
+
+    def test_delete_completed_reel_api_removes_only_archived_video(self):
+        output=self.project/"montage"/"highlights_reel.mp4"
+        output.parent.mkdir()
+        output.write_bytes(b"completed-video")
+        data.save_json(self.project/"result.json",{
+            "id":self.reel_id,"video":"montage/highlights_reel.mp4",
+            "duration":20,"videos":["match.mp4"]})
+        data.save_json(self.project/"status.json",{
+            **self.status,"status":"complete"})
+        self.assertEqual(len(self.get("/api/quick-reel/history")["results"]),1)
+        self.assertTrue((self.root/"quick_reels"/"completed"/
+                         (self.reel_id+".mp4")).exists())
+        payload=json.dumps({"id":self.reel_id}).encode()
+        request=urllib.request.Request(
+            self.root_url+"/api/quick-reel/delete",data=payload,
+            headers={"Content-Type":"application/json"},method="POST")
+        with urllib.request.urlopen(request,timeout=10) as reply:
+            self.assertEqual(json.loads(reply.read()),{"deleted":self.reel_id})
+        self.assertEqual(self.get("/api/quick-reel/history")["results"],[])
+        self.assertTrue((self.project/"request.json").is_file())
+        self.assertTrue((self.library/"match.mp4").is_file())
+
     def test_file_uris_resolve_to_original_not_new_copy(self):
         original=self.root/"source recording.mp4"
         soundtrack=self.root/"sound track.mp3"

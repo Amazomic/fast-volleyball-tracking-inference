@@ -8,7 +8,6 @@ STATIC = ROOT / "scripts" / "volleyball_ui" / "static"
 EXPECTED = {
     "analysis-stage-ball": "ball",
     "analysis-pipeline-advanced": "players",
-    "analysis-stage-tracking": "tracking",
     "analysis-stage-performance": "performance",
     "analysis-stage-outputs": "outputs",
 }
@@ -59,7 +58,7 @@ class AnalysisTypeTabsTests(unittest.TestCase):
         self.assertIn('aria-orientation="horizontal"', html)
         self.assertEqual(html.count('class="analysis-stage-content-panel"'), 1)
         self.assertIn('grid-template-areas:"profile" "editor"', css)
-        self.assertIn('grid-template-columns:repeat(5,minmax(0,1fr))', css)
+        self.assertIn('grid-template-columns:repeat(4,minmax(0,1fr))', css)
         self.assertIn('height:clamp(440px,58vh,640px)', css)
         self.assertIn('overflow-y:auto;', css)
         self.assertIn('settingsList.scrollTop=0', app)
@@ -67,11 +66,10 @@ class AnalysisTypeTabsTests(unittest.TestCase):
 
     def test_stage_routing_matches_supported_backend_modes(self):
         app = (STATIC / "app.js").read_text(encoding="utf-8")
-        self.assertIn('kind==="tracking"?"full-segment":"full-project"', app)
-        self.assertIn('["ball","players"].includes(kind)', app)
-        self.assertIn('await submitTask("/api/analysis-experiment",params,"analysis")', app)
+        self.assertNotIn('kind==="tracking"?"full-segment":"full-project"', app)
+        self.assertNotIn('await submitTask("/api/analysis-experiment",params,"analysis")', app)
         self.assertIn('await submitTask("/api/analyze",params,"analysis")', app)
-        self.assertIn('params.mode=scope==="full-segment"?"full":scope', app)
+        self.assertNotIn('id="analysis-tab-tracking"', (STATIC / "index.html").read_text(encoding="utf-8"))
         self.assertIn('function selectAnalysisStage(id)', app)
         self.assertIn('data-analysis-run', app)
         profiles = (STATIC / "analysis-presets.js").read_text(encoding="utf-8")

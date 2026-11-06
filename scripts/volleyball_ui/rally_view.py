@@ -34,7 +34,8 @@ def settings(gap=DEFAULT_GAP_SEC, minimum=DEFAULT_MIN_SEC, context=DEFAULT_CONTE
 def from_tracks(cache: Path, offset: float, fps: float, duration: float,
                 *, gap_sec=DEFAULT_GAP_SEC, min_sec=DEFAULT_MIN_SEC,
                 context_sec=DEFAULT_CONTEXT_SEC,
-                source_video: str | None = None) -> dict | None:
+                source_video: str | None = None,
+                project_id: str | None = None) -> dict | None:
     path = cache / "analysis" / "game-tracks.json"
     if not path.is_file():
         return None
@@ -56,8 +57,35 @@ def from_tracks(cache: Path, offset: float, fps: float, duration: float,
     from .rally_players import player_info
     occupancy=player_info(cache,[(g["detected_start_frame"],g["detected_end_frame"])
                                  for g in groups],fps=fps)
+    identity_by_track={}
+    if project_id and source_video:
+        from .data import groups_for, neural_cache_id
+        # Source and replay versions share one stable manual identity map.
+        base=cache.parent.parent if cache.parent.name=="postprocessing" else cache
+        for group in groups_for(source_video,project_id,base.name):
+            for track_id in group.get("track_ids",[]):
+                identity_by_track[str(track_id)]={
+                    "id":group["id"],"name":group["name"]}
+    continuity=read_json(cache / "player-continuity.json", {})
+    candidates=continuity.get("track_to_candidate",{}) if isinstance(continuity,dict) else {}
+    if not isinstance(candidates,dict):
+        candidates={}
     output=[]
     for row, players in zip(groups,occupancy):
+        verified={}
+        for tid in players.get("player_track_ids",[]):
+            person=identity_by_track.get(str(tid))
+            if person:
+                verified.setdefault(person["id"], {
+                    "id":person["id"],"name":person["name"],"track_ids":[]})
+                verified[person["id"]]["track_ids"].append(str(tid))
+        players={**players,
+                 "linked_player_ids":sorted(verified),
+                 "linked_players":list(verified.values()),
+                 "candidate_group_ids":sorted({candidates.get(str(t),
+                         "candidate-"+str(t)) for t in players.get("player_track_ids",[])}),
+                 "unlinked_track_ids":[str(t) for t in players.get("player_track_ids",[])
+                                       if str(t) not in identity_by_track]}
         a,b=row["detected_start_frame"],row["detected_end_frame"]
         start,end=row["source_start_frame"],row["source_end_frame"]
         output.append({

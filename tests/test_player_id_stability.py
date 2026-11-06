@@ -61,9 +61,12 @@ class PlayerIdStabilityTests(unittest.TestCase):
         tracker = self.tracker()
         old = next(p["track_id"] for p in tracker.update(0, [player("A", .25)])
                    if p["class_name"] == "player")
-        for frame in range(1, 25):
+        # Expiration follows the configured frame hold (60 by default).
+        # A historical 24-frame gap is no longer a genuine disappearance.
+        frame_after_expiry = validated({})["player_hysteresis_frames"] + 7
+        for frame in range(1, frame_after_expiry):
             tracker.update(frame, [])
-        new = next(p["track_id"] for p in tracker.update(25, [player("B", .25)])
+        new = next(p["track_id"] for p in tracker.update(frame_after_expiry, [player("B", .25)])
                    if p["class_name"] == "player")
         self.assertNotEqual(old, new)
 

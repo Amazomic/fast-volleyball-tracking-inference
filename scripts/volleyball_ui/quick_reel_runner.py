@@ -133,7 +133,10 @@ def execute(config: dict):
         row["progress"]=100
         row["prepared_reused"]=reused
         row["prepared_path"]=str(prepared_path)
-        update(1,index/n,detail=f"Подготовлено {index}/{n}: {row['video']}",force=True)
+        direct = prepared_path.resolve() == Path(source).resolve()
+        row["preparation"] = "not_required" if direct else "cached" if reused else "encoded"
+        label = "Без перекодирования" if direct else "Подготовлено"
+        update(1,index/n,detail=f"{label} {index}/{n}: {row['video']}",force=True)
     update(2,0)
     # Deliberately NO analysis cache lookup. Every independent reel reruns
     # VballNet, RAVEL, tracking, event classification and rally scoring.
@@ -159,11 +162,17 @@ def execute(config: dict):
         "default_analysis":True,
     }
     data.save_json(folder/"result.json",manifest)
+    from .quick_reel_jobs import archive_completed, archived_result_for
+    if not archive_completed(reel_id):
+        raise RuntimeError("Не удалось сохранить готовый MP4 в общий архив рилсов")
+    archived = archived_result_for(reel_id)
+    if archived is None:
+        raise RuntimeError("Готовый MP4 отсутствует в общем архиве рилсов")
     update(3,1)
     _STATUS.update(status="complete",stage="Рилс готов",progress=100,
-                   output=str(output),updated_at=time.time())
+                   output=str(archived[1]),updated_at=time.time())
     _save(force=True)
-    print("QUICK REEL COMPLETE:",output,flush=True)
+    print("QUICK REEL COMPLETE:",archived[1],flush=True)
 
 
 def _terminate(signum, _frame):

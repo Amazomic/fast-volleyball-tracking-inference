@@ -11,7 +11,7 @@ window.VolleyballModelTouches=(()=>{
       String(m%60).padStart(2,"0")+":"+s.toFixed(2).padStart(5,"0");
   };
   let context=null,summary=null,windowData=null,epoch=0,pending=null;
-  let mode="events",onChange=()=>{},lastFrame=-1;
+  let mode="events",touchVisible=true,onChange=()=>{},lastFrame=-1;
   const threshold=()=>Number(E("result-model-touch-threshold").value)||0.5;
   const active=()=>mode==="model";
 
@@ -28,8 +28,8 @@ window.VolleyballModelTouches=(()=>{
   }
   function visibility(){
     E("view-analysis-results").classList.toggle("raw-touch-mode",active());
-    E("result-model-touch-section").hidden=!active();
-    E("result-model-touch-controls").hidden=!active();
+    E("result-model-touch-section").hidden=!(active()&&touchVisible);
+    E("result-model-touch-controls").hidden=!(active()&&touchVisible);
     if(active()){
       E("result-overlay-ball").hidden=true;
       E("result-overlay-event").hidden=true;
@@ -85,7 +85,7 @@ window.VolleyballModelTouches=(()=>{
     histogram();
   }
   async function loadSummary(){
-    if(!active()||!context)return;
+    if(!active()||!touchVisible||!context)return;
     const token=++epoch;
     if(pending){pending.abort();pending=null}
     windowData=null;summary=null;
@@ -126,7 +126,7 @@ window.VolleyballModelTouches=(()=>{
       (events.length>shown.length?" · первые "+shown.length+" в списке":"");
   }
   async function loadWindow(time){
-    if(!active()||!context||!summary?.available)return;
+    if(!active()||!touchVisible||!context||!summary?.available)return;
     const start=Math.max(0,Math.floor(time/8)*8);
     if(windowData&&windowData.start===start)return;
     if(pending)return;
@@ -167,7 +167,7 @@ window.VolleyballModelTouches=(()=>{
       box.style.width=(100*(b[2]-b[0])/summary.width)+"%";
       box.style.height=(100*(b[3]-b[1])/summary.height)+"%";
       const tag=document.createElement("span");
-      tag.textContent="Touch "+Math.round(item.score*100)+"% · ID "+(item.player_id??"—");
+      tag.textContent="RAVEL Touch "+Math.round(item.score*100)+"% · ID "+(item.player_id??"—");
       box.append(tag);frag.append(box);
     }
     panel.replaceChildren(frag);
@@ -176,10 +176,25 @@ window.VolleyballModelTouches=(()=>{
       :"На этом кадре нет сохранённого Touch";
   }
   function update(time){
-    if(!active())return;
+    if(!active()||!touchVisible)return;
     drawAt(time);
     if(summary?.available&&(!windowData||time<windowData.start||
       time>=windowData.start+windowData.length-.1))loadWindow(time);
+  }
+  function setTouchVisible(value){
+    value=Boolean(value);
+    if(touchVisible===value)return;
+    touchVisible=value;
+    if(!touchVisible){
+      // A late response from a previous RAVEL selection must not draw Touch
+      // boxes over the VballNet-only view.
+      epoch++;
+      if(pending){pending.abort();pending=null}
+      windowData=null;summary=null;lastFrame=-1;
+      E("result-model-touch-boxes").replaceChildren();
+    }
+    visibility();
+    if(touchVisible&&active()&&context)loadSummary();
   }
   function setSource(source){
     reset();
@@ -211,5 +226,5 @@ window.VolleyballModelTouches=(()=>{
     });
     visibility();
   }
-  return {init,setSource,reset,active,update};
+  return {init,setSource,reset,active,update,setTouchVisible};
 })();

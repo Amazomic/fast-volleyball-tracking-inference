@@ -7,7 +7,7 @@ from pathlib import Path
 
 from . import data
 from .quick_reel_jobs import quick_dir, request_for
-from .quick_reel_prepare import prepared_entry
+from .quick_reel_prepare import prepared_entry, ready_source_path
 
 
 def default_arguments():
@@ -36,8 +36,8 @@ def analyze_one(reel_id: str, video_index: int) -> dict:
     if (str(source) != row["source"] or stat.st_size != row["size"]
             or stat.st_mtime_ns != row["mtime_ns"]):
         raise ValueError("Исходное видео изменилось после выбора: " + row["video"])
-    _, _, prepared, _, _ = prepared_entry(source)
-    if not prepared.is_file():
+    prepared = ready_source_path(source)
+    if prepared is None:
         raise RuntimeError("Сначала подготовьте исходное видео: " + row["video"])
     args = default_arguments()
     args.input = source

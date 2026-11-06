@@ -70,12 +70,14 @@ console.log(JSON.stringify(window.VolleyballAnalysisPresets.presets));
         self.assertIn('presets.new.values.threads=Math.min(128,Math.max(1,',text)
         html=HTML.read_text(encoding="utf-8")
         for field,value in (
-            ("player_hysteresis_frames","18"),
+            ("player_hysteresis_frames","60"),
+            ("player_match_center_distance","0.15"),
             ("player_frame_step","1"),
-            ("track_max_distance","200"),
         ):
             self.assertIn('name="'+field+'"',html)
             self.assertIn('value="'+value+'"',html)
+        # CPU tracking settings are no longer part of the neural analysis UI.
+        self.assertNotIn('name="track_max_distance"',html)
 
 
 if __name__=="__main__":

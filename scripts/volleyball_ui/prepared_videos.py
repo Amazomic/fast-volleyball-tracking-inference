@@ -20,6 +20,7 @@ from pathlib import Path
 from . import data
 from .preview import video_info, target_width
 from .projects import deletion_requested, get_project, project_dir
+from .video_compat import is_analysis_ready
 
 _LOCK = threading.RLock()
 _POOL = ThreadPoolExecutor(max_workers=1, thread_name_prefix="volley-video-preparation")
@@ -131,7 +132,9 @@ def _reuse_project_cache(project_id: str, video: str, output: Path,
 
 
 def ready_path(project_id: str, video: str, width: int | None = None) -> Path | None:
-    _, _, output, metadata, expected = _entry(project_id, video, width)
+    source, _, output, metadata, expected = _entry(project_id, video, width)
+    if is_analysis_ready(source, expected["width"]):
+        return source.resolve(strict=True)
     saved = _manifest(metadata)
     if (saved.get("identity") == expected and saved.get("status") == "ready"
             and output.is_file() and output.stat().st_size > 0):
@@ -155,7 +158,8 @@ def status(project_id: str, *, auto_queue: bool = False) -> dict:
         source, info, output, metadata, identity = _entry(project_id, video)
         stored = _manifest(metadata)
         valid = stored.get("identity") == identity
-        if ready_path(project_id, video):
+        prepared = ready_path(project_id, video)
+        if prepared:
             state = "ready"
         elif valid and stored.get("status") in ("preparing", "queued"):
             # Another HTTP server may be running the same preparation.
@@ -169,7 +173,9 @@ def status(project_id: str, *, auto_queue: bool = False) -> dict:
             "progress": round(min(100, max(0, float(stored.get("progress", 0)) if valid else 0)), 1),
             "width": identity["width"], "fps": 30,
             "error": stored.get("error", "") if valid and state == "failed" else "",
-            "size_mb": round(output.stat().st_size/1024**2, 1) if state == "ready" else 0,
+            "size_mb": round(prepared.stat().st_size/1024**2, 1) if prepared else 0,
+            "preparation": ("not_required" if prepared and prepared.resolve() == source.resolve()
+                            else "cached" if prepared else "pending"),
         })
     if auto_queue:
         queue_project(project_id)

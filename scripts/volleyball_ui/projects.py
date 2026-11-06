@@ -6,7 +6,10 @@ are shared by projects under results/prepared/.
 """
 from __future__ import annotations
 
-import fcntl
+try:
+    import fcntl  # POSIX file locking
+except ImportError:
+    fcntl = None  # Windows uses msvcrt.locking instead
 import os
 import threading
 import uuid
@@ -31,11 +34,23 @@ def _registry_write_lock():
     """
     PROJECTS_DIR.mkdir(parents=True, exist_ok=True)
     with (PROJECTS_DIR / ".registry.lock").open("a+b") as handle:
-        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        if fcntl is not None:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        else:
+            import msvcrt
+            handle.seek(0)
+            handle.write(b"0")
+            handle.flush()
+            handle.seek(0)
+            msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
         try:
             yield
         finally:
-            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            if fcntl is not None:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            else:
+                handle.seek(0)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
 
 
 def _load() -> list:

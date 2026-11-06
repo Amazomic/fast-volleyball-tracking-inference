@@ -63,6 +63,10 @@ def _load_raw_points(path: str, mtime_ns: int, size: int):
 
 def ball_detection_capability(cache: Path) -> dict:
     """Metadata only; do not scan the raw CSV when opening a preview."""
+    replay = read_json(cache / "postprocess.manifest.json", {})
+    mode = (replay.get("settings") or {}).get("mode") if isinstance(replay, dict) else None
+    if mode in ("ravel-touch", "ravel-geometry"):
+        return {"available": False, "reason": "ravel_ball_source"}
     path = cache / "ball" / "analysis" / "ball.raw.csv"
     metadata = cache / "ball" / "analysis" / "ball.raw.json"
     if not path.is_file() or not metadata.is_file():
@@ -74,12 +78,17 @@ def ball_detection_capability(cache: Path) -> dict:
             raise ValueError("Invalid ball raw metadata")
     except (OSError, ValueError, KeyError, TypeError):
         return {"available": False, "reason": "invalid"}
+    if mode in ("baseline", "combined"):
+        modified = (replay.get("settings") or {}).get("ball_threshold")
+        if modified is not None:
+            threshold = float(modified)
     return {"available": True, "analysis_threshold": threshold,
             "candidate": "maximum_heatmap_response"}
 
 
 def trajectory_window(project_id: str, video: str, start: float,
-                      length: float = 10.0, cache_id=None, threshold=None):
+                      length: float = 10.0, cache_id=None, threshold=None,
+                      include_scores: bool = False):
     """Return [frame,x,y] in local analysis pixels, no more than 12 seconds."""
     assert_project_video(project_id, video)
     try:
@@ -102,14 +111,18 @@ def trajectory_window(project_id: str, video: str, start: float,
     info = read_json(cache / "analysis" / "events.json", {})
     if not isinstance(info, dict):
         info = {}
-    fps = float(info.get("fps") or 30)
+    # GPU-only primary runs intentionally have no CPU events.json.
+    neural = read_json(cache / "inference.manifest.json", {})
+    if not isinstance(neural, dict):
+        neural = {}
+    fps = float(info.get("fps") or neural.get("fps") or 30)
     if not math.isfinite(fps) or not 1 <= fps <= 240:
         raise ValueError("Некорректный FPS в результатах анализа")
     coordinate_space = info.get("coordinate_space") or {}
     if not isinstance(coordinate_space, dict):
         coordinate_space = {}
-    width = float(coordinate_space.get("width") or 0)
-    height = float(coordinate_space.get("height") or 0)
+    width = float(coordinate_space.get("width") or neural.get("width") or 0)
+    height = float(coordinate_space.get("height") or neural.get("height") or 0)
     if not all(math.isfinite(n) and n > 0 for n in (width, height)):
         # Old caches may not contain coordinate-space metadata.
         return {"available": False, "points": []}
@@ -126,7 +139,8 @@ def trajectory_window(project_id: str, video: str, start: float,
         stat = raw_path.stat()
         # The saved confidence is not re-estimated from the legacy binary CSV.
         candidates = _load_raw_points(str(raw_path), stat.st_mtime_ns, stat.st_size)
-        points = [[frame, x, y] for frame, x, y, score in candidates
+        points = [[frame, x, y, round(score, 3)] if include_scores else
+                  [frame, x, y] for frame, x, y, score in candidates
                   if score >= threshold]
         frames = [p[0] for p in points]
     else:

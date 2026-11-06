@@ -53,8 +53,26 @@ class AdvancedOptionsTests(TestCase):
     def test_all_exposed_fields_exist_in_ui(self):
         parser_html = FormFields()
         parser_html.feed((ROOT / "scripts/volleyball_ui/static/index.html").read_text(encoding="utf-8"))
-        missing = set(SPECS).difference(parser_html.fields)
-        self.assertFalse(missing, f"Options missing from both forms: {sorted(missing)}")
+        # Historical SPECS remains accepted by the CLI for replaying old
+        # runs. New primary analysis exposes only parameters that affect GPU
+        # inference, while contact tracking is configured in the CPU stage.
+        html = (ROOT / "scripts/volleyball_ui/static/index.html").read_text(encoding="utf-8")
+        primary = FormFields()
+        primary.feed(html.split('<form id="analysis-form">', 1)[1].split("</form>", 1)[0])
+        self.assertTrue(primary.fields <= (set(SPECS) | {
+            "ball_model", "ball_threshold", "backend",
+            "gpu_device_id", "gpu_memory_limit_mb", "threads", "analysis_width"}))
+        for name in ("track_max_distance", "track_min_duration",
+                     "track_player_threshold", "track_ball_threshold",
+                     "track_no_ball_fill", "beach",
+                     "player_touch_smooth", "player_touch_min_gap",
+                     "player_touch_hold", "player_strip_seconds"):
+            self.assertNotIn(name, primary.fields, name)
+        for name in ("player_model", "player_score_threshold",
+                     "player_action_threshold", "ball_threshold", "backend"):
+            self.assertIn(name, primary.fields, name)
+        self.assertIn('id="result-track-min-duration"', html)
+        self.assertIn('id="result-touch-min-interval"', html)
 
     def test_models_present(self):
         for name in ("RAVEL-VB-011-9f", "RAVEL-VB-012-9f"):

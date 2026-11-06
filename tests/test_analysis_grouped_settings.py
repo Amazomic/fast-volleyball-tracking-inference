@@ -10,13 +10,12 @@ STAGES = {
     "analysis-pipeline-advanced": {
         "player_model", "player_score_threshold", "player_head_threshold",
         "player_ball_threshold", "player_nms_iou", "player_close_threshold",
-        "player_hysteresis_frames", "player_match_center_distance", "player_match_iou"},
-    "analysis-stage-tracking": {
-        "track_max_distance", "track_min_duration", "track_player_threshold",
-        "track_ball_threshold", "track_no_ball_fill", "beach"},
+        "player_hysteresis_frames", "player_match_center_distance", "player_match_iou",
+        "player_action_threshold", "player_backend", "player_device"},
     "analysis-stage-performance": {
-        "player_device", "player_stride", "player_frame_step",
-        "player_performance_hint", "player_warmup_runs", "threads", "analysis_width"},
+        "gpu_device_id", "gpu_memory_limit_mb", "player_stride", "player_frame_step",
+        "threads", "analysis_width",
+        "player_reader", "player_decode_hwaccel", "player_decode_threads"},
     "analysis-stage-outputs": {
         "player_output_video", "ball_output_video", "player_include_features"}
 }
@@ -66,7 +65,15 @@ class GroupedAnalysisTests(unittest.TestCase):
         self.assertIn('id="analysis-context-summary"', section)
         for name in STAGES:
             self.assertIn('data-analysis-tab="'+name+'"', section)
-        self.assertEqual(section.count('class="analysis-run-type"'), 5)
+        self.assertEqual(section.count('class="analysis-stage-tab"'), 4)
+        # Real CPU controls are only available at the later postprocessing step.
+        for field in ("track_max_distance", "track_min_duration",
+                      "track_player_threshold", "track_ball_threshold",
+                      "track_no_ball_fill", "beach", "player_touch_smooth",
+                      "player_touch_min_gap", "player_touch_hold",
+                      "player_strip_seconds"):
+            self.assertNotIn('name="'+field+'"', section)
+        self.assertIn('name="player_action_threshold"', section)
 
 
 if __name__ == "__main__":

@@ -605,30 +605,24 @@ footer{border-top:1px solid var(--border);padding:22px 42px;color:#557073;font-s
   margin-left:auto;margin-right:auto;
   background:transparent;
 }
-/* Full-length timeline beneath both the video and the rally sidebar, like Analysis. */
-.result-video-layout > .result-timeline{
-  grid-column:1/-1;
+/* Timeline belongs to the video column, immediately under the player;
+   the rally sidebar remains independently scrollable on the right. */
+.result-video-main > .result-timeline{
   width:100%;
-  max-width:none;
   min-width:0;
-  margin:0;
-  padding:17px 18px 8px;
-  border:1px solid var(--border);
-  border-radius:13px;
-  background:var(--panel);
 }
-.result-video-layout > .result-timeline .result-rally-track,
-.result-video-layout > .result-timeline .timeline-ticks{
+.result-video-main > .result-timeline .result-rally-track,
+.result-video-main > .result-timeline .timeline-ticks{
   display:block;
   width:100%;
   max-width:none;
 }
-.result-video-layout > .result-timeline .timeline-ticks{
+.result-video-main > .result-timeline .timeline-ticks{
   display:flex;
   margin-top:9px;
 }
-.result-video-layout > .result-timeline .footnote{
-  margin:15px 0 0;
+.result-video-main > .result-timeline .footnote{
+  margin:12px 0 0;
 }
 @media(max-width:780px){
  .result-video-main .result-player-wrap{height:auto;min-height:0}
@@ -1704,6 +1698,8 @@ html[data-initial-view="results"] .nav-button[data-view="results"]{background:#1
 .sidebar-task[data-status="failed"] .sidebar-task-meter>span{background:#ff8a8a}
 .sidebar-task[data-status="cancelled"] .sidebar-task-meter>span{background:#91a1a5}
 .sidebar-task[data-status="complete"] .sidebar-task-heading>span{color:#a9df9a}
+.sidebar-reprocess-cancel{width:100%;min-height:31px;font-size:11px}
+.sidebar-reprocess-cancel[hidden]{display:none!important}
 @media(max-width:680px){.sidebar-tasks{margin-top:10px}}
 
 /* Sidebar video preparation: narrow overall progress, expandable file details. */
@@ -1868,7 +1864,7 @@ html[data-initial-view="results"] .nav-button[data-view="results"]{background:#1
 .result-model-touch-controls[hidden],.result-model-touch-section[hidden]{display:none!important}
 .result-model-touch-controls label{display:flex;align-items:center;gap:8px;font-weight:700}
 .result-model-touch-controls select{max-width:85px}
-.raw-touch-mode .result-overlay-controls,
+.raw-touch-mode .result-cpu-overlays,
 .raw-touch-mode .result-rally-settings,
 .raw-touch-mode .result-rally-summary,
 .raw-touch-mode .result-rally-track,
@@ -1950,30 +1946,146 @@ html[data-lang="en"] .sidebar-language{align-items:flex-start}
 html[data-lang="en"] .sidebar-language-label{line-height:1.45}
 html[data-lang="en"] .panel-heading{flex-wrap:wrap}
 
-/* Single unboxed run selector; metadata appears only on hover/focus. */
-.sidebar-analysis-run{position:relative;min-width:0;width:100%}
-.sidebar-analysis-run .field{margin:0;gap:6px;min-width:0}
-.sidebar-analysis-run .field>span{
-  color:#8eaa9c;font-size:11px;font-weight:600;line-height:1.3;
+.analysis-workflow-note{margin:0 0 16px;color:#a7bcb3;font-size:12px;line-height:1.65}
+.analysis-workflow-note strong{color:#e0f1dc}
+.analysis-reprocess-nav{display:flex;align-items:center;flex-wrap:wrap;gap:10px 17px}
+.analysis-reprocess-nav #reprocess-status{flex:1 1 210px;line-height:1.6}
+/* CPU replay settings live in Preview; the analysis page only links to them. */
+.analysis-reprocess{display:flex;flex-direction:column;gap:10px}
+.analysis-reprocess-title{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.analysis-reprocess-controls{display:grid;grid-template-columns:minmax(200px,2fr) minmax(90px,.6fr) auto;align-items:end;gap:10px}
+.analysis-reprocess-controls .field{margin:0;min-width:0}
+.analysis-reprocess-controls button{white-space:nowrap;min-height:38px}
+@media(max-width:680px){.analysis-reprocess-controls{grid-template-columns:minmax(0,1fr) minmax(100px,.5fr)}.analysis-reprocess-controls button{grid-column:1/-1}}
+
+/* Three-level project -> neural inference (with video) -> CPU replay path. */
+.header-dependency-chain{
+  position:sticky;top:0;z-index:20;margin:0 0 20px;padding:12px 14px 14px;
+  border:1px solid #39574b;border-radius:12px;background:#152821;
+  box-shadow:0 8px 20px #09120eaa;
+  min-width:0;
 }
-.sidebar-analysis-run .analysis-run-select{
-  display:block;width:100%;min-width:0;max-width:100%;min-height:38px;
-  padding:7px 9px;border-radius:9px;font-size:11px;line-height:1.4;
-  text-overflow:ellipsis;background:#142124;
+.header-chain-caption{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:10px}
+.header-chain-caption>span{font-size:10px;letter-spacing:.12em;font-weight:850;color:#a7d1a1}
+.header-chain-caption small{font-size:10px;color:#90aea3;text-align:right}
+.header-chain-levels{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.8fr) minmax(0,1.5fr);gap:13px;min-width:0}
+.header-chain-step{position:relative;display:grid;align-content:start;gap:6px;min-width:0}
+.header-chain-step:not(:last-child)::after{
+  content:"›";position:absolute;right:-11px;top:29px;color:#87bd96;
+  font-size:19px;z-index:1;line-height:1
 }
-.sidebar-analysis-run .analysis-run-select:disabled{opacity:.65;cursor:default}
-.sidebar-run-tooltip{
-  position:absolute;z-index:100;left:calc(100% + 10px);top:0;
-  min-width:220px;max-width:min(310px,calc(100vw - 290px));
-  padding:11px 13px;border:1px solid #426454;border-radius:9px;
-  background:#172a25;color:#d6e9dc;box-shadow:0 9px 24px #0008;
-  font-size:11px;line-height:1.6;white-space:pre-wrap;overflow-wrap:anywhere;
-  pointer-events:none;opacity:0;visibility:hidden;
-  transition:opacity .14s ease,visibility .14s ease;
+.header-chain-label{font-size:10px;font-weight:700;color:#a6c5b2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.header-chain-label b{font-size:10px;color:#83e795;margin-right:5px}
+.header-chain-step select{
+  display:block;width:100%;min-width:0;max-width:100%;min-height:39px;
+  padding:8px 31px 8px 10px;border-radius:8px;
+  appearance:none;-webkit-appearance:none;
+  border:1px solid #47705c;background:#20372e;color:#e2f7df;
+  font:600 11px/1.3 system-ui,sans-serif;cursor:pointer;
+  white-space:nowrap;text-overflow:ellipsis;
 }
-.sidebar-analysis-run:is(:hover,:focus-within) .sidebar-run-tooltip:not([hidden]){
-  opacity:1;visibility:visible;
+.header-chain-step select:focus-visible{outline:2px solid var(--green);outline-offset:2px}
+.header-chain-step select:disabled{opacity:.6;cursor:not-allowed;background:#1b2c28}
+.header-chain-step::before{content:"";position:absolute;right:13px;bottom:16px;width:6px;height:6px;border-right:1.5px solid #b7d9c2;border-bottom:1.5px solid #b7d9c2;transform:rotate(45deg);pointer-events:none}
+.header-chain-step:has(select:disabled)::before{opacity:.4}
+@media(max-width:930px){
+  .header-chain-levels{grid-template-columns:minmax(0,1fr);gap:10px}
+  .header-chain-step::after{display:none}
 }
 @media(max-width:680px){
-  .sidebar-run-tooltip{left:0;top:calc(100% + 7px);min-width:0;max-width:100%;width:100%}
+  .header-dependency-chain{padding:10px}
+  .header-chain-levels{grid-template-columns:minmax(0,1fr)}
+  .header-chain-step::after{display:none}
+  .header-chain-caption{display:block}
+  .header-chain-caption small{display:block;max-width:none;text-align:left;margin-top:3px}
+  .header-dependency-chain{position:relative;top:auto;z-index:auto}
 }
+
+
+/* Header is the one project selector; settings stay beside the project. */
+.header-chain-project .header-chain-project-row{
+  display:flex;gap:7px;align-items:center;position:relative;min-width:0;
+}
+.header-chain-project .header-chain-project-row>select{
+  flex:1 1 auto;width:0;min-width:0;padding-right:47px;
+}
+.header-chain-project::before{right:56px;bottom:16px;z-index:2}
+.header-chain-project .project-settings-trigger{
+  position:static;flex:0 0 39px;display:grid;place-items:center;
+  width:39px;height:39px;min-height:39px;padding:0;z-index:auto;
+  border:1px solid #47705c;border-radius:8px;background:#20372e;
+}
+.header-chain-project .project-settings-menu{
+  position:absolute;z-index:80;top:calc(100% + 7px);
+  right:0;left:auto;width:235px;max-width:calc(100vw - 35px);
+}
+
+/* Three header selects become accessible custom popovers because native
+   <option> cannot contain independent delete/rename controls. */
+.header-chain-step select.header-chain-native{display:none!important}
+.header-chain-step .header-chain-select-wrap{position:relative;min-width:0}
+.header-chain-step .header-chain-select-wrap::before{
+  content:"";position:absolute;right:13px;top:15px;
+  width:7px;height:7px;border-right:1.5px solid #bad8c2;
+  border-bottom:1.5px solid #bad8c2;transform:rotate(45deg);pointer-events:none;z-index:1
+}
+.header-chain-step:has(.header-chain-select-wrap)::before{display:none}
+.header-chain-select-trigger{
+  display:block;width:100%;min-height:39px;max-width:100%;
+  padding:8px 28px 8px 10px;text-align:left;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  border:1px solid #47705c;border-radius:8px;background:#20372e;
+  color:#e2f7df;font:600 11px/1.3 system-ui,sans-serif;cursor:pointer
+}
+.header-chain-select-trigger[aria-expanded="true"],.header-chain-select-trigger:focus-visible{
+  outline:2px solid #a8e992;outline-offset:1px
+}
+.header-chain-select-trigger:disabled{opacity:.6;cursor:not-allowed}
+.header-chain-select-wrap .header-chain-popover{
+  position:absolute;top:calc(100% + 5px);left:0;right:0;
+  min-width:min(360px,calc(100vw - 32px));max-width:calc(100vw - 32px);
+  max-height:min(430px,65vh);overflow-y:auto;overscroll-behavior:contain;
+  z-index:95;padding:5px;border:1px solid #527c61;border-radius:9px;
+  background:#152921;box-shadow:0 12px 28px #000b
+}
+.header-chain-popover[hidden]{display:none!important}
+.header-chain-option-row{
+  display:flex;align-items:center;min-height:39px;gap:4px;
+  padding:3px;border-radius:6px
+}
+.header-chain-option-row.is-selected{background:#264332}
+.header-chain-option-row:hover{background:#284936}
+.header-chain-option-action{
+  flex:0 0 29px;width:29px;height:29px;padding:0;
+  display:grid;place-items:center;border:1px solid transparent;border-radius:5px;
+  background:transparent;cursor:pointer;font:700 18px/1 system-ui,sans-serif
+}
+.header-chain-option-action.delete{color:#ff7474}
+.header-chain-option-action.delete:hover{background:#632c33;border-color:#df5c62}
+.header-chain-option-action.rename{color:#b7d6be;font-size:17px}
+.header-chain-option-action.rename:hover{background:#3e6251}
+.header-chain-option-text{
+  flex:1 1 auto;min-width:0;min-height:33px;
+  padding:7px 5px;border:0;border-radius:5px;background:transparent;
+  color:#e1f4e7;text-align:left;font:600 11px/1.4 system-ui,sans-serif;
+  overflow-wrap:anywhere;cursor:pointer
+}
+.header-chain-option-text:focus-visible,
+.header-chain-option-action:focus-visible{outline:2px solid #b9e8a0}
+.header-chain-popover-empty{padding:11px;color:#9cb8a8;font-size:11px}
+.header-chain-step:last-child .header-chain-popover{left:auto;right:0}
+@media(max-width:930px){
+  .header-chain-step .header-chain-popover{min-width:0}
+}
+
+.header-chain-project .header-chain-project-row{display:block}
+.header-chain-project .header-chain-project-row .header-chain-select-wrap{width:100%}
+.header-chain-project .header-chain-project-row>select{display:none!important}
+
+/* Blocking feedback only while a workspace context is being replaced. */
+.workspace-loading-overlay[hidden]{display:none!important}
+.workspace-loading-overlay{position:fixed;inset:0;z-index:11000;background:rgba(8,20,17,.50);backdrop-filter:blur(2px);display:flex;align-items:center;justify-content:center;pointer-events:all}
+.workspace-loading-message{display:flex;align-items:center;gap:13px;background:var(--surface,#18271f);color:#f3fff6;border:1px solid rgba(218,255,227,.35);border-radius:14px;padding:18px 24px;box-shadow:0 16px 60px rgba(0,0,0,.24);font-size:15px;max-width:min(90vw,430px)}
+.workspace-loading-spinner{display:inline-block;width:25px;height:25px;flex:none;border:3px solid rgba(219,245,227,.25);border-top-color:#a6edb6;border-radius:50%;animation:workspace-loading-rotate .8s linear infinite}
+@keyframes workspace-loading-rotate{to{transform:rotate(360deg)}}
+@media(prefers-reduced-motion:reduce){.workspace-loading-spinner{animation:none;border-top-color:#a6edb6}}

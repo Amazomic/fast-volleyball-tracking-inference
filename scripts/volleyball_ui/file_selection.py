@@ -10,6 +10,7 @@ import os
 import re
 from pathlib import Path
 
+from . import data
 from .local_sources import VIDEO_TYPES
 from .quick_reel_selection import save_selections
 from .quick_reel_audio import inspect_audio
@@ -27,6 +28,11 @@ def _roots() -> list[Path]:
     # and common media folders, without crawling entire disks.
     user = Path.home().name
     windows_home = Path("/mnt/c/Users") / user
+    # Under WSL, the Linux login name may differ from Windows' username.
+    # Derive the Windows profile from the repository's actual mounted path.
+    parts = data.ROOT.parts
+    if len(parts) >= 5 and parts[:4] == ("/", "mnt", "c", "Users"):
+        windows_home = Path(*parts[:5])
     for base in (windows_home,):
         roots.extend(base / name for name in
                      ("Desktop", "Downloads", "Videos", "Music", "Documents"))
@@ -96,9 +102,12 @@ def _validate_item(item: dict, *, kind: str):
     return filename,size,mtime
 
 
-def resolve_files(items: list, *, kind: str, roots: list[Path] | None=None) -> dict:
+def resolve_files(items: list, *, kind: str, roots: list[Path] | None=None,
+                  project_sources: bool=False) -> dict:
     if kind not in ("video","audio"):
         raise ValueError("Неизвестный тип исходного файла")
+    if project_sources and kind != "video":
+        raise ValueError("Для проекта можно выбирать только видео")
     if (not isinstance(items,list) or not items or
             len(items) > (MAX_FILES if kind=="video" else 1)):
         raise ValueError("Выберите от 1 до 30 видео или один аудиотрек")
@@ -133,5 +142,8 @@ def resolve_files(items: list, *, kind: str, roots: list[Path] | None=None) -> d
                              "». Невозможно безопасно определить оригинал.")
         matched.append(str(matches[0]))
     if kind=="video":
+        if project_sources:
+            from .local_sources import register_paths
+            return {"videos": register_paths(matched)}
         return {"videos":save_selections(matched)}
     return {"audio":inspect_audio(matched[0])}

@@ -40,24 +40,23 @@ class SidebarLayoutTests(unittest.TestCase):
         cls.markup = Markup()
         cls.markup.feed(cls.html)
 
-    def test_project_and_settings_are_in_shared_sidebar_row(self):
-        parents = self.markup.parents
-        self.assertIn("sidebar-project-head", parents["project-picker"])
-        self.assertIn("sidebar-project-head", parents["project-settings-trigger"])
-        self.assertNotIn('<header class="topbar">', self.html)
-        self.assertIn("grid-template-columns:minmax(0,1fr) 38px", self.css)
-        self.assertIn("width:100%!important", self.css)
+    def test_project_and_settings_only_in_header(self):
+        sidebar = self.html.split("</aside>", 1)[0]
+        self.assertIn('id="create-project"', sidebar)
+        self.assertIn('id="quick-reel-open"', sidebar)
+        self.assertNotIn('id="project-picker"', sidebar)
+        self.assertNotIn('id="chain-project"', sidebar)
+        self.assertNotIn('id="project-settings-trigger"', sidebar)
+        self.assertIn('header-chain-project', " ".join(self.markup.parents["chain-project"]))
+        self.assertIn('header-chain-project-row',
+                      " ".join(self.markup.parents["project-settings-trigger"]))
+        self.assertEqual(self.html.count('id="chain-project"'), 1)
+        self.assertIn('id="top-project"', self.html)
 
-    def test_create_project_appears_above_project_selector(self):
+    def test_project_create_button_remains_in_sidebar(self):
         sidebar = self.html.split("</aside>", 1)[0]
         self.assertEqual(sidebar.count('id="create-project"'), 1)
-        self.assertLess(sidebar.index('id="create-project"'),
-                        sidebar.index('id="project-picker"'))
-        self.assertLess(sidebar.index('id="project-picker"'),
-                        sidebar.index('id="project-settings-trigger"'))
         self.assertIn("topbar-controls", self.markup.parents["create-project"])
-        self.assertIn("sidebar-project-head", self.markup.parents["project-picker"])
-        self.assertIn("sidebar-project-head", self.markup.parents["project-settings-trigger"])
 
     def test_language_switch_is_the_bottommost_sidebar_control(self):
         sidebar = self.html.split("</aside>", 1)[0]
@@ -78,22 +77,13 @@ class SidebarLayoutTests(unittest.TestCase):
         self.assertIn('esc(error.message)', self.app)
         self.assertIn('if(detail&&!active&&!failed&&!wasReady)detail.open=false', self.app)
 
-    def test_analysis_selection_shows_profile_not_only_timestamp(self):
-        # A single project-scoped selector governs preview, players, report and montage.
+    def test_analysis_selection_is_only_in_header(self):
         sidebar = self.html.split("</aside>", 1)[0]
-        self.assertEqual(self.html.count("data-analysis-run-select"), 1)
-        self.assertIn('id="sidebar-analysis-run-select"', sidebar)
-        self.assertIn("sidebar-project", self.markup.parents["sidebar-analysis-run-select"])
-        self.assertLess(sidebar.index('id="project-picker"'),
-                        sidebar.index('id="sidebar-analysis-run-select"'))
-        self.assertLess(sidebar.index('id="sidebar-analysis-run-select"'),
-                        sidebar.index('class="nav-caption"'))
-        self.assertNotIn('class="analysis-version-picker"', self.html)
-        self.assertIn('new Option(run.profile+" · "+run.id.slice(-6),run.id)', self.app)
-        self.assertIn('id="sidebar-run-info"', sidebar)
-        self.assertIn('tooltip.textContent=picked', self.app)
-        self.assertIn('.sidebar-analysis-run:is(:hover,:focus-within)', self.css)
-        self.assertIn('ID: "+picked.id', self.app)
+        self.assertNotIn("data-analysis-run-select", self.html)
+        self.assertNotIn('id="sidebar-analysis-run-select"', sidebar)
+        self.assertIn('id="chain-inference"', self.html)
+        self.assertIn('id="chain-postprocess"', self.html)
+        self.assertIn("renderHeaderChain()", self.app)
         self.assertIn('volley-analysis-run:"+project', self.app)
         self.assertNotIn('group.label=profile', self.app)
 

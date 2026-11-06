@@ -93,7 +93,7 @@ class ProjectDeletionTests(unittest.TestCase):
                 **kwargs)
             spawned.append(process)
             return process
-        with patch.object(prepared_videos.subprocess,"Popen",side_effect=slow_ffmpeg):
+        with patch.object(prepared_videos, "is_analysis_ready", return_value=False), patch.object(prepared_videos.subprocess, "Popen", side_effect=slow_ffmpeg):
             prepared_videos.queue_project(self.target["id"])
             key=(self.target["id"],"match.mp4",320)
             deadline=time.monotonic()+5
@@ -124,7 +124,7 @@ class ProjectDeletionTests(unittest.TestCase):
         target_key=(self.target["id"],"match.mp4",320)
         marker=projects.PROJECTS_DIR/self.other["id"]/".delete-requested"
         try:
-            with patch.object(prepared_videos.subprocess,"Popen",side_effect=slow_ffmpeg):
+            with patch.object(prepared_videos, "is_analysis_ready", return_value=False), patch.object(prepared_videos.subprocess, "Popen", side_effect=slow_ffmpeg):
                 prepared_videos.queue_project(self.other["id"])
                 deadline=time.monotonic()+5
                 while other_key not in prepared_videos._ACTIVE:
@@ -178,6 +178,24 @@ class ProjectDeletionTests(unittest.TestCase):
         process.wait(timeout=5)
         self.assertIsNone(project_lifecycle._project_processes(self.target["id"]).get(process.pid))
         self.assertEqual(projects.get_project(self.other["id"])["id"],self.other["id"])
+
+    def test_permanent_delete_http_endpoint_keeps_sources_and_other_projects(self):
+        web=ThreadingHTTPServer(("127.0.0.1",0),server.Handler)
+        Thread(target=web.serve_forever,daemon=True).start()
+        self.addCleanup(web.server_close)
+        self.addCleanup(web.shutdown)
+        url=f"http://127.0.0.1:{web.server_port}/api/project-delete"
+        request=urllib.request.Request(
+            url,data=json.dumps({"id":self.target["id"]}).encode(),
+            headers={"Content-Type":"application/json"},method="POST")
+        with urllib.request.urlopen(request, timeout=20) as response:
+            reply=json.load(response)
+        self.assertTrue(reply["project"]["deleted"])
+        self.assertFalse((projects.PROJECTS_DIR/self.target["id"]).exists())
+        self.assertFalse((projects.PROJECTS_DIR/".trash"/self.target["id"]).exists())
+        self.assertEqual(self.original.read_bytes(),self.before)
+        self.assertEqual(projects.get_project(self.other["id"])["id"],
+                         self.other["id"])
 
     def test_tombstone_prevents_new_jobs(self):
         marker=projects.PROJECTS_DIR/self.target["id"]/".delete-requested"

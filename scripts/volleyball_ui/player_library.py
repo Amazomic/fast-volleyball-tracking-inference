@@ -6,6 +6,7 @@ provenance in index.json. This module does not train or identify people.
 from __future__ import annotations
 
 import hashlib
+import re
 import shutil
 import threading
 from datetime import datetime, timezone
@@ -47,8 +48,14 @@ def collect_existing_player_photos(player_id: str) -> dict:
         for video in project["videos"]:
             keys = [key for key in stored
                     if key == video or key.startswith(video + "::")]
+            seen = set()
             for key in keys:
-                cache_id = key.split("::", 1)[1] if "::" in key else None
+                cache_id = data.neural_cache_id(
+                    key.split("::", 1)[1] if "::" in key else None)
+                canonical = video + ("::" + cache_id if cache_id else "")
+                if canonical in seen:
+                    continue
+                seen.add(canonical)
                 groups = data.groups_for(video, project["id"], cache_id)
                 ids = [tid for group in groups if group["id"] == player_id
                        for tid in group.get("track_ids", [])]
@@ -66,6 +73,7 @@ def sync_photos(project_id: str, video: str, track_ids: list[str], cache_id=None
     Removes stale photos when an ID is moved or unassigned. The analysis is
     reused; the source video is never modified.
     """
+    cache_id = data.neural_cache_id(cache_id)
     track_ids = [str(id_) for id_ in track_ids]
     if not track_ids:
         return {"copied": 0, "errors": []}
@@ -110,7 +118,7 @@ def sync_photos(project_id: str, video: str, track_ids: list[str], cache_id=None
             for sample in samples:
                 frame = int(sample["frame"])
                 filename = _key(project_id, video, tid, frame, cache_id) + ".jpg"
-                if filename in existing:
+                if filename in existing or filename in set(index.get("rejected", [])):
                     continue
                 try:
                     source = photo_path(video, tid, sample["index"], project_id, cache_id)
@@ -133,3 +141,67 @@ def sync_photos(project_id: str, video: str, track_ids: list[str], cache_id=None
                     errors.append(f"Track #{tid}, frame {frame}: {error}")
             data.save_json(manifest, {"schema": 1, "photos": rows})
     return {"copied": copied, "errors": errors}
+
+
+# Albums are global to the person; project removal never touches these files.
+_SAFE_PHOTO = re.compile(r"[0-9a-f]{24}\.jpg\Z")
+
+
+def _album_index(player_id: str):
+    folder = album_dir(player_id)
+    document = data.read_json(folder / "index.json", {"schema": 1, "photos": []})
+    if not isinstance(document, dict):
+        return {"schema": 1, "photos": []}
+    return document
+
+
+def album_photos(player_id: str) -> dict:
+    """Read only saved photo rows, not project-scoped temporary crops."""
+    with _ALBUM_LOCK:
+        folder = album_dir(player_id)
+        rows = _album_index(player_id).get("photos", [])
+        photos = []
+        for row in rows if isinstance(rows, list) else []:
+            filename = row.get("filename") if isinstance(row, dict) else None
+            if (not isinstance(filename, str) or not _SAFE_PHOTO.fullmatch(filename)
+                    or not (folder / "photos" / filename).is_file()):
+                continue
+            photos.append({
+                "filename": filename, "frame": row.get("frame"),
+                "track_id": row.get("track_id"), "video": row.get("video"),
+                "project_id": row.get("project_id"), "saved_at": row.get("saved_at"),
+            })
+        photos.sort(key=lambda row: (str(row.get("saved_at") or ""), row["filename"]), reverse=True)
+        return {"player_id": player_id, "photos": photos, "count": len(photos)}
+
+
+def album_photo_path(player_id: str, filename: str):
+    with _ALBUM_LOCK:
+        folder = album_dir(player_id)
+        if not isinstance(filename, str) or not _SAFE_PHOTO.fullmatch(filename):
+            raise ValueError("Некорректный файл фотографии")
+        if not any(isinstance(r, dict) and r.get("filename") == filename
+                   for r in _album_index(player_id).get("photos", [])):
+            raise FileNotFoundError("Фотография не найдена в базе игрока")
+        path = folder / "photos" / filename
+        if not path.is_file():
+            raise FileNotFoundError("Файл фотографии не найден")
+        return path
+
+
+def remove_album_photo(player_id: str, filename: str) -> dict:
+    """Reject this sample permanently, including after future photo sync."""
+    with _ALBUM_LOCK:
+        folder = album_dir(player_id)
+        if not isinstance(filename, str) or not _SAFE_PHOTO.fullmatch(filename):
+            raise ValueError("Некорректный файл фотографии")
+        index = _album_index(player_id)
+        rows = index.get("photos", [])
+        if not isinstance(rows, list) or not any(
+                isinstance(r, dict) and r.get("filename") == filename for r in rows):
+            raise FileNotFoundError("Фотография не найдена в базе игрока")
+        index["photos"] = [r for r in rows if r.get("filename") != filename]
+        index["rejected"] = sorted(set(index.get("rejected", [])) | {filename})
+        data.save_json(folder / "index.json", index)
+        (folder / "photos" / filename).unlink(missing_ok=True)
+        return {"player_id": player_id, "removed": filename, "count": len(index["photos"])}

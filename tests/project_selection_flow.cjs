@@ -2,6 +2,7 @@
 // The actual app.js project flow, executed with controlled asynchronous APIs.
 // No project on disk and no real browser are modified.
 const assert=require("node:assert/strict");
+const choice=(video,id)=>encodeURIComponent(video)+"|"+id;
 const fs=require("node:fs");
 const vm=require("node:vm");
 const path=require("node:path");
@@ -21,14 +22,10 @@ function element(selector){
   }
   return nodes.get(selector);
 }
-const runSelectors=Array.from({length:1},()=>({
-  value:"",replaceChildren(){this.options=[];},
-  add(option){this.options.push(option);}
-}));
 const document={
   querySelector:element,
+  getElementById(id){return element("#"+id);},
   querySelectorAll(selector){
-    if(selector==="[data-analysis-run-select]")return runSelectors;
     if(selector===".dialog-video-row")return this.selectedDialogRows||[];
     return [];
   }
@@ -40,6 +37,7 @@ const localStorage={
 };
 const ranges=[];
 const window={
+  VolleyballHeaderChain:require("../scripts/volleyball_ui/static/header-chain.js"),
   VolleyballAnalysisUI:{
     setProjectRanges(map,id){ranges.push({id,range:map});},
     async setVideo(video){calls.push(["video",video]);}
@@ -105,19 +103,19 @@ function call(code){return vm.runInContext(code,context);}
   assert.equal(await call("loadAll()"),true);
   assert.equal(state.project,a.id);
   assert.equal(state.analysisRunId,runA.id);
-  assert.equal(element("#project-picker-name").textContent,"Match A");
+  assert.equal(element("#chain-project").options.find(row=>row.value===state.project).text,"Match A");
 
   assert.equal(await call('loadAll("bbb222")'),true);
   assert.equal(state.project,b.id);
   assert.equal(state.video,"b.mp4");
   assert.equal(state.analysisRunId,runB.id);
   assert.equal(context.reportProject,b.id);
-  assert.equal(element("#project-picker-name").textContent,"Match B");
+  assert.equal(element("#chain-project").options.find(row=>row.value===state.project).text,"Match B");
   assert.equal(element("#top-project").value,b.id);
-  assert.deepEqual(runSelectors[0].options.map(row=>row.value),[runB.id]);
-  assert.equal(runSelectors[0].options[0].text,"Global preset · run_b");
-  assert(element("#sidebar-run-info").textContent.includes("run_b"));
-  assert(element("#sidebar-run-info").textContent.includes("Дата запуска:"));
+  assert.deepEqual(element("#chain-inference").options.map(row=>row.value),[choice("b.mp4",runB.id)]);
+  assert(element("#chain-inference").options[0].text.includes("Global preset"));
+  assert.equal(element("#chain-inference").value,choice("b.mp4",runB.id));
+  assert.equal(element("#chain-postprocess").value,runB.id);
   assert.equal(store.get("volley-selected-project"),b.id);
   assert.equal(ranges.at(-1).id,b.id);
 
@@ -138,12 +136,12 @@ function call(code){return vm.runInContext(code,context);}
   assert.equal(state.video,"c.mp4");
   assert.equal(state.analysisRuns.length,0);
   assert.equal(state.analysisRunId,"");
-  assert.equal(element("#project-picker-name").textContent,"Match C");
+  assert.equal(element("#chain-project").options.find(row=>row.value===state.project).text,"Match C");
   assert.equal(store.get("volley-selected-project"),c.id);
   assert.equal(context.reportProject,c.id);
   assert.equal(ranges.at(-1).id,c.id);
-  assert.deepEqual(runSelectors[0].options.map(row=>row.value),[""]);
-  assert.equal(element("#sidebar-run-info").hidden,true);
+  assert.deepEqual(element("#chain-inference").options.map(row=>row.value),[""]);
+  assert.equal(element("#chain-inference").disabled,true);
   assert.equal(element("#project-dialog").open,false);
 
   // A delayed previous response must never steal selection from a later click.
@@ -157,29 +155,27 @@ function call(code){return vm.runInContext(code,context);}
   assert.equal(state.project,b.id);
   assert.equal(state.analysisRunId,runB.id);
   assert.equal(store.get("volley-selected-project"),b.id);
-  assert.equal(element("#project-picker-name").textContent,"Match B");
+  assert.equal(element("#chain-project").options.find(row=>row.value===state.project).text,"Match B");
 
-  // A single sidebar selector switches the analysis branch for all dependent views.
+  // The header selector switches the analysis branch for all dependent views.
   runsB=[runB2,runB];
   await call("loadAnalysisRuns()");
-  assert.deepEqual(runSelectors[0].options.map(row=>row.value),[runB2.id,runB.id]);
+  assert.deepEqual(element("#chain-inference").options.map(row=>row.value),[choice("b.mp4",runB2.id),choice("b.mp4",runB.id)]);
   await call('chooseAnalysisRun("run_b2")');
   assert.equal(state.analysisRunId,runB2.id);
   assert.equal(call('analysisCacheId("b.mp4")'),"cacheB2");
   assert.equal(store.get("volley-analysis-run:"+b.id),runB2.id);
-  assert.equal(runSelectors[0].value,runB2.id);
-  assert(runSelectors[0].options[0].text.includes("Accurate preset"));
-  assert(!runSelectors[0].options[0].text.includes("2026-11-02"));
-  assert(element("#sidebar-run-info").textContent.includes("Accurate preset"));
-  assert(element("#sidebar-run-info").textContent.includes("run_b2"));
-  assert.equal(element("#sidebar-run-info").hidden,false);
+  assert.equal(element("#chain-inference").value,choice("b.mp4",runB2.id));
+  assert.equal(element("#chain-postprocess").value,runB2.id);
+  assert(element("#chain-inference").options[0].text.includes("Accurate preset"));
+  assert(element("#chain-inference").options[0].title.includes("run_b2"));
 
   // Each project preserves its own run selection, even when profiles share names.
   assert.equal(await call('loadAll("aaa111")'),true);
   assert.equal(state.analysisRunId,runA.id);
   assert.equal(await call('loadAll("bbb222")'),true);
   assert.equal(state.analysisRunId,runB2.id);
-  assert.equal(runSelectors[0].value,runB2.id);
+  assert.equal(element("#chain-inference").value,choice("b.mp4",runB2.id));
   assert.equal(store.get("volley-analysis-run:"+a.id),runA.id);
-  console.log("PROJECT -> SIDEBAR RUN -> PREVIEW CACHE -> RESTORE PER PROJECT: PASS");
+  console.log("PROJECT -> HEADER RUN -> PREVIEW CACHE -> RESTORE PER PROJECT: PASS");
 })().catch(error=>{console.error(error);process.exitCode=1;});

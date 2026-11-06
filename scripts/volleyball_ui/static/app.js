@@ -5,9 +5,58 @@ const $$ = (selector) => Array.from(document.querySelectorAll(selector));
 const state = {videos: [], video: "", projects: [], project: "", aggregate: null, report: null, renders: [],
   selected: new Set(), playerAssignBusy: false, limit: 30, previewId: null, photoToken: 0, jobStatus: "idle", latestTask: null,
   players: [], libraryPlayers: [], photoCounts: {}, activePlayerId: null, playerFilter: "unassigned", suggestionsToken: 0,
+  playerGroups: null, playerGroupsKey: "", playerMode: "view", albumToken: 0, reportDirty: false,
+  playerReidThresholdPending: null,
   dialogEdit: false, dialogBusy: false, dialogRequestId: 0, analysisContext: null,
   preparationProject: "", preparationPending: false, preparationActive: false,
   benchmarkReady: false, benchmarkRenderedId: null, analysisRuns: [], analysisRunId: "", reportEpoch: 0};
+// Context changes use one shared, delayed overlay instead of blank intermediate screens.
+const workspaceLoadingTokens=new Set();
+let workspaceLoadingSerial=0, playerCatalogCache=null;
+function beginWorkspaceLoading(message="Загрузка данных…"){
+  const token=++workspaceLoadingSerial;
+  workspaceLoadingTokens.add(token);
+  const overlay=$("#workspace-loading-overlay");
+  const show=()=>{
+    if(token!==workspaceLoadingSerial||!workspaceLoadingTokens.has(token)||!overlay)return;
+    overlay.hidden=false;
+    if(token===workspaceLoadingSerial)
+      $("#workspace-loading-text").textContent=message;
+    document.querySelector("main")?.setAttribute("aria-busy","true");
+  };
+  const timer=setTimeout(show,90); // No visible flash for cache-speed transitions.
+  return ()=>{
+    clearTimeout(timer);
+    workspaceLoadingTokens.delete(token);
+    if(token===workspaceLoadingSerial){
+      if(overlay)overlay.hidden=true;
+      document.querySelector("main")?.removeAttribute("aria-busy");
+    }
+  };
+}
+async function sharedPlayerCatalogs(){
+  if(playerCatalogCache && Date.now()-playerCatalogCache.at<15000)
+    return playerCatalogCache.promise;
+  const promise=Promise.all([
+    api("/api/players/library"),api("/api/players/photos")
+  ]).then(([library,photos])=>({
+    libraryPlayers:library.players||[],photoCounts:photos.counts||{}
+  }));
+  playerCatalogCache={at:Date.now(),promise};
+  try{return await promise;}
+  catch(error){
+    if(playerCatalogCache?.promise===promise)playerCatalogCache=null;
+    throw error;
+  }
+}
+let pendingPreviewReplay=null;
+let activeHeaderContext="";
+let videoSelectionGeneration=0;
+const headerVideoKey=projectId=>"volley-header-video:"+projectId;
+const headerRunKey=(projectId=state.project,video=state.video)=>
+  "volley-header-run:"+projectId+":"+encodeURIComponent(video);
+const contextIdentity=(projectId=state.project,video=state.video)=>
+  projectId+"\u0000"+video;
 const label = {attack:"Атаки", block:"Блоки", serve:"Подачи", dig:"Приёмы", overhead_pass:"Верхние передачи", low_touch:"Другие касания"};
 const eventOrder = ["attack", "block", "serve", "dig", "overhead_pass", "low_touch"];
 
@@ -31,6 +80,8 @@ async function api(url, payload) {
     }
     throw new Error(error);
   }
+  if(payload!==undefined && (/^\/api\/(players\/|assign$|unassign$|player-groups\/link$)/).test(url))
+    playerCatalogCache=null;
   return data;
 }
 function alertBox(message) {
@@ -40,6 +91,7 @@ function alertBox(message) {
 const WORKSPACE_VIEWS=new Set(["analysis","analysis-results","players","report","benchmark","results"]);
 const SELECTED_PROJECT_KEY="volley-selected-project";
 let projectLoadEpoch=0;
+let analysisRunsRequest=0;
 function go(view) {
   if(!WORKSPACE_VIEWS.has(view))view="analysis";
   if(!state.project&&view!=="analysis")view="analysis";
@@ -57,17 +109,36 @@ function go(view) {
   const names={analysis:"Анализ","analysis-results":"Предпросмотр",players:"Игроки",report:"Отчёт проекта",benchmark:"Бенчмарк",results:"Монтаж"};
 
   if(view==="players"&&state.project){
-    renderPlayers();
-    loadPlayerSuggestions().catch(console.warn);
-    renderPlayerPhotos().catch(console.warn);
+    setPlayerMode(state.playerMode);
+    if(state.playerMetaProject!==state.project){
+      const finish=beginWorkspaceLoading("Загрузка игроков…");
+      loadReport({playersOnly:true})
+        .catch(error=>alertBox(error.message)).finally(finish);
+    }else{
+      renderPlayers();
+      if(state.playerMode==="manual"){
+        loadPlayerSuggestions().catch(console.warn);
+        renderPlayerPhotos().catch(console.warn);
+      }
+    }
+  }
+  if(view==="report"&&state.project&&state.reportDirty){
+    state.reportDirty=false;
+    loadReport().catch(error=>{
+      state.reportDirty=true;
+      $("#report-notice").textContent="Не удалось обновить статистику: "+error.message;
+    });
   }
   if(view==="benchmark"&&state.project)
     loadBenchmarkResults().catch(console.warn);
   if(view==="results"&&state.project)scheduleMontagePlan();
   if(view==="analysis-results"&&state.project){
     const project=selectedProject();
-    window.VolleyballResultsUI.setCacheSelection(analysisCacheMap(),state.analysisRunId);
-    window.VolleyballResultsUI.setProject(state.project,project.videos).catch(err=>alertBox(err.message));
+    window.VolleyballResultsUI.setCacheSelection(analysisCacheMap(),state.analysisRunId,
+      selectedAnalysisRun()?.postprocess_settings||null);
+    const finish=beginWorkspaceLoading("Загрузка предпросмотра…");
+    window.VolleyballResultsUI.setProject(state.project,project.videos,state.video)
+      .catch(err=>alertBox(err.message)).finally(finish);
   } else if(view!=="analysis-results"){
     const player=$("#result-video-player");
     if(player)player.pause();
@@ -119,8 +190,8 @@ function updateChosen() {
     :"0 ID выбрано";
   $("#assigned-player-name").textContent=state.playerAssignBusy
     ?"Сохраняем привязку Track ID…"
-    :size?"Нажмите на игрока сверху, чтобы привязать "+size+" ID"
-    :"Отметьте одинаковые ID, затем выберите игрока сверху";
+    :size?"Выбрано "+size+" ID — выберите игрока и сохраните"
+    :"Отметьте ID для объединения или привязки";
   const assignedIds=associatedMap();
   const hasAssigned=Array.from(state.selected).some(id=>assignedIds.has(id));
   $("#unassign-ids").hidden=!hasAssigned;
@@ -129,10 +200,12 @@ function updateChosen() {
   $("#named-list").querySelectorAll("[data-player-id]").forEach(button=>{
     button.disabled=state.playerAssignBusy;
     button.setAttribute("aria-label",size
-      ?"Привязать "+size+" Track ID к "+button.querySelector(".player-slot-text strong").textContent
+      ?"Выбрать игрока "+button.querySelector(".player-slot-text strong").textContent+
+        " как цель для "+size+" Track ID (сохранение отдельной кнопкой)"
       :"Выбрать игрока "+button.querySelector(".player-slot-text strong").textContent);
   });
   $("#clear-selected").disabled=!size;
+  $("#save-selected-ids").disabled=!size||!$("#bulk-player-target").value||state.playerAssignBusy;
   const visible=$$(".row-select");
   const selectedVisible=visible.filter(el=>state.selected.has(el.dataset.id)).length;
   const all=$("#select-all-ids");
@@ -162,12 +235,244 @@ async function renderPlayerPhotos() {
         "&cache_id="+encodeURIComponent(analysisCacheId()));
       if(!meta.samples.length)return '<div class="empty">#'+esc(id)+': фото пока отсутствуют</div>';
       return '<div class="photo-person"><div class="photo-person-head"><strong>Track #'+esc(id)+'</strong><span>'+meta.samples.length+' кадр(а)</span></div><div class="photo-strip">'
-        +meta.samples.map(s=>'<a href="'+esc(s.url)+'" target="_blank" rel="noopener" title="Увеличить кадр"><img loading="lazy" src="'+esc(s.url)+'" alt="Игрок, track #'+esc(id)+', кадр '+s.frame+'"><small>'+s.time_sec.toFixed(1)+' сек</small></a>').join("")
+        +meta.samples.map(s=>'<a data-photo-track-id="'+esc(id)+'" href="'+esc(s.url)+'" target="_blank" rel="noopener" title="Открыть кадр"><img loading="lazy" src="'+esc(s.url)+'" alt="Игрок, track #'+esc(id)+', кадр '+s.frame+'"><small>'+s.time_sec.toFixed(1)+' сек</small></a>').join("")
         +'</div></div>';
     }catch(error){return '<div class="empty">#'+esc(id)+': '+esc(error.message)+'</div>'}
   }));
   if(token!==state.photoToken||video!==state.video)return;
   gallery.innerHTML=cards.join("")+(state.selected.size>6?'<div class="muted">Показаны первые 6 выбранных ID. Остальные останутся выбранными при сохранении.</div>':'');
+}
+let playerGroupsPoll=null,playerGroupsSequence=0;
+let commitPlayerReidThreshold=null,playerReidThresholdSaving=false;
+function playerGroupsContext(){
+  return [state.project,state.video,analysisCacheId()||""].join("\u0000");
+}
+function appearanceGroupMap(){
+  const map=new Map();
+  for(const group of state.playerGroups?.status==="ready"?(state.playerGroups.groups||[]):[]){
+    for(const tid of group.track_ids)map.set(String(tid),group);
+  }
+  return map;
+}
+async function loadPlayerGroups(){
+  clearTimeout(playerGroupsPoll);
+  const seq=++playerGroupsSequence, context=playerGroupsContext();
+  const [project_id,video,cache_id]=context.split("\u0000");
+  if(!project_id||!video||!cache_id){
+    state.playerGroups=null;state.playerGroupsKey="";renderPlayerGroups();return;
+  }
+  if(state.playerGroupsKey!==context){
+    state.playerGroups=null;state.playerGroupsKey=context;
+    renderPlayerGroups();
+  }
+  try{
+    const params=new URLSearchParams({project_id,video,cache_id});
+    const result=await api("/api/player-groups?"+params);
+    if(seq!==playerGroupsSequence||context!==playerGroupsContext())return;
+    state.playerGroups=result;
+    if(result.status==="ready"&&state.report&&Object.keys(result.auto_links||{}).length){
+      const associated=associatedMap();
+      for(const [pid,ids] of Object.entries(result.auto_links)){
+        const player=state.players.find(entry=>entry.id===pid);
+        const free=(ids||[]).filter(id=>!associated.has(String(id)));
+        if(player&&free.length){
+          patchAssignedTrackData(free,player);
+          const stored=(state.report.groups||[]).find(group=>group.id===pid);
+          if(stored){
+            const meta=stored.link_meta||(stored.link_meta={});
+            for(const tid of free)meta[String(tid)]={source:"reid_auto",reviewed:false};
+          }
+          state.reportDirty=true;
+        }
+      }
+    }
+    const deferred=state.playerReidThresholdPending;
+    if(result.status==="ready"&&deferred?.context===context){
+      state.playerReidThresholdPending=null;
+      if(deferred.value!==Number(result.threshold_percent))
+        commitPlayerReidThreshold?.(deferred.value).catch(console.warn);
+    }
+    // The manual table needs ReID hints; the automatic list needs only its own
+    // cards. Never rebuild the entire players workspace for an auto refresh.
+    if(state.playerMode==="manual")renderPlayers();
+    else renderPlayerGroups();
+    if(result.status==="running"){
+      playerGroupsPoll=setTimeout(()=>loadPlayerGroups().catch(console.warn),1200);
+    }
+  }catch(error){
+    if(seq!==playerGroupsSequence||context!==playerGroupsContext())return;
+    state.playerGroups={status:"error",error:error.message};
+    renderPlayerGroups();
+  }
+}
+// ReID supplies the best cosine similarity per Track ID, not a calibrated
+// probability. For a group, prefer the player supported by the most IDs,
+// breaking ties by mean similarity (never by the first ID alone).
+const playerPickerOverrides=new Map();
+function suggestedPlayerForTracks(ids){
+  const matches=state.playerGroups?.status==="ready"?state.playerGroups.player_matches||{}:{};
+  const roster=new Map(state.players.map(player=>[player.id,player]));
+  const votes=new Map();
+  for(const id of ids){
+    const match=matches[String(id)],player=roster.get(match?.player_id);
+    if(!player||match.similarity==null||!Number.isFinite(Number(match.similarity)))continue;
+    const item=votes.get(player.id)||{playerId:player.id,name:player.name,
+      count:0,total:0,weak:0,ambiguous:0};
+    item.count++;
+    item.total+=Number(match.similarity);
+    if(!match.above_threshold)item.weak++;
+    if(match.ambiguous)item.ambiguous++;
+    votes.set(player.id,item);
+  }
+  const sorted=[...votes.values()].sort((a,b)=>
+    b.count-a.count||(b.total/b.count)-(a.total/a.count));
+  if(!sorted.length)return null;
+  const best=sorted[0],coverage=best.count+"/"+ids.length;
+  return {playerId:best.playerId,name:best.name,
+    similarity:best.total/best.count,coverage,
+    weak:best.weak>0,ambiguous:best.ambiguous>0||
+      !!(sorted[1]&&sorted[1].count===best.count)};
+}
+function playerPickerHtml(className,ids=null,pickKey=""){
+  const suggestion=ids?suggestedPlayerForTracks(ids):null;
+  const overrideKey=pickKey?playerGroupsContext()+"\\0"+pickKey:"";
+  const selected=overrideKey&&playerPickerOverrides.has(overrideKey)
+    ?playerPickerOverrides.get(overrideKey)
+    :suggestion?.playerId||(ids? "":state.activePlayerId||"");
+  const ordered=suggestion?[
+    ...state.players.filter(p=>p.id===suggestion.playerId),
+    ...state.players.filter(p=>p.id!==suggestion.playerId)
+  ]:state.players;
+  return '<select class="'+esc(className)+'" aria-label="Игрок проекта"'+
+    (pickKey?' data-player-pick-key="'+esc(pickKey)+'"':'')+'>'+
+    '<option value=""'+(!selected?' selected':'')+'>Выберите игрока…</option>'+
+    ordered.map(p=>'<option value="'+esc(p.id)+'"'+
+      (p.id===selected?' selected':'')+'>'+esc(p.name)+
+      (p.id===suggestion?.playerId?' · '+Math.round(suggestion.similarity*100)+'% сходство':'')+
+      '</option>').join("")+'</select>';
+}
+function suggestedPlayerHint(ids){
+  const suggestion=suggestedPlayerForTracks(ids);
+  if(!suggestion)return '<small class="player-reid-pick-hint">Нет подсказки ReID — выберите игрока вручную</small>';
+  const uncertain=suggestion.ambiguous?' · неоднозначно, проверьте':
+    suggestion.weak?' · ниже порога, проверьте':'';
+  return '<small class="player-reid-pick-hint">ReID: '+esc(suggestion.name)+
+    ' · '+Math.round(suggestion.similarity*100)+'% сходство'+
+    (ids.length>1?' · '+suggestion.coverage+' ID':'')+uncertain+
+    '</small>';
+}
+function rememberPlayerPickerChange(select){
+  if(!select?.dataset.playerPickKey)return;
+  playerPickerOverrides.set(playerGroupsContext()+"\\0"+select.dataset.playerPickKey,select.value);
+}
+function setPlayerMode(mode){
+  state.playerMode=["view","auto","manual"].includes(mode)?mode:"view";
+  $$("[data-player-mode]").forEach(button=>{
+    const active=button.dataset.playerMode===state.playerMode;
+    button.classList.toggle("is-active",active);
+    button.setAttribute("aria-pressed",String(active));
+  });
+  $$("[data-player-pane]").forEach(section=>{
+    section.hidden=section.dataset.playerPane!==state.playerMode;
+  });
+  if(state.playerMode==="view")renderPlayerAlbum().catch(console.warn);
+  if(state.playerMode!=="view"&&state.project&&
+      (!state.playerGroups||state.playerGroups.status==="running"))
+    loadPlayerGroups().catch(console.warn);
+  else if(state.playerMode==="auto")renderPlayerGroups();
+}
+function renderPlayerGroups(){
+  if(state.playerGroupsKey!==playerGroupsContext())state.playerGroups=null;
+  const status=$("#player-groups-status"),list=$("#player-groups-list");
+  if(!status||!list)return;
+  const result=state.playerGroups;
+  const reidThreshold=$("#player-reid-threshold");
+  const autoEnable=$("#player-auto-assign-enabled");
+  const autoThreshold=$("#player-auto-assign-threshold");
+  if(autoEnable&&document.activeElement!==autoEnable)
+    autoEnable.checked=!!result?.auto_assign_enabled;
+  if(autoThreshold&&document.activeElement!==autoThreshold)
+    autoThreshold.value=String(result?.auto_assign_threshold_percent??97);
+  if(autoEnable)autoEnable.disabled=!state.project||!analysisCacheId()||result?.status==="running";
+  if(autoThreshold)autoThreshold.disabled=!state.project||!analysisCacheId()||result?.status==="running";
+  const thresholdNumber=$("#player-reid-threshold-number");
+  const deferred=state.playerReidThresholdPending;
+  const threshold=Number(
+    deferred?.context===playerGroupsContext()?deferred.value:(result?.threshold_percent??85));
+  if(document.activeElement!==reidThreshold&&document.activeElement!==thresholdNumber){
+    reidThreshold.value=String(threshold);
+    thresholdNumber.value=String(threshold);
+  }
+  $("#player-reid-threshold-value").textContent=threshold+"%";
+  const editingAllowed=!!state.project&&!!analysisCacheId()&&!playerReidThresholdSaving;
+  reidThreshold.disabled=!editingAllowed;
+  thresholdNumber.disabled=!editingAllowed;
+  $("#player-groups-rebuild").disabled=!analysisCacheId()||result?.status==="running";
+  if(!state.project||!analysisCacheId()){
+    status.textContent="Выберите завершённый анализ с обнаруженными игроками.";
+    list.innerHTML="";return;
+  }
+  if(!result){
+    status.textContent="Загрузка сохранённых групп…";
+    list.innerHTML='<p class="muted">Ожидаем результаты ReID без повторного GPU-инференса.</p>';return;
+  }
+  if(result.status==="error"){
+    status.textContent="Ошибка группировки: "+(result.error||"неизвестная ошибка");
+    list.innerHTML="";return;
+  }
+  const assigned=associatedMap(),groups=result.groups||[];
+  const cards=[];
+  for(const group of groups){
+    // A group must contain at least two still-unassigned IDs. Only groups
+    // with an actual ReID score at or above the configured threshold qualify.
+    // Legacy manual merges and geometry-only retracking are not ReID groups.
+    if(group.source==="manual"||group.source==="automatic_retrack"||
+       group.similarity==null||!Number.isFinite(Number(group.similarity))||
+       Number(group.similarity)*100+0.001<threshold)continue;
+    const free=[...new Set((group.track_ids||[]).map(String))]
+      .filter(id=>!assigned.has(id));
+    if(free.length<2)continue;
+    cards.push({groupId:group.id,ids:free,source:group.source,similarity:group.similarity});
+  }
+  const grouped=new Set(cards.flatMap(card=>card.ids));
+  const unassigned=(state.report?.raw||[]).filter(row=>
+    !assigned.has(String(row.player_track_id))).length;
+  const manualOnly=Math.max(0,unassigned-grouped.size);
+  const progress=result.status==="running"
+    ?"Пересчитываем группы: "+(result.stage||"обработка")+" · "+(result.progress||0)+"%. ":"";
+  const queued=deferred?.context===playerGroupsContext()&&result.status!=="ready"
+    ?"Порог "+threshold+"% ожидает завершения текущего пересчёта. ":"";
+  const autoLinked=Object.values(result.auto_links||{}).reduce((n,ids)=>n+ids.length,0);
+  const autoLabel=result.auto_assign_enabled
+    ?" · Автопривязка ≥"+result.auto_assign_threshold_percent+"%: "+autoLinked+" новых ID"
+    :" · Автопривязка отключена";
+  status.textContent=queued+progress+"Групп, прошедших порог "+threshold+"%: "+cards.length+
+    " · ID вне групп: "+manualOnly+" (доступны в «Ручной привязке»)."+
+    autoLabel+" · Непривязанные группы подтверждаются вручную.";
+  list.innerHTML=cards.slice(0,120).map(item=>{
+    const ids=item.ids;
+    const first=ids[0];
+    const likely=suggestedPlayerHint(ids);
+    const source="Сходство внутри группы ReID: "+
+      Math.round(Number(item.similarity)*100)+"%";
+    return '<div class="player-appearance-card">'+
+      '<img loading="lazy" data-photo-track-id="'+esc(first)+'" tabindex="0" src="'+
+        esc(playerPhotoUrl(first))+'" alt="Фото Track ID #'+esc(first)+'" onerror="this.style.opacity=.15">'+
+      '<div class="player-appearance-info"><strong>'+
+        ids.length+" сгруппированных Track ID</strong>"+
+        '<small>'+esc(ids.slice(0,15).map(id=>"#"+id).join(", "))+
+        (ids.length>15?" …":"")+'</small><small>'+source+'</small>'+likely+'</div>'+
+      '<div class="player-appearance-actions">'+playerPickerHtml(
+        "group-player-picker",ids,"g:"+item.groupId)+
+        '<button type="button" class="primary small" data-group-link="'+
+          esc(item.groupId)+'"'+
+          (state.players.length?'':' disabled')+'>Привязать</button>'+
+      '</div></div>';
+  }).join("")||'<div class="empty">Групп, прошедших порог '+threshold+
+    '%, нет. Одиночные и неподходящие Track ID доступны в «Ручной привязке».</div>';
+  if(cards.length>120)list.insertAdjacentHTML("beforeend",
+    '<p class="muted">Показаны 120 из '+cards.length+
+    ' групп. Все остальные ID доступны в «Ручной привязке».</p>');
 }
 function associatedMap() {
   const map=new Map();
@@ -180,7 +485,9 @@ function playerFilterSet(raw,association){
   return raw.filter(item=>{
     const id=String(item.player_track_id),assigned=association.has(id);
     const seconds=Number(item.duration_sec||0);
-    if(search&&!id.includes(search)&&!(association.get(id)||"").toLowerCase().includes(search))return false;
+    const guess=state.playerGroups?.player_matches?.[id]?.name||"";
+    if(search&&!id.includes(search)&&!(association.get(id)||"").toLowerCase().includes(search)
+      &&!guess.toLowerCase().includes(search))return false;
     if(filter==="main")return seconds>=10;
     if(filter==="assigned")return assigned;
     if(filter==="unassigned")return !assigned;
@@ -198,27 +505,74 @@ function playerFilterSet(raw,association){
     el.closest("tr")?.classList.toggle("is-selected",selected);
   }
   updateChosen();
+  renderPlayerGroups();
 }
 function renderPlayers(){
+  window.VolleyballPlayerPhotoHover?.dismiss?.();
+  // Group IDs belong to a precise GPU inference, never to the adjacent video
+  // or CPU reprocessing version selected while another request is in flight.
+  if(state.playerGroupsKey!==playerGroupsContext())state.playerGroups=null;
   const r=state.report||{},raw=r.raw||[],groups=r.groups||[];
+  const autoLinked=new Set(groups.flatMap(group=>
+    Object.entries(group.link_meta||{}).filter(([,meta])=>
+      meta?.source==="reid_auto"&&!meta.reviewed).map(([id])=>String(id))));
   const association=associatedMap();
+  const appearance=appearanceGroupMap();
+  const missingVisual=new Set(state.playerGroups?.missing_visual_ids||[]);
   const matched=playerFilterSet(raw,association);
   const shown=matched.slice(0,state.limit);
   const assignedCount=raw.filter(x=>association.has(String(x.player_track_id))).length;
+  const groupCounts=new Map();
+  for(const item of raw){
+    const gid=appearance.get(String(item.player_track_id))?.id||
+      (state.playerGroups?.status==="ready"?"none-"+item.player_track_id:
+        String(item.candidate_group_id||("candidate-"+item.player_track_id)));
+    groupCounts.set(gid,(groupCounts.get(gid)||0)+1);
+  }
   $("#raw-count").textContent=matched.length+" из "+raw.length+" ID";
   $("#tracks-heading").textContent=state.playerFilter==="unassigned"
     ?"Нераспознанные Track ID":"Найденные Track ID";
   $("#players-health").innerHTML=[
     '<div class="player-health-metric"><strong>'+state.players.length+'</strong><span>Игроков в проекте</span></div>',
-    '<div class="player-health-metric"><strong>'+raw.length+'</strong><span>Найдено Track ID</span></div>',
+    '<div class="player-health-metric"><strong>'+raw.length+'</strong><span>'+
+      (r.replay_filtered_tracks?'Активных Track ID (CPU)':'Технических Track ID')+'</span></div>',
     '<div class="player-health-metric"><strong>'+assignedCount+'</strong><span>Привязано ID</span></div>',
     '<div class="player-health-metric"><strong>'+(raw.length-assignedCount)+'</strong><span>Осталось разобрать</span></div>'
   ].join("");
+  const cpuTrackNote=r.replay_filtered_tracks
+    ?"Активных Track ID в CPU-версии: "+raw.length+" из "+
+      (r.source_track_count??raw.length)+" исходных GPU. Исходные ID сохранены. "
+    :"Технических Track ID: "+raw.length+". ";
   $("#players-filter-note").textContent=raw.length
-    ?"Один человек может получить несколько Track ID. Сравните кадры, отметьте одинаковые ID и нажмите на игрока в верхнем блоке."
-    :"На этом видео пока нет найденных ID. Сначала запустите анализ игроков во вкладке «Анализ».";
+    ?cpuTrackNote+"Предварительных групп: "+
+      (state.playerGroups?.status==="ready"?(state.playerGroups.groups||[]).length:
+        r.candidate_groups_count??raw.length)+
+      ". Группы — предположения, не количество реальных игроков. Привяжите каждую проверенную группу к игроку."
+    :r.replay_filtered_tracks
+      ?"В выбранной CPU-версии фильтр исключил все Track ID. Исходные ID сохранены в GPU-анализе."
+      :"На этом видео пока нет найденных ID. Сначала запустите анализ игроков во вкладке «Анализ».";
   $("#raw-players").innerHTML=shown.map(row=>{
     const id=String(row.player_track_id),name=association.get(id);
+    const matchedGroup=appearance.get(id);
+    const guess=state.playerGroups?.status==="ready"?state.playerGroups.player_matches?.[id]:null;
+    const neighbor=state.playerGroups?.status==="ready"?state.playerGroups.nearest_tracks?.[id]?.[0]:null;
+    const guessName=state.players.find(p=>p.id===guess?.player_id)?.name||guess?.name||"";
+    const guessCell=guess
+      ?'<strong class="player-reid-guess'+(guess.above_threshold&&!guess.ambiguous?' is-likely':'')+'">'+
+       esc(guessName)+'</strong><small class="track-subline">'+(guess.confirmed
+         ?'Подтверждено вручную'
+         :'Сходство '+Math.round(guess.similarity*100)+'% · '+
+           (guess.ambiguous?'неоднозначно':guess.above_threshold?'выше порога':'ниже порога'))+
+       ' · образцов: '+Number(guess.reference_count||0)+'</small>'
+      :'<span class="muted">'+(state.playerGroups?.status==="running"?"Сравнение…":
+        state.playerGroups?.status==="ready"
+          ?missingVisual.has(id)?"Нет пригодного кадра":"Нет эталонов игроков"
+          :"Ожидание ReID")+'</span>';
+    const candidate=matchedGroup?.id||
+      (state.playerGroups?.status==="ready"?"none-"+id:
+        String(row.candidate_group_id||("candidate-"+id)));
+    const linkedSize=matchedGroup?.track_ids?.length||(state.playerGroups?.status==="ready"
+      ?1:groupCounts.get(candidate)||1);
     const duration=Number(row.duration_sec||0),score=Number(row.mean_score||0);
     const frames=Number(row.detected_frames||0);
     const actions=Number(row.total_actions||0);
@@ -226,13 +580,28 @@ function renderPlayers(){
       ?clock(row.start_sec)+" – "+clock(row.end_sec):"—";
     return '<tr class="player-track-row'+(name?' is-assigned':'')+(state.selected.has(id)?' is-selected':'')+'">'+
       '<td><input type="checkbox" class="row-select" data-id="'+esc(id)+'" aria-label="Выбрать Track ID '+esc(id)+'" '+(state.selected.has(id)?'checked':'')+'></td>'+
-      '<td><button type="button" class="photo-peek" data-id="'+esc(id)+'" title="Показать кадры Track #'+esc(id)+'">'+
+      '<td><button type="button" class="photo-peek" data-id="'+esc(id)+'" aria-label="Выбрать Track ID #'+esc(id)+' · наведите для увеличенных фотографий">'+
         '<img loading="lazy" src="'+esc(playerPhotoUrl(id))+'" alt="Кадр Track #'+esc(id)+'" onerror="this.style.opacity=0.15"></button></td>'+
-      '<td><strong>#'+esc(id)+'</strong><small class="track-subline">'+(score?Math.round(score*100)+'% уверенность':'Без оценки')+'</small></td>'+
+      '<td><strong>#'+esc(id)+'</strong><small class="track-subline">'+
+        (matchedGroup?"Группа ReID "+esc(candidate)+" · "+linkedSize+" ID":
+          state.playerGroups?.status==="ready"?"Отдельный ID (без надёжной группы)":
+            "Геометрическая цепочка "+esc(candidate)+" · "+linkedSize+" ID")+'</small>'+
+        (linkedSize>1?'<button type="button" class="secondary small" data-select-candidate="'+
+          esc(candidate)+'" title="Добавить все временные ID цепочки к выбору; привязку к игроку нужно подтвердить">'+
+          'Выбрать цепочку</button>':'')+
+        '<small class="track-subline">'+(score?Math.round(score*100)+'% уверенность детекции':'Без оценки детекции')+'</small>'+
+        (neighbor?'<small class="track-subline">Ближайший ID: #'+esc(neighbor.track_id)+
+           ' · сходство '+Math.round(neighbor.similarity*100)+'%</small>':'')+'</td>'+
       '<td><strong>'+duration.toFixed(1)+' с</strong><small class="track-subline">'+frames+' кадров · '+esc(time)+'</small></td>'+
       '<td><strong>'+actions+'</strong><small class="track-subline">'+(row.attack||0)+' атак · '+(row.dig||0)+' приёмов</small></td>'+
-      '<td>'+(name?'<span class="tag">'+esc(name)+'</span>':'<span class="muted">Не привязан</span>')+'</td></tr>';
-  }).join("")||'<tr><td colspan="6" class="empty">По этому фильтру ничего не найдено.</td></tr>';
+      '<td>'+(name?'<span class="tag">'+esc(name)+'</span>'+
+        (autoLinked.has(id)?'<small class="track-subline" title="Автоматическое совпадение не является подтверждённым эталоном. Чтобы подтвердить, выберите ID и сохраните привязку вручную.">Авто ReID · не проверено</small>':''):
+        '<div class="player-track-assign">'+playerPickerHtml("track-player-picker",[id],"t:"+id)+
+        suggestedPlayerHint([id])+
+        '<button type="button" class="primary small" data-track-link="'+esc(id)+'" '+
+        (state.players.length?'':'disabled')+'>Привязать ID</button></div>')+'</td>'+
+      '<td class="player-guess-cell">'+guessCell+'</td></tr>';
+  }).join("")||'<tr><td colspan="7" class="empty">По этому фильтру ничего не найдено.</td></tr>';
   $("#table-hint").textContent="Показано "+shown.length+" из "+matched.length+" · всего "+raw.length+" ID";
   $("#show-more").disabled=shown.length>=matched.length;
   $("#select-filtered").disabled=!matched.length;
@@ -246,22 +615,315 @@ function renderPlayers(){
     '<option value="'+esc(p.id)+'">'+esc(p.name)+'</option>').join("");
   if(options.some(p=>p.id===previous))picker.value=previous;
   $("#add-library-player").disabled=!options.length;
+  const bulk=$("#bulk-player-target"),prior=bulk.value;
+  bulk.innerHTML=playerPickerHtml("bulk-picker")
+    .replace(/^<select[^>]*>/,"").replace(/<\/select>$/,"");
+  bulk.value=state.players.some(p=>p.id===prior)?prior:(state.activePlayerId||"");
   const groupById=new Map((state.report?.groups||[]).map(group=>[group.id,group]));
   $("#named-list").innerHTML=state.players.map(p=>{
     const current=groupById.get(p.id)?.track_ids||[];
     const active=p.id===state.activePlayerId;
     const preview=current.slice(0,5).map(x=>'#'+esc(x)).join(", ");
-    return '<button type="button" class="player-identity-slot'+(active?' is-active':'')+(state.selected.size?' is-assign-target':'')+'" data-player-id="'+esc(p.id)+
+    return '<div class="player-roster-item"><button type="button" class="player-identity-slot'+(active?' is-active':'')+(state.selected.size&&active?' is-assign-target':'')+'" data-player-id="'+esc(p.id)+
       '" aria-pressed="'+active+'"><span class="player-slot-avatar">'+esc((p.name.trim()[0]||"?").toUpperCase())+
       '</span><span class="player-slot-text"><strong>'+esc(p.name)+'</strong><small>'+
       (current.length?current.length+' ID на этом видео · '+preview+(current.length>5?'…':''):'Пока нет ID на этом видео')+
       '</small><small>'+Number(state.photoCounts[p.id]||0)+' фото в личной базе</small></span><span class="player-slot-actions">'+
-      (state.selected.size?'Привязать →':current.length+' ID')+'</span></button>';
+      (state.selected.size?(active?'Цель привязки':'Выбрать как цель'):current.length+' ID')+'</span></button>'+
+      '<button type="button" class="player-roster-remove" data-remove-project-player="'+esc(p.id)+
+        '" title="Убрать '+esc(p.name)+' из проекта (общая база сохранится)" aria-label="Убрать '+esc(p.name)+
+        ' из проекта">×</button></div>';
   }).join("")||'<div class="player-roster-empty"><strong>Пока нет игроков</strong><p>Добавьте игрока из общей базы или создайте нового, затем отмечайте Track ID ниже.</p></div>';
   const active=state.players.find(p=>p.id===state.activePlayerId);
   $("#player-manage").hidden=!active;
   if(active&&document.activeElement!==$("#rename-player-name"))$("#rename-player-name").value=active.name;
   updateChosen();
+  if(state.playerMode==="auto")renderPlayerGroups();
+}
+async function renderPlayerAlbum(force=false){
+  const gallery=$("#player-album-gallery"),playerId=state.activePlayerId;
+  if(!force&&gallery.dataset.playerId===String(playerId)&&gallery.dataset.loaded==="true")return;
+  gallery.dataset.playerId=String(playerId);
+  gallery.dataset.loaded="false";
+  // Drop the height reservation only on an explicit album reload/navigation.
+  gallery.style.minHeight="";
+  const token=++state.albumToken,project=state.project;
+  const player=state.players.find(p=>p.id===playerId);
+  if(!player){
+    gallery.innerHTML='<div class="empty">Выберите карточку игрока сверху, чтобы посмотреть его сохранённые фотографии.</div>';
+    return;
+  }
+  gallery.innerHTML='<div class="muted">Загружаем личную фотобазу '+esc(player.name)+'…</div>';
+  try{
+    const album=await api("/api/players/album?player_id="+encodeURIComponent(playerId));
+    if(token!==state.albumToken||project!==state.project||playerId!==state.activePlayerId)return;
+    gallery.dataset.loaded="true";
+    gallery.innerHTML=album.photos?.length?album.photos.map(photo=>{
+      const url="/api/players/album-photo?player_id="+encodeURIComponent(playerId)+
+        "&filename="+encodeURIComponent(photo.filename);
+      return '<figure class="player-album-card"><a href="'+esc(url)+'" target="_blank" rel="noopener">'+
+        '<img loading="lazy" src="'+esc(url)+'" alt="Сохранённое фото игрока '+esc(player.name)+'"></a>'+
+        '<figcaption>Track #'+esc(photo.track_id)+' · '+esc(photo.video||"Видео")+
+        ' · кадр '+esc(photo.frame??"—")+'</figcaption>'+
+        '<div class="player-album-actions"><button type="button" class="secondary small" data-remove-album-photo="'+
+        esc(photo.filename)+'">Удалить фото</button></div></figure>';
+    }).join(""):'<div class="empty">В общей базе у этого игрока пока нет фото. После подтверждения Track ID образцы появятся здесь.</div>';
+  }catch(error){
+    if(token===state.albumToken)gallery.innerHTML='<div class="empty">'+esc(error.message)+'</div>';
+  }
+}
+// The second click confirms deletion within the same photo card; no browser modal.
+function cancelPlayerAlbumDelete(button){
+  if(!button||button.disabled)return;
+  delete button.dataset.confirmDelete;
+  button.textContent="Удалить фото";
+  button.classList.remove("is-confirm-delete");
+  const actions=button.closest(".player-album-actions");
+  actions?.querySelector("[data-cancel-album-delete]")?.remove();
+  actions?.classList.remove("is-confirming");
+}
+function requestPlayerAlbumDelete(button){
+  if(button.disabled)return;
+  if(button.dataset.confirmDelete==="true"){
+    return removePlayerAlbumPhoto(button).catch(console.warn);
+  }
+  // Only one inline confirmation can be active at a time.
+  $("#player-album-gallery").querySelectorAll("[data-remove-album-photo]").forEach(other=>{
+    if(other!==button)cancelPlayerAlbumDelete(other);
+  });
+  button.dataset.confirmDelete="true";
+  button.textContent="Да, удалить";
+  button.classList.add("is-confirm-delete");
+  const actions=button.closest(".player-album-actions");
+  actions.classList.add("is-confirming");
+  const cancel=document.createElement("button");
+  cancel.type="button";
+  cancel.className="secondary small";
+  cancel.dataset.cancelAlbumDelete="true";
+  cancel.textContent="Отмена";
+  button.after(cancel);
+}
+// Deletion updates only the affected album card and its roster counter.
+// Rebuilding the roster/gallery here would destroy loaded images and jump the scroll.
+async function removePlayerAlbumPhoto(button){
+  if(button.disabled||!state.activePlayerId)return;
+  const playerId=state.activePlayerId,projectId=state.project;
+  const filename=button.dataset.removeAlbumPhoto;
+  if(!filename||button.dataset.confirmDelete!=="true")return;
+  button.disabled=true;
+  const cancel=button.closest(".player-album-actions")?.querySelector("[data-cancel-album-delete]");
+  if(cancel)cancel.disabled=true;
+  button.textContent="Удаляем…";
+  try{
+    const result=await api("/api/players/photos/remove",{player_id:playerId,filename});
+    state.photoCounts[playerId]=result.count;
+    // References used by ReID have changed. Recalculate when the user next
+    // opens a grouping mode, not while they are reviewing the album.
+    clearTimeout(playerGroupsPoll);
+    ++playerGroupsSequence;
+    state.playerGroups=null;
+    state.playerGroupsKey="";
+    if(projectId!==state.project||playerId!==state.activePlayerId)return;
+
+    const gallery=$("#player-album-gallery");
+    const currentButton=Array.from(gallery.querySelectorAll("[data-remove-album-photo]"))
+      .find(item=>item.dataset.removeAlbumPhoto===filename);
+    const card=currentButton?.closest(".player-album-card");
+    if(card){
+      // Reserve the current height to avoid page-scroll anchoring and layout
+      // jumps, even when deleting the last card at the bottom of the page.
+      const height=gallery.offsetHeight;
+      if(height>0)gallery.style.minHeight=
+        Math.max(height,parseFloat(gallery.style.minHeight)||0)+"px";
+      card.remove();
+      if(!gallery.querySelector(".player-album-card")){
+        gallery.innerHTML='<div class="empty">В базе этого игрока больше нет фотографий.</div>';
+      }
+    }
+    const roster=Array.from($("#named-list").querySelectorAll("[data-player-id]"))
+      .find(item=>item.dataset.playerId===playerId);
+    const counter=roster?.querySelector(".player-slot-text small:last-child");
+    if(counter)counter.textContent=Number(result.count||0)+" фото в личной базе";
+    $("#players-action-feedback").textContent="Фотография удалена из общей базы.";
+  }catch(error){
+    button.disabled=false;
+    if(cancel)cancel.disabled=false;
+    cancelPlayerAlbumDelete(button);
+    // Show an inline error: alertBox() would scroll the whole page to the top.
+    $("#players-action-feedback").textContent="Не удалось удалить фотографию: "+error.message;
+  }
+}
+// Serialize disk writes, but allow multiple cards to be linked immediately.
+let playerAssignmentQueue=Promise.resolve();
+let pendingPlayerAssignments=0;
+// Minimal optimistic update: no report/photo fetch and no full DOM rerender.
+function patchAssignedTrackData(trackIds,player){
+  if(!state.report)return;
+  const keys=new Set(trackIds.map(String));
+  const groups=state.report.groups||(state.report.groups=[]);
+  for(const group of groups)group.track_ids=group.track_ids.filter(id=>!keys.has(String(id)));
+  const target=groups.find(group=>group.id===player.id);
+  if(target){
+    target.track_ids=[...new Set([...target.track_ids.map(String),...keys])]
+      .sort((a,b)=>Number(a)-Number(b));
+    target.name=player.name;
+  }else groups.push({id:player.id,name:player.name,
+    track_ids:[...keys].sort((a,b)=>Number(a)-Number(b))});
+}
+function undoOptimisticAssignedIds(trackIds){
+  const keys=new Set(trackIds.map(String));
+  if(!state.report?.groups)return;
+  for(const group of state.report.groups){
+    group.track_ids=group.track_ids.filter(id=>!keys.has(String(id)));
+  }
+  state.report.groups=state.report.groups.filter(group=>group.track_ids.length);
+}
+function updateAssignmentIndicators(playerId){
+  const raw=state.report?.raw||[],assigned=associatedMap();
+  const named=$("#named-list");
+  const roster=Array.from(named?.querySelectorAll?.("[data-player-id]")||[])
+    .find(el=>el.dataset.playerId===playerId);
+  if(roster){
+    const player=(state.report?.groups||[]).find(group=>group.id===playerId);
+    const ids=player?.track_ids||[];
+    const description=roster.querySelector?.(".player-slot-text small:first-child");
+    if(description)description.textContent=ids.length
+      ?ids.length+" ID на этом видео · "+ids.slice(0,5).map(x=>"#"+x).join(", ")+(ids.length>5?"…":"")
+      :"Пока нет ID на этом видео";
+    const label=roster.querySelector?.(".player-slot-actions");
+    if(label)label.textContent=ids.length+" ID";
+  }
+  const stat=$("#players-health")?.querySelectorAll?.(".player-health-metric strong");
+  const linked=raw.filter(row=>assigned.has(String(row.player_track_id))).length;
+  if(stat?.length>=4){
+    stat[2].textContent=String(linked);
+    stat[3].textContent=String(raw.length-linked);
+  }
+  const visible=playerFilterSet(raw,assigned);
+  $("#raw-count").textContent=visible.length+" из "+raw.length+" ID";
+  $("#table-hint").textContent="Показано "+Math.min(visible.length,state.limit)+
+    " из "+visible.length+" · всего "+raw.length+" ID";
+}
+function takeAssignmentCard(card){
+  if(!card?.parentNode)return ()=>{};
+  const parent=card.parentNode,next=card.nextSibling;
+  // Keep the list's height stable while photos and groups remain untouched.
+  const currentHeight=parent.offsetHeight||0;
+  if(currentHeight&&parent.style){
+    const reserved=parseFloat(parent.style.minHeight)||0;
+    parent.style.minHeight=Math.max(currentHeight,reserved)+"px";
+  }
+  card.remove();
+  return ()=>{
+    if(parent.isConnected===false)return;
+    parent.insertBefore(card,next?.parentNode===parent?next:null);
+  };
+}
+function patchManualTrackRows(trackIds,player){
+  const keys=new Set(trackIds.map(String)), changed=[];
+  for(const checkbox of $("#raw-players")?.querySelectorAll?.(".row-select")||[]){
+    const id=String(checkbox.dataset.id);
+    if(!keys.has(id))continue;
+    const row=checkbox.closest("tr");
+    if(!row)continue;
+    if(state.playerFilter==="unassigned"){
+      const parent=row.parentNode,next=row.nextSibling;
+      row.remove();
+      changed.push(()=>parent?.insertBefore?.(row,next?.parentNode===parent?next:null));
+    }else{
+      const cell=row.querySelector("td:nth-child(6)");
+      const previous=cell?.innerHTML;
+      if(cell)cell.innerHTML='<span class="tag">'+esc(player.name)+'</span>';
+      row.classList.add("is-assigned");
+      changed.push(()=>{
+        if(cell)cell.innerHTML=previous;
+        row.classList.remove("is-assigned");
+      });
+    }
+  }
+  return ()=>changed.reverse().forEach(fn=>fn());
+}
+async function assignSpecificTracks(ids,playerId,options={}){
+  if(state.playerAssignBusy)return;
+  const player=state.players.find(p=>p.id===playerId);
+  if(!player){
+    $("#players-action-feedback").textContent="Выберите игрока, добавленного в проект.";
+    return;
+  }
+  const already=associatedMap();
+  const free=[...new Set(ids.map(String))].filter(id=>!already.has(id));
+  if(!free.length){
+    $("#players-action-feedback").textContent="Эти ID уже привязаны к игрокам.";
+    return;
+  }
+  const projectId=state.project,video=state.video,cacheId=analysisCacheId();
+  const report=state.report;
+  const isCurrent=()=>projectId===state.project&&video===state.video&&
+    cacheId===analysisCacheId()&&report===state.report;
+  ++pendingPlayerAssignments;
+  ++state.reportEpoch; // Invalidate a report read started before the optimistic edit.
+  // Invalidate in-flight ReID updates that could redraw the list mid-save.
+  clearTimeout(playerGroupsPoll);
+  ++playerGroupsSequence;
+  patchAssignedTrackData(free,player);
+  const restoreCard=takeAssignmentCard(options.card);
+  const restoreRows=patchManualTrackRows(free,player);
+  for(const id of free)state.selected.delete(id);
+  updateAssignmentIndicators(player.id);
+  updateChosen();
+  $("#players-action-feedback").textContent="Сохраняем "+free.length+
+    " Track ID для «"+player.name+"»…";
+  if(state.playerMode==="auto")$("#player-groups-status").textContent=
+    "Сохраняем привязку "+free.length+" ID к «"+player.name+"»…";
+  let saved=0;
+  const persist=async()=>{
+    for(let i=0;i<free.length;i+=200){
+      const batch=free.slice(i,i+200);
+      await api("/api/assign",{project_id:projectId,video,cache_id:cacheId,
+        ids:batch,player_id:player.id});
+      saved+=batch.length;
+    }
+  };
+  // Each save gets a queue slot; the next card is still interactive.
+  const request=playerAssignmentQueue.then(persist,persist);
+  playerAssignmentQueue=request.catch(()=>{});
+  try{
+    await request;
+    if(!isCurrent())return;
+    state.reportDirty=true;
+    $("#players-action-feedback").textContent="Сохранено: "+saved+
+      " Track ID привязано к «"+player.name+"».";
+    if(state.playerMode==="auto")$("#player-groups-status").textContent=
+      "Сохранено: "+saved+" Track ID для «"+player.name+"». Остальные доступны для привязки.";
+  }catch(error){
+    if(!isCurrent())return;
+    // Restore only the unsaved IDs in a partially completed batch.
+    undoOptimisticAssignedIds(free.slice(saved));
+    if(saved)state.reportDirty=true;
+    if(saved){
+      // A multi-batch partial failure is rare: redraw just to expose the
+      // unsaved portion while keeping unrelated successful links intact.
+      renderPlayers();
+    }else{
+      restoreCard();
+      restoreRows();
+      for(const id of free)state.selected.add(id);
+      updateAssignmentIndicators(player.id);
+      updateChosen();
+    }
+    $("#players-action-feedback").textContent="Не удалось сохранить привязку: "+
+      error.message+(saved?" · сохранено "+saved+" ID":"");
+    if(state.playerMode==="auto")$("#player-groups-status").textContent=
+      "Ошибка сохранения: "+error.message+". Непривязанные ID возвращены в список.";
+  }finally{
+    --pendingPlayerAssignments;
+    if(isCurrent()){
+      updateChosen();
+      if(pendingPlayerAssignments>0&&!$("#players-action-feedback").textContent.startsWith("Не удалось"))
+        $("#players-action-feedback").textContent="Сохраняем оставшиеся привязки ("+
+          pendingPlayerAssignments+")…";
+    }
+  }
 }
 async function loadPlayerSuggestions(){
   const target=$("#player-suggestions"),id=state.previewId,video=state.video;
@@ -277,7 +939,7 @@ async function loadPlayerSuggestions(){
     if(request!==state.suggestionsToken||state.video!==video)return;
     const candidates=response.candidates||[];
     target.innerHTML=candidates.length?candidates.map(c=>
-      '<div class="player-suggestion"><img loading="lazy" src="'+esc(playerPhotoUrl(c.track_id))+
+      '<div class="player-suggestion"><img loading="lazy" tabindex="0" data-photo-track-id="'+esc(c.track_id)+'" src="'+esc(playerPhotoUrl(c.track_id))+
       '" alt="Предполагаемое продолжение #'+esc(c.track_id)+'" onerror="this.style.opacity=0.15">'+
       '<div><strong>Track #'+esc(c.track_id)+'</strong>'+
       '<small>'+c.direction+' · разрыв '+c.gap_sec+' с · '+c.duration_sec+' с трек</small>'+
@@ -369,6 +1031,12 @@ function montagePayload(){
   return {...params,project_id:state.project,run_id:selectedAnalysisRun()?.id||"",
     ...currentRallySettings()};
 }
+let activeMontagePickerId=null;
+function cancelActiveMontagePicker(){
+  const id=activeMontagePickerId;
+  activeMontagePickerId=null;
+  if(id)api("/api/local-videos/picker/cancel",{picker_id:id}).catch(()=>{});
+}
 async function chooseMontageAudio(){
   const button=$("#montage-audio-choose");
   const status=$("#montage-audio-status");
@@ -376,7 +1044,8 @@ async function chooseMontageAudio(){
   status.textContent="Открываем проводник для выбора музыки...";
   try{
     const started=await api("/api/local-videos/picker/start",{kind:"audio"});
-    for(let attempt=0;attempt<900;attempt++){
+    activeMontagePickerId=started.picker_id;
+    for(let attempt=0;attempt<280;attempt++){
       await new Promise(resolve=>setTimeout(resolve,650));
       const reply=await api("/api/local-videos/picker/status?picker_id="+
         encodeURIComponent(started.picker_id));
@@ -396,6 +1065,7 @@ async function chooseMontageAudio(){
   }catch(error){
     status.textContent="Ошибка выбора аудио: "+error.message;
   }finally{
+    cancelActiveMontagePicker();
     button.disabled=false;
   }
 }
@@ -673,27 +1343,84 @@ function populatePlayersSelect() {
   select.innerHTML=p.videos.map(name=>'<option value="'+esc(name)+'">'+esc(name)+'</option>').join("");
   if(p.videos.includes(state.video))select.value=state.video;
 }
-function renderProjectPicker() {
-  const current=selectedProject();
-  $("#project-settings-trigger").disabled=!current;
-  $("#project-picker-name").textContent=current
-    ?current.name+(current.missing_videos?.length?" · нет "+current.missing_videos.length+" видео":"")
-    :"Выберите проект";
-  const menu=$("#project-picker-menu");
-  menu.innerHTML=state.projects.length?state.projects.map((p,i)=>{
-    const duplicate=state.projects.filter(x=>x.name.toLocaleLowerCase()===p.name.toLocaleLowerCase()).length>1;
-    const caption=p.name+(duplicate?" · "+p.id.slice(0,6):"")+
-      (p.missing_videos?.length?" · недоступно "+p.missing_videos.length+" видео":"");
-    return '<button type="button" class="project-picker-option'+(p.id===state.project?' is-selected':'')+
-      '" role="option" id="project-picker-option-'+i+'" data-project-id="'+esc(p.id)+
-      '" aria-selected="'+(p.id===state.project)+'" title="'+esc(caption)+'">'+
-      '<span class="project-picker-option-glyph">'+(p.id===state.project?'✓':'▣')+'</span>'+
-      '<span class="project-picker-option-name">'+esc(caption)+'</span>'+
-      '</button>';
-  }).join(""):'<div class="project-picker-empty">Пока нет проектов</div>';
-}
 function selectedAnalysisRun(){
-  return state.analysisRuns.find(run=>run.id===state.analysisRunId)||null;
+  // The currently selected CPU version must belong to this video and project.
+  // A run from another video can never become the data source for its preview.
+  return state.analysisRuns.find(run=>run.id===state.analysisRunId&&
+    Object.prototype.hasOwnProperty.call(run.videos||{},state.video))||null;
+}
+function renderHeaderChain(){
+  const model=window.VolleyballHeaderChain;
+  if(!model)return;
+  const fill=(id,options,chosen,empty)=>{
+    const control=$("#"+id);
+    control.replaceChildren();
+    if(!options.length){
+      control.add(new Option(empty,""));
+      control.disabled=true;
+    }else{
+      for(const row of options){
+        const option=new Option(row.label,row.id);
+        if(row.title)option.title=row.title;
+        option.cpuVersion=Boolean(row.isCpuVersion);
+        control.add(option);
+      }
+      control.disabled=false;
+      control.value=options.some(row=>row.id===chosen)?chosen:options[0].id;
+    }
+  };
+  const project=selectedProject();
+  fill("chain-project",state.projects.map(p=>({
+    id:p.id,label:p.name+(state.projects.filter(other=>
+      other.name.toLocaleLowerCase()===p.name.toLocaleLowerCase()).length>1
+      ?" · "+p.id.slice(0,6):""),
+    title:p.name+" · "+p.id
+  })),state.project,"Нет проектов");
+  const chosen=model.selected(state.analysisRuns,state.video,state.analysisRunId);
+  const projectVideos=new Set(project?.videos||[]);
+  const originals=state.analysisRuns.filter(run=>!run.parent_run_id)
+    .flatMap(run=>Object.keys(run.videos||{})
+      .filter(video=>projectVideos.has(video))
+      .map(video=>({run,video})));
+  fill("chain-inference",originals.map(({run,video})=>({
+    id:model.choiceId(video,run.id),
+    label:video+" · "+model.initialLabel(run,video),
+    title:video+" · "+run.profile+" · "+model.rangeText(run.video_ranges?.[video])+
+      " · "+run.started_at+" · "+run.id
+  })),chosen.parent?model.choiceId(state.video,chosen.parent.id):"",
+  "Нет первичного анализа — запустите его");
+  const versions=chosen.parent
+    ?model.branches(state.analysisRuns,state.video,chosen.parent.id):[];
+  fill("chain-postprocess",versions.map(run=>({
+    id:run.id,label:model.versionLabel(run),
+    isCpuVersion:Boolean(run.parent_run_id),
+    title:run.postprocess_settings
+      ?JSON.stringify(run.postprocess_settings,null,2)
+      :"Исходный результат анализа · "+run.id
+  })),chosen.version?.id,chosen.parent?"Нет обработок":"Сначала запустите нейросети");
+  window.VolleyballHeaderMenu?.render();
+}
+function preferredContextRun({newest=false}={}){
+  const model=window.VolleyballHeaderChain;
+  if(!model||!state.project||!state.video)return "";
+  const key=contextIdentity();
+  const originals=model.originalRuns(state.analysisRuns,state.video);
+  let saved="";
+  try{saved=localStorage.getItem(headerRunKey())||""}catch{}
+  const current=activeHeaderContext===key&&!newest?state.analysisRunId:"";
+  const preferred=newest?originals[0]?.id:
+    current||saved||originals[0]?.id;
+  activeHeaderContext=key;
+  const choice=model.selected(state.analysisRuns,state.video,preferred);
+  if(choice.parent&&choice.version?.id===choice.parent.id&&(newest||(!current&&!saved))){
+    const recommended=model.branches(state.analysisRuns,state.video,choice.parent.id)
+      .find(run=>run.parent_run_id&&
+        run.postprocess_settings?.mode==="combined"&&
+        Number(run.postprocess_settings?.player_threshold)===.30&&
+        Number(run.postprocess_settings?.touch_threshold)===.45);
+    if(recommended)return recommended.id;
+  }
+  return choice.version?.id||"";
 }
 function analysisCacheMap(){
   return selectedAnalysisRun()?.videos||{};
@@ -701,72 +1428,62 @@ function analysisCacheMap(){
 function analysisCacheId(name=state.video){
   return analysisCacheMap()[name]||"";
 }
+function updateReprocessControls(){
+  const selected=selectedAnalysisRun();
+  const button=document.getElementById("reprocess-start");
+  if(button)button.disabled=!state.project||!selected||
+    state.latestTask?.status==="running";
+  const status=document.getElementById("reprocess-status");
+  if(status&&!selected)status.textContent="Сначала выполните анализ проекта.";
+  if(status&&selected&&state.latestTask?.kind!=="reprocess")
+    status.textContent="Настройки пересчёта в «Предпросмотре», ход выполнения — в левой панели.";
+}
 function renderAnalysisRunChoices(){
-  const picked=selectedAnalysisRun();
-  const tooltip=$("#sidebar-run-info");
-  if(tooltip){
-    tooltip.hidden=!picked;
-    tooltip.textContent=picked
-      ?"Профиль: "+picked.profile+"\n"+
-       "Дата запуска: "+(Number.isNaN(new Date(picked.started_at).getTime())
-         ?"—":new Date(picked.started_at).toLocaleString(window.VolleyI18n?.locale()||"ru-RU"))+"\n"+
-       "ID: "+picked.id
-      :"";
-  }
-  for(const el of $$("[data-analysis-run-select]")){
-    el.replaceChildren();
-    if(!state.analysisRuns.length){
-      el.add(new Option(state.project?"В проекте нет запусков анализа":"Выберите проект",""));
-      el.disabled=true;
-      el.title="";
-      continue;
-    }
-    el.disabled=false;
-    for(const run of state.analysisRuns){
-      // Keep the selector compact; full date and ID are available on hover.
-      const option=new Option(run.profile+" · "+run.id.slice(-6),run.id);
-      option.title=run.profile+" · "+run.started_at+" · "+run.id;
-      el.add(option);
-    }
-    el.value=picked?.id||"";
-    el.title="";
-  }
+  // The dependency chain in the header is the only run selector.
+  renderHeaderChain();
+  updateReprocessControls();
 }
 async function loadAnalysisRuns(preferNewest=false){
+  const request=++analysisRunsRequest;
   if(!state.project){
-    state.analysisRuns=[];state.analysisRunId="";renderAnalysisRunChoices();return;
+    state.analysisRuns=[];state.analysisRunId="";renderAnalysisRunChoices();return true;
   }
   const project=state.project;
   const answer=await api("/api/analysis-runs?project_id="+encodeURIComponent(project));
-  if(project!==state.project)return;
+  // Runs cover every video of this project. A video switch during the HTTP
+  // request must still populate the list, using the CURRENT video for selection.
+  // Only a superseded request or a different project invalidates the reply.
+  if(request!==analysisRunsRequest||project!==state.project)
+    return false;
   state.analysisRuns=answer.runs||[];
-  const storage="volley-analysis-run:"+project;
-  const profileStorage="volley-analysis-profile:"+project;
-  let saved="",savedProfile="";
-  try{
-    saved=localStorage.getItem(storage)||"";
-    savedProfile=localStorage.getItem(profileStorage)||"";
-  }catch{}
   const latest=preferNewest||state.analysisRunId==="__new__";
-  const previous=latest?"":state.analysisRunId;
-  state.analysisRunId=state.analysisRuns.find(run=>run.id===previous)?.id
-    ||(!latest?state.analysisRuns.find(run=>run.id===saved)?.id:"")
-    ||(!latest&&savedProfile?state.analysisRuns.find(run=>run.profile===savedProfile)?.id:"")
-    ||state.analysisRuns[0]?.id||"";
+  state.analysisRunId=preferredContextRun({newest:latest});
   try{
-    if(state.analysisRunId)localStorage.setItem(storage,state.analysisRunId);
+    if(state.analysisRunId){
+      localStorage.setItem("volley-analysis-run:"+project,state.analysisRunId);
+      localStorage.setItem(headerRunKey(),state.analysisRunId);
+    }
   }catch{}
   renderAnalysisRunChoices();
   renderRenders();
   scheduleMontagePlan();
+  return true;
 }
 async function chooseAnalysisRun(id){
   if(id===state.analysisRunId)return;
-  if(!state.analysisRuns.some(run=>run.id===id))return;
+  const finish=beginWorkspaceLoading("Загрузка выбранного анализа…");
+  try{return await chooseAnalysisRunCore(id);}
+  finally{finish();}
+}
+async function chooseAnalysisRunCore(id){
+  if(id===state.analysisRunId)return;
+  if(!state.analysisRuns.some(run=>run.id===id&&
+    Object.prototype.hasOwnProperty.call(run.videos||{},state.video)))return;
   const projectId=state.project;
   state.analysisRunId=id;
   try{
     localStorage.setItem("volley-analysis-run:"+projectId,id);
+    localStorage.setItem(headerRunKey(projectId,state.video),id);
     localStorage.setItem("volley-analysis-profile:"+projectId,selectedAnalysisRun().profile);
   }catch{}
   renderAnalysisRunChoices();
@@ -776,25 +1493,9 @@ async function chooseAnalysisRun(id){
   if(projectId!==state.project||id!==state.analysisRunId)return;
   const p=selectedProject();
   if(p&&$("#view-analysis-results").classList.contains("active")){
-    window.VolleyballResultsUI.setCacheSelection(analysisCacheMap(),state.analysisRunId);
+    window.VolleyballResultsUI.setCacheSelection(analysisCacheMap(),state.analysisRunId,
+      selectedAnalysisRun()?.postprocess_settings||null);
     await window.VolleyballResultsUI.setProject(state.project,p.videos,state.video);
-  }
-}
-function closeProjectPicker(returnFocus=false){
-  $("#project-picker-menu").hidden=true;
-  $("#project-picker-trigger").setAttribute("aria-expanded","false");
-  $("#project-picker").classList.remove("is-open");
-  if(returnFocus)$("#project-picker-trigger").focus();
-}
-function openProjectPicker(focusOption=false){
-  if(!state.projects.length)return;
-  const menu=$("#project-picker-menu");
-  menu.hidden=false;
-  $("#project-picker-trigger").setAttribute("aria-expanded","true");
-  $("#project-picker").classList.add("is-open");
-  if(focusOption){
-    const target=menu.querySelector('[aria-selected="true"]')||menu.querySelector('[role="option"]');
-    target?.focus();
   }
 }
 let preparationTimer=null;
@@ -892,7 +1593,7 @@ function renderSources() {
       ((counts.get(p.name.toLocaleLowerCase())||0)>1
        ?' · '+esc(p.id.slice(0,6)):'')+'</option>').join("");
   $("#top-project").value=state.project||"";
-  renderProjectPicker();
+  renderHeaderChain();
   $("#no-project").hidden=!!p;
   $("#video-preparation").hidden=!p;
   $("#project-workspace").hidden=!p;
@@ -931,29 +1632,67 @@ async function loadProjects(preferredId=null,epoch=projectLoadEpoch) {
   if(!chosen){
     try{chosen=localStorage.getItem(SELECTED_PROJECT_KEY)||"";}catch{}
   }
+  const priorProject=state.project;
   state.project=projects.some(p=>p.id===chosen)?chosen:projects[0]?.id||"";
+  if(priorProject!==state.project){
+    // Clear the old project hierarchy before showing the new one.
+    state.analysisRuns=[];state.analysisRunId="";activeHeaderContext="";
+  }
   const p=selectedProject();
-  if(!p?.videos?.includes(state.video))state.video=p?.videos?.[0]||"";
+  if(p){
+    let storedVideo="";
+    try{storedVideo=localStorage.getItem(headerVideoKey(p.id))||""}catch{}
+    if(!p.videos.includes(state.video)||state.project!==activeHeaderContext.split("\u0000")[0]){
+      state.video=p.videos.includes(storedVideo)?storedVideo:p.videos[0]||"";
+    }
+    try{if(state.video)localStorage.setItem(headerVideoKey(p.id),state.video)}catch{}
+  }else state.video="";
   try{
     if(state.project)localStorage.setItem(SELECTED_PROJECT_KEY,state.project);
     else localStorage.removeItem(SELECTED_PROJECT_KEY);
   }catch{}
-  closeProjectPicker();
   renderSources();
   renderSidebarActivity();
   return true;
 }
 async function selectSource(name) {
-  if(!selectedProject()?.videos.includes(name))return;
-  if(state.video===name)return;
+  if(!selectedProject()?.videos.includes(name)||state.video===name)return;
+  const finish=beginWorkspaceLoading("Переключение видео и загрузка данных…");
+  try{return await selectSourceCore(name);}
+  finally{finish();}
+}
+async function selectSourceCore(name) {
+  if(!selectedProject()?.videos.includes(name)||state.video===name)return;
+  const projectId=state.project;
+  const selection=++videoSelectionGeneration;
   await window.VolleyballAutoSave.flush();
+  if(selection!==videoSelectionGeneration||projectId!==state.project)return;
   state.video=name;
+  try{localStorage.setItem(headerVideoKey(projectId),name)}catch{}
+  state.analysisRunId=preferredContextRun();
+  renderAnalysisRunChoices();
   renderSources();
+  renderRenders();
+  scheduleMontagePlan();
   populatePlayersSelect();
-  await Promise.all([loadReport(),window.VolleyballAnalysisUI.setVideo(name)]);
+  const refresh=[loadReport(),window.VolleyballAnalysisUI.setVideo(name)];
+  if($("#view-analysis-results").classList.contains("active")){
+    window.VolleyballResultsUI.setCacheSelection(
+      analysisCacheMap(),state.analysisRunId,
+      selectedAnalysisRun()?.postprocess_settings||null);
+    refresh.push(window.VolleyballResultsUI.setProject(
+      projectId,selectedProject().videos,name));
+  }
+  await Promise.all(refresh);
 }
 let projectSourceGeneration=0;
 let projectSourcePending=0;
+let activeProjectPickerId=null;
+function cancelActiveProjectPicker(){
+  const id=activeProjectPickerId;
+  activeProjectPickerId=null;
+  if(id)api("/api/local-videos/picker/cancel",{picker_id:id}).catch(()=>{});
+}
 let projectImportedSources=new Set();
 
 function renderDialogVideos(picked=new Set()){
@@ -969,7 +1708,12 @@ function renderDialogVideos(picked=new Set()){
   ).join(""):"";
   updateDialogSelection();
 }
+window.addEventListener?.("pagehide",()=>{
+  cancelActiveMontagePicker();
+  cancelActiveProjectPicker();
+});
 function resetProjectUploadDialog(){
+  cancelActiveProjectPicker();
   ++projectSourceGeneration;
   projectSourcePending=0;
   projectImportedSources=new Set();
@@ -1008,35 +1752,63 @@ async function registerProjectLocalSources(paths,generation){
   localSourceFeedback("Добавлено источников: "+(reply.videos||[]).length+
     ". Оригинальные файлы не копируются.");
 }
-async function chooseProjectSourcePaths(){
-  if(state.dialogBusy)return;
+const PROJECT_VIDEO_TYPES=new Set(["mp4","mov","mkv","avi","webm","m4v","mts"]);
+async function acceptProjectFiles(fileList){
+  if(state.dialogBusy||projectSourcePending)return;
+  const selected=Array.from(fileList||[]);
+  if(!selected.length)return;
   const generation=projectSourceGeneration;
+  const existing=new Set($$(".dialog-source-check").filter(el=>el.checked).map(el=>el.value));
+  if(selected.length+existing.size>30){
+    localSourceFeedback("Максимум 30 видео для одного проекта.",true);return;
+  }
+  if(selected.some(file=>!PROJECT_VIDEO_TYPES.has((file.name.split(".").pop()||"").toLowerCase()))){
+    localSourceFeedback("Выбран неподдерживаемый формат видео.",true);return;
+  }
   sourceOperationStart();
   $("#project-video-dropzone").disabled=true;
-  localSourceFeedback("Открываем проводник Windows. Выберите один или несколько файлов.");
+  localSourceFeedback("Определяем расположение оригиналов на компьютере. Видео не загружаются…");
   try{
-    const launched=await api("/api/local-videos/picker/start",{});
-    while(generation===projectSourceGeneration){
-      await new Promise(resolve=>setTimeout(resolve,650));
-      if(generation!==projectSourceGeneration)return;
-      const result=await api("/api/local-videos/picker/status?picker_id="+
-        encodeURIComponent(launched.picker_id));
-      if(result.status==="pending")continue;
-      if(result.status==="error")throw new Error(result.error||"Не удалось открыть проводник");
-      if(!result.paths?.length){
-        localSourceFeedback("Выбор файлов отменён.");
-        break;
-      }
-      await registerProjectLocalSources(result.paths,generation);
-      break;
+    const reply=await api("/api/project/resolve-files",{
+      files:selected.map(file=>({name:file.name,size:file.size,
+        last_modified:file.lastModified}))
+    });
+    if(generation!==projectSourceGeneration)return;
+    const picked=new Set($$(".dialog-source-check").filter(el=>el.checked).map(el=>el.value));
+    for(const video of reply.videos||[]){
+      picked.add(video.name);
+      projectImportedSources.add(video.name);
+      const previous=state.videos.findIndex(row=>row.name===video.name);
+      if(previous<0)state.videos.push(video);
+      else state.videos[previous]={...state.videos[previous],...video};
     }
+    renderDialogVideos(picked);
+    localSourceFeedback("Добавлено видео: "+(reply.videos||[]).length+
+      ". Оригиналы остаются на месте, без копирования.");
   }catch(error){
-    if(generation===projectSourceGeneration)
-      localSourceFeedback(error.message,true);
+    if(generation===projectSourceGeneration)localSourceFeedback(error.message,true);
   }finally{
     if(generation===projectSourceGeneration)$("#project-video-dropzone").disabled=false;
     sourceOperationEnd(generation);
   }
+}
+async function chooseProjectSourcePaths(){
+  if(state.dialogBusy||projectSourcePending)return;
+  // The native browser dialog is attached to the visible desktop session,
+  // unlike a PowerShell dialog launched inside a headless WSL server.
+  if(typeof window.showOpenFilePicker==="function"){
+    try{
+      const handles=await window.showOpenFilePicker({multiple:true,startIn:"desktop"});
+      return acceptProjectFiles(await Promise.all(handles.map(item=>item.getFile())));
+    }catch(error){
+      if(error?.name==="AbortError")return;
+      if(!["TypeError","NotSupportedError","SecurityError"].includes(error?.name)){
+        localSourceFeedback("Не удалось открыть выбор видео: "+error.message,true);
+        return;
+      }
+    }
+  }
+  $("#project-video-file-input").click();
 }
 function updateDialogSelection() {
   const boxes=$$(".dialog-source-check");
@@ -1259,6 +2031,11 @@ async function loadAnalysisHistory(){
   }
 }
 async function loadAll(preferredId=null,epoch=++projectLoadEpoch) {
+  const finish=beginWorkspaceLoading("Загрузка данных проекта…");
+  try{return await loadAllCore(preferredId,epoch);}
+  finally{finish();}
+}
+async function loadAllCore(preferredId,epoch) {
   const previousProject=state.project;
   if(!await loadProjects(preferredId,epoch)||epoch!==projectLoadEpoch)return false;
   const project=selectedProject();
@@ -1266,30 +2043,47 @@ async function loadAll(preferredId=null,epoch=++projectLoadEpoch) {
     // Never display a completed run or report from another project while
     // the new project's network requests are in flight.
     ++state.reportEpoch;
-    state.report=null;state.aggregate=null;state.renders=[];state.analysisContext=null;
+    state.report=null;state.aggregate=null;state.reportDirty=false;state.renders=[];state.analysisContext=null;
     state.analysisRuns=[];state.analysisRunId="";
     state.players=[];state.photoCounts={};state.activePlayerId=null;
+    state.playerMetaProject="";state.reportContext="";
+    state.playerGroups=null;state.playerGroupsKey="";state.playerReidThresholdPending=null;
+    clearTimeout(playerGroupsPoll);
     renderAnalysisRunChoices();renderReport();renderRenders();displayAnalysisContext();
   }
   if(project){
     // Set the owner before loading the preview, report or run-dependent UI.
     window.VolleyballAnalysisUI.setProjectRanges(project.ranges||{},project.id);
-    await loadAnalysisRuns();
+    if(!await loadAnalysisRuns())return false;
     if(epoch!==projectLoadEpoch)return false;
-    await Promise.all([loadReport(),loadRenders(),loadBenchmarkResults(),
-      loadBenchmarkModels(),refreshAnalysisContext(),loadAnalysisHistory(),
-      refreshVideoPreparation()]);
-    if(epoch!==projectLoadEpoch)return false;
-    if(state.video)await window.VolleyballAnalysisUI.setVideo(state.video);
-    if(epoch!==projectLoadEpoch)return false;
-    if($("#view-analysis-results").classList.contains("active")){
-      window.VolleyballResultsUI.setCacheSelection(analysisCacheMap(),state.analysisRunId);
-      await window.VolleyballResultsUI.setProject(project.id,project.videos,state.video);
+    // Critical data is loaded concurrently. Benchmark/history/secondary
+    // metadata no longer hold the entire workspace behind a loading screen.
+    const previewActive=$("#view-analysis-results").classList.contains("active");
+    const montageActive=$("#view-results").classList.contains("active");
+    const critical=[loadReport()];
+    if(state.video)critical.push(window.VolleyballAnalysisUI.setVideo(state.video));
+    if(montageActive)critical.push(loadRenders());
+    if(previewActive){
+      window.VolleyballResultsUI.setCacheSelection(analysisCacheMap(),state.analysisRunId,
+        selectedAnalysisRun()?.postprocess_settings||null);
+      critical.push(window.VolleyballResultsUI.setProject(project.id,project.videos,state.video));
     }
+    const optional=[loadBenchmarkResults,loadBenchmarkModels,refreshAnalysisContext,
+      loadAnalysisHistory,refreshVideoPreparation];
+    if(!montageActive)optional.push(loadRenders);
+    await Promise.all(critical);
+    if(epoch!==projectLoadEpoch)return false;
+    // Background requests are started only after primary data is ready.
+    // This avoids competing with the preview/report on a single local server.
+    for(const task of optional)
+      Promise.resolve().then(()=>epoch===projectLoadEpoch&&project.id===state.project?
+        task():null).catch(error=>console.warn("Background workspace data:",error));
   }else{
-    state.report=null;state.aggregate=null;state.renders=[];state.analysisContext=null;
+    state.report=null;state.aggregate=null;state.reportDirty=false;state.renders=[];state.analysisContext=null;
     state.analysisRuns=[];state.analysisRunId="";renderAnalysisRunChoices();
     state.players=[];state.libraryPlayers=[];state.photoCounts={};state.activePlayerId=null;
+    state.playerMetaProject="";state.reportContext="";
+    state.playerGroups=null;state.playerGroupsKey="";clearTimeout(playerGroupsPoll);
     window.VolleyballAnalysisUI.setProjectRanges({},"");
     $("#source-video-player").pause();
     $("#source-video-player").removeAttribute("src");
@@ -1301,37 +2095,57 @@ async function loadAll(preferredId=null,epoch=++projectLoadEpoch) {
   alertBox("");
   return true;
 }
-async function loadReport() {
+async function loadReport({playersOnly=false}={}) {
   if(!state.project||!state.video)return;
   const epoch=++state.reportEpoch;
-  const project=state.project, video=state.video, runId=state.analysisRunId;
-  const projectId=encodeURIComponent(state.project);
-  const cacheId=analysisCacheId();
-  const [report, aggregate, roster, library, photoIndex]=await Promise.all([
-    cacheId?api("/api/report?video="+encodeURIComponent(state.video)+"&project_id="+projectId+
-      "&cache_id="+encodeURIComponent(cacheId)):Promise.resolve({
-        analyzed:false,source:state.video,raw:[],groups:[],counts:{},rallies:0
-      }),
-    api("/api/project-report?id="+projectId+
-      (state.analysisRunId?"&run_id="+encodeURIComponent(state.analysisRunId):"")),
-    api("/api/players?project_id="+projectId),
-    api("/api/players/library"),
-    api("/api/players/photos")
+  const project=state.project,video=state.video,runId=state.analysisRunId;
+  const projectId=encodeURIComponent(project),cacheId=analysisCacheId();
+  const context=[project,video,runId,cacheId].join("\u0000");
+  const reuse=playersOnly&&state.reportContext===context&&
+    state.report&&state.aggregate&&!state.reportDirty;
+  const needPlayers=$("#view-players").classList.contains("active");
+  // Project/video/CPU switches do not need the complete photo library.
+  // Fetch it only in Players; cache identical global catalog calls briefly.
+  const [report,aggregate,roster,catalog]=await Promise.all([
+    reuse?Promise.resolve(state.report):
+      cacheId?api("/api/report?video="+encodeURIComponent(video)+"&project_id="+projectId+
+        "&cache_id="+encodeURIComponent(cacheId)):Promise.resolve({
+          analyzed:false,source:video,raw:[],groups:[],counts:{},rallies:0}),
+    reuse?Promise.resolve(state.aggregate):api("/api/project-report?id="+projectId+
+      (runId?"&run_id="+encodeURIComponent(runId):"")),
+    needPlayers?api("/api/players?project_id="+projectId):Promise.resolve(null),
+    needPlayers?sharedPlayerCatalogs():Promise.resolve(null)
   ]);
   if(epoch!==state.reportEpoch||project!==state.project||
      video!==state.video||runId!==state.analysisRunId)return;
   state.report=report;
   state.aggregate=aggregate;
-  state.players=roster.players||[];
-  state.libraryPlayers=library.players||[];
-  state.photoCounts=photoIndex.counts||{};
-  if(!state.players.some(p=>p.id===state.activePlayerId))state.activePlayerId=null;
-  state.selected.clear();
-  state.previewId=state.report?.raw?.[0]?.player_track_id!=null?String(state.report.raw[0].player_track_id):null;
-  renderReport();renderPlayers();populatePlayersSelect();
-  if($("#view-players").classList.contains("active"))loadPlayerSuggestions().catch(console.warn);
-  // Load photo gallery only on the player page to avoid decoding unused crops.
-  if($("#view-players").classList.contains("active"))renderPlayerPhotos().catch(console.warn);
+  state.reportContext=context;
+  state.reportDirty=false;
+  if(needPlayers){
+    state.players=roster.players||[];
+    state.libraryPlayers=catalog.libraryPlayers;
+    state.photoCounts=catalog.photoCounts;
+    state.playerMetaProject=project;
+    if(!state.players.some(p=>p.id===state.activePlayerId))state.activePlayerId=null;
+  }
+  if(!reuse){
+    state.selected.clear();
+    state.previewId=report?.raw?.[0]?.player_track_id!=null?
+      String(report.raw[0].player_track_id):null;
+    renderReport();
+  }
+  if(needPlayers){
+    renderPlayers();
+    if(state.playerMode!=="view")loadPlayerGroups().catch(console.warn);
+    if(state.playerMode==="manual"){
+      loadPlayerSuggestions().catch(console.warn);
+      renderPlayerPhotos().catch(console.warn);
+    }else if(state.playerMode==="view"&&state.activePlayerId){
+      renderPlayerAlbum().catch(console.warn);
+    }
+  }
+  populatePlayersSelect();
 }
 async function loadRenders(){
   const p=selectedProject();
@@ -1486,16 +2300,18 @@ function clockElapsed(seconds){
   return (hh?String(hh).padStart(2,"0")+":":"")+
     String(mm).padStart(2,"0")+":"+String(ss).padStart(2,"0");
 }
-// Mirror the current project's analysis/montage job in the left navigation.
+// Mirror the current project's analysis, CPU replay and montage jobs in the sidebar.
 // The same /api/job response drives the detailed tab panels and these compact cards.
 function renderSidebarActivity(info=state.latestTask){
   const kind=info?.kind==="highlights"?"montage":
+    info?.kind==="reprocess"?"reprocess":
     ["analyze","experiment"].includes(info?.kind)?"analysis":null;
   const visible=Boolean(state.project&&info?.project_id===state.project&&
     kind&&info.status!=="idle");
   const container=$("#sidebar-tasks");
   container.hidden=!visible;
-  for(const type of ["analysis","montage"]){
+  $("#sidebar-reprocess-cancel").hidden=!(visible&&kind==="reprocess"&&info.status==="running");
+  for(const type of ["analysis","montage","reprocess"]){
     const card=$("#sidebar-"+type+"-task");
     card.hidden=!visible||kind!==type;
     if(card.hidden)continue;
@@ -1513,13 +2329,18 @@ function renderSidebarActivity(info=state.latestTask){
     card.dataset.status=info.status;
     $("#sidebar-"+type+"-state").textContent=status;
     const stageNode=$("#sidebar-"+type+"-stage");
-    stageNode.textContent=stage;
-    stageNode.title=stage;
+    const visibleStage=type==="reprocess"&&info.video_index
+      ?"Видео "+info.video_index+"/"+(info.videos_total||"?")+
+        (info.video_name?" · "+info.video_name:"")+" · "+stage
+      :stage;
+    stageNode.textContent=visibleStage;
+    stageNode.title=visibleStage;
     $("#sidebar-"+type+"-fill").style.width=percent+"%";
     const meter=card.querySelector('[role="progressbar"]');
     meter.setAttribute("aria-valuenow",String(percent));
     $("#sidebar-"+type+"-count").textContent=
-      (total?completed+"/"+total+" этапов · ":"")+percent.toFixed(1)+"%";
+      (total?completed+"/"+total+(type==="reprocess"?" шагов · ":" этапов · "):"")+
+      percent.toFixed(1)+"%";
     $("#sidebar-"+type+"-time").textContent=clockElapsed(info.elapsed_sec);
   }
 }
@@ -1732,13 +2553,51 @@ async function pollJobCore() {
   }[info.status]||info.status;
   const analysisJob=info.kind==="analyze";
   const partialAnalysisJob=info.kind==="experiment";
+  const analysisFailure=(()=>{
+    if(!analysisJob||info.status!=="failed")return "";
+    const log=String(info.log||"");
+    const explicit=log.match(/Недостаточно места для создания фрагмента анализа:[^\r\n]+/);
+    if(explicit)return explicit[0].slice(0,420);
+    if(/Error muxing a packet|Error writing trailer|No space left on device/.test(log))
+      return "FFmpeg не смог записать видеофрагмент. Проверьте свободное место на диске и выберите меньший диапазон анализа.";
+    return "";
+  })();
+  const replayStatus=document.getElementById("reprocess-status");
+  if(replayStatus&&info.kind==="reprocess"){
+    replayStatus.textContent=(
+      {running:"Пересчёт выполняется · прогресс в левой панели",
+       complete:"Готово · новая версия доступна в выборе запусков слева.",
+       failed:"Ошибка пересчёта · проверьте журнал задачи.",
+       cancelled:"Пересчёт остановлен."}[info.status]||"Пересчёт CPU")+
+      (info.status==="running"&&info.stage?" · "+info.stage:"");
+  }
+  const replayButton=document.getElementById("reprocess-start");
+  if(replayButton)replayButton.disabled=(info.kind==="reprocess"&&info.status==="running")||!selectedAnalysisRun();
+  if(info.kind==="reprocess"){
+    const previewStatus=document.getElementById("result-reprocess-status");
+    const previewButton=document.getElementById("result-reprocess-start");
+    if(previewButton)previewButton.disabled=info.status==="running"||!selectedAnalysisRun();
+    if(previewStatus){
+      const messages={
+        running:"Пересчитываем события и розыгрыши на CPU…",
+        complete:"Готово. Выберите новую версию анализа в левой панели.",
+        failed:"Ошибка пересчёта. Проверьте журнал задачи.",
+        cancelled:"Пересчёт отменён."
+      };
+      previewStatus.textContent=(messages[info.status]||"Повторная обработка")+
+        (info.status==="running"&&info.stage?" · "+info.stage:"");
+    }
+  }
+  window.VolleyballResultsUI.setReprocessTask?.(info);
   updateTaskPanel(info,"analyze","");
   updateTaskPanel(info,"highlights","montage-");
-  $("#open-analysis-results").disabled=!(analysisJob&&info.status==="complete");
+  // Older completed runs remain viewable while a new GPU run is in progress.
+  $("#open-analysis-results").disabled=!state.analysisRuns.some(run=>
+    Object.prototype.hasOwnProperty.call(run.videos||{},state.video));
   $("#analysis-run-status").textContent=analysisJob?
     ({running:"Анализ выполняется · прогресс в истории запусков.",
       complete:"Анализ завершён. Результаты доступны в следующей вкладке.",
-      failed:"Анализ завершился с ошибкой · подробности в журнале текущего запуска.",
+      failed:analysisFailure||"Анализ завершился с ошибкой · подробности в журнале текущего запуска.",
       cancelled:"Анализ остановлен."}[info.status]||""):
     partialAnalysisJob?
     ({running:"Выбранный этап обрабатывается · ход и журнал ниже.",
@@ -1785,7 +2644,8 @@ async function pollJobCore() {
     if(info.kind==="analyze"||info.kind==="experiment")
       await loadAnalysisHistory();
     if(info.kind!=="benchmark"&&info.kind!=="experiment"){
-      if(info.kind==="analyze"&&info.status==="complete"){
+      if(info.kind==="analyze"&&info.status==="complete"&&
+         info.project_id===state.project){
         state.analysisRunId="__new__";
         const profile=info.profile_name||state.activeAnalysisProfile;
         if(profile)try{
@@ -1793,11 +2653,26 @@ async function pollJobCore() {
         }catch{}
       }
       await Promise.all([loadAll(),loadRenders()]);
+      if(info.kind==="reprocess"&&pendingPreviewReplay){
+        const pending=pendingPreviewReplay;
+        pendingPreviewReplay=null;
+        if(info.status==="complete"&&state.project===pending.project&&
+           state.video===pending.video&&state.analysisRunId===pending.selectedRun){
+          const same=(a,b)=>b==null?a==null:Number(a)===Number(b);
+          const variant=state.analysisRuns.find(run=>
+            run.parent_run_id===pending.parent &&
+            run.postprocess_settings?.mode===pending.mode &&
+            same(run.postprocess_settings?.touch_threshold,pending.touch) &&
+            same(run.postprocess_settings?.ball_threshold,pending.ball) &&
+            same(run.postprocess_settings?.player_threshold,pending.player));
+          if(variant)await chooseAnalysisRun(variant.id);
+        }
+      }
     }
     if(info.status==="failed")alertBox(
       info.kind==="benchmark"?"Бенчмарк завершился с ошибкой. Журнал на вкладке «Бенчмарк».":
       info.kind==="highlights"?"Монтаж завершился с ошибкой. Журнал находится во вкладке «Монтаж».":
-      "Анализ завершился с ошибкой. Журнал находится во вкладке «Анализ».");
+      analysisFailure||"Анализ завершился с ошибкой. Журнал находится во вкладке «Анализ».");
   }
 }
 const BENCHMARK_NAMES = {
@@ -1959,6 +2834,13 @@ async function assignSelected(remove=false,playerId=state.activePlayerId) {
     });
     if(projectId!==state.project||video!==state.video)return;
     await loadReport();
+    if(remove){
+      // Explicitly rejected auto links must not be repainted from stale ReID.
+      clearTimeout(playerGroupsPoll);
+      ++playerGroupsSequence;
+      state.playerGroups=null;
+      state.playerGroupsKey="";
+    }
     $("#players-action-feedback").textContent=remove
       ?ids.length+" ID откреплено · фотобаза обновляется"
       :ids.length+" ID привязано к «"+player.name+"» · они убраны из списка нераспознанных";
@@ -1969,28 +2851,15 @@ async function assignSelected(remove=false,playerId=state.activePlayerId) {
     renderPlayers();
   }
 }
-function closeSettingsMenu(returnFocus=false){
-  const menu=$("#project-settings-menu");
-  menu.hidden=true;
-  $("#project-settings-trigger").setAttribute("aria-expanded","false");
-  if(returnFocus)$("#project-settings-trigger").focus();
-}
-function openSettingsMenu(){
-  if(!selectedProject())return;
-  closeProjectPicker();
-  $("#project-settings-menu").hidden=false;
-  $("#project-settings-trigger").setAttribute("aria-expanded","true");
-}
 function closeProjectActionDialogs(){
   for(const name of ["#project-rename-dialog","#project-delete-dialog"]){
     const dlg=$(name);
     if(dlg.open)dlg.close();
   }
 }
-function beginRenameProject(){
-  const p=selectedProject();
+function beginRenameProject(projectId=null){
+  const p=projectId?state.projects.find(row=>row.id===projectId):selectedProject();
   if(!p)return;
-  closeSettingsMenu();
   $("#project-rename-name").value=p.name;
   $("#project-rename-error").hidden=true;
   $("#project-rename-dialog").dataset.projectId=p.id;
@@ -1998,10 +2867,9 @@ function beginRenameProject(){
   $("#project-rename-name").focus();
   $("#project-rename-name").select();
 }
-function beginDeleteProject(){
-  const p=selectedProject();
+function beginDeleteProject(projectId=null){
+  const p=projectId?state.projects.find(row=>row.id===projectId):selectedProject();
   if(!p)return;
-  closeSettingsMenu();
   $("#delete-project-name").textContent=p.name;
   $("#project-delete-error").hidden=true;
   $("#project-delete-dialog").dataset.projectId=p.id;
@@ -2030,14 +2898,101 @@ async function deleteProject(){
   const originalLabel=button.textContent;
   button.textContent="Останавливаем задачи и удаляем…";
   try{
-    await api("/api/project-archive",{id});
+    await api("/api/project-delete",{id});
     closeProjectActionDialogs();
-    if(state.project===id){state.project="";state.video="";}
+    const wasActive=state.project===id;
+    if(wasActive){state.project="";state.video="";}
     await loadAll();
-    go("analysis");
+    if(wasActive)go("analysis");
   }catch(e){
     error.textContent=e.message;error.hidden=false;
   }finally{button.disabled=false;button.textContent=originalLabel;}
+}
+function openHeaderEntryAction(kind,operation,entryId,label){
+  window.VolleyballHeaderMenu?.close();
+  if(kind==="project"){
+    if(operation==="rename")beginRenameProject(entryId);
+    else beginDeleteProject(entryId);
+    return;
+  }
+  const model=window.VolleyballHeaderChain;
+  const runId=kind==="inference"?model.parseChoiceId(entryId).runId:entryId;
+  const run=state.analysisRuns.find(item=>item.id===runId);
+  if(!run||!state.project)return;
+  if(kind==="postprocess"&&!run.parent_run_id){
+    alertBox("Исходный результат нельзя удалить из CPU-списка. "+
+      "Управляйте первичным анализом в соседнем списке.");
+    return;
+  }
+  if(kind==="inference"&&run.parent_run_id){
+    alertBox("CPU-версия не относится к первичному анализу.");
+    return;
+  }
+  const dialog=$("#header-entry-action-dialog");
+  const deleting=operation==="delete";
+  dialog.dataset.projectId=state.project;
+  dialog.dataset.runId=runId;
+  dialog.dataset.kind=kind;
+  dialog.dataset.operation=operation;
+  const isPrimary=!run.parent_run_id;
+  $("#header-entry-action-title").textContent=(deleting?"Удалить":"Переименовать")+
+    (isPrimary?" первичный анализ":" обработку результатов")+(deleting?"?":"");
+  $("#header-entry-action-description").textContent=deleting
+    ?"Запись «"+label+"» исчезнет из списка. "+
+      (isPrimary?"Связанные CPU-версии также исчезнут из цепочки. ":"")+
+      "Общие GPU-кэши, видео и уже созданные монтажи сохранятся."
+    :"Новое название будет применено только к этой записи, не меняя глобальный профиль и результаты.";
+  $("#header-entry-name-field").hidden=deleting;
+  const input=$("#header-entry-name");
+  input.required=!deleting;
+  input.value=run.display_name||(isPrimary?run.profile:model.versionLabel(run));
+  $("#header-entry-action-error").hidden=true;
+  const confirm=$("#header-entry-action-confirm");
+  confirm.textContent=deleting?"Удалить запись":"Сохранить";
+  confirm.classList.toggle("project-danger-button",deleting);
+  confirm.classList.toggle("primary",!deleting);
+  dialog.showModal();
+  if(!deleting){input.focus();input.select();}else confirm.focus();
+}
+async function submitHeaderEntryAction(event){
+  event.preventDefault();
+  const dialog=$("#header-entry-action-dialog");
+  const {projectId,runId,operation,kind}=dialog.dataset;
+  const button=$("#header-entry-action-confirm");
+  const error=$("#header-entry-action-error");
+  if(projectId!==state.project){
+    error.textContent="Выбран другой проект. Повторите действие.";
+    error.hidden=false;return;
+  }
+  button.disabled=true;error.hidden=true;
+  try{
+    await api(operation==="delete"?"/api/analysis-run/delete":"/api/analysis-run/rename",{
+      project_id:projectId,run_id:runId,kind,
+      ...(operation==="rename"?{name:$("#header-entry-name").value.trim()}:{})
+    });
+    dialog.close();
+    const previous=state.analysisRunId;
+    if(operation==="delete"&&previous===runId){
+      // The CPU result was selected: retain its original neural run in this
+      // project/video rather than jumping to a different latest GPU analysis.
+      state.analysisRunId=kind==="postprocess"
+        ?state.analysisRuns.find(row=>row.id===runId)?.parent_run_id||""
+        :"";
+    }
+    await loadAnalysisRuns();
+    if(state.analysisRunId!==previous){
+      await loadReport();
+      if($("#view-analysis-results").classList.contains("active")){
+        window.VolleyballResultsUI.setCacheSelection(
+          analysisCacheMap(),state.analysisRunId,
+          selectedAnalysisRun()?.postprocess_settings||null);
+        const p=selectedProject();
+        if(p)await window.VolleyballResultsUI.setProject(state.project,p.videos,state.video);
+      }
+    }
+  }catch(exc){
+    error.textContent=exc.message;error.hidden=false;
+  }finally{button.disabled=false;}
 }
 function updateAnalysisCpuThreads(){
   const backend=$("#analysis-form [name='backend']").value;
@@ -2059,9 +3014,84 @@ function updateRavelBackendSettings(){
   $("#analysis-form [name='player_device']").value=player==="onnx-cuda"?"GPU":"CPU";
 }
 function bind() {
-  document.addEventListener("change",event=>{
-    if(event.target.matches("[data-analysis-run-select]"))
-      chooseAnalysisRun(event.target.value).catch(error=>alertBox(error.message));
+  window.VolleyballPlayerPhotoHover?.init($("#view-players"),()=>({
+    project:state.project,video:state.video,cache:analysisCacheId()
+  }));
+  $("#chain-project").addEventListener("change",event=>{
+    const id=event.target.value;
+    if(!id||id===state.project)return;
+    for(const selector of ["#chain-inference","#chain-postprocess"])
+      $(selector).disabled=true;
+    $("#top-project").value=id;
+    $("#top-project").dispatchEvent(new Event("change",{bubbles:true}));
+  });
+  $("#chain-inference").addEventListener("change",async event=>{
+    const {video,runId}=window.VolleyballHeaderChain.parseChoiceId(event.target.value);
+    if(!video||!runId)return;
+    $("#chain-postprocess").disabled=true;
+    try{
+      if(video!==state.video)await selectSource(video);
+      await chooseAnalysisRun(runId);
+    }catch(error){
+      renderHeaderChain();alertBox(error.message);
+    }
+  });
+  $("#chain-postprocess").addEventListener("change",event=>
+    chooseAnalysisRun(event.target.value).catch(error=>alertBox(error.message)));
+  window.addEventListener("volley:select-video",event=>
+    selectSource(event.detail?.video).catch(error=>alertBox(error.message)));
+  async function submitReprocess(settings, fromPreview=false){
+    const run=selectedAnalysisRun();
+    const status=document.getElementById("result-reprocess-status");
+    const previewButton=$("#result-reprocess-start");
+    if(!state.project||!run)throw Error("Сначала выберите результаты анализа");
+    if(fromPreview && settings.project_id!==state.project)
+      throw Error("Проект изменился, выберите текущий анализ");
+    if(!Number.isFinite(settings.touch_threshold)||
+       settings.touch_threshold<0||settings.touch_threshold>1)
+      throw Error("Порог Touch должен быть от 0 до 1");
+    try{
+      if(previewButton)previewButton.disabled=true;
+      if(status)status.textContent="Запуск повторной обработки…";
+      const response=await api("/api/reprocess",{
+        project_id:state.project,run_id:run.parent_run_id||run.id,
+        mode:settings.mode,touch_threshold:settings.touch_threshold,
+        touch_min_interval_sec:settings.touch_min_interval_sec??.35,
+        touch_max_reach_ratio:settings.touch_max_reach_ratio??.35,
+        track_min_duration:settings.track_min_duration??.5,
+        track_max_distance:settings.track_max_distance??200,
+        track_player_threshold:settings.track_player_threshold??.35,
+        track_ball_threshold:settings.track_ball_threshold??.35,
+        track_no_ball_fill:settings.track_no_ball_fill===true,
+        beach:settings.beach===true,
+        ball_threshold:settings.ball_threshold??null,
+        player_threshold:settings.player_threshold??null
+      });
+      if(fromPreview){
+        pendingPreviewReplay={
+          project:state.project,video:state.video,
+          selectedRun:state.analysisRunId,parent:run.parent_run_id||run.id,
+          mode:settings.mode,touch:settings.touch_threshold,
+          ball:settings.ball_threshold??null,player:settings.player_threshold??null
+        };
+      }
+      state.jobStatus=response.status;
+      await pollJob();
+    }finally{
+      updateReprocessControls();
+      if(previewButton)previewButton.disabled=
+        (state.latestTask?.kind==="reprocess"&&state.latestTask?.status==="running")||!selectedAnalysisRun();
+    }
+  }
+  $("#sidebar-reprocess-cancel").addEventListener("click",()=>
+    api("/api/cancel",{}).then(pollJob).catch(e=>alertBox(e.message)));
+  window.addEventListener("volley:reprocess-request",async event=>{
+    try{
+      await submitReprocess(event.detail||{},true);
+    }catch(error){
+      $("#result-reprocess-status").textContent=error.message;
+      alertBox(error.message);
+    }
   });
   const backend=$("#analysis-form [name='backend']");
   backend.addEventListener("change",updateAnalysisCpuThreads);
@@ -2069,77 +3099,29 @@ function bind() {
   $("#analysis-form [name='player_backend']").addEventListener("change",updateRavelBackendSettings);
   updateAnalysisCpuThreads();
   updateRavelBackendSettings();
-  $("#project-settings-trigger").addEventListener("click",()=>{
-    const menu=$("#project-settings-menu");
-    if(menu.hidden)openSettingsMenu();else closeSettingsMenu();
+  window.VolleyballHeaderMenu?.init({
+    onSelect:(kind,id)=>{
+      const selector={project:"#chain-project",inference:"#chain-inference",
+                      postprocess:"#chain-postprocess"}[kind];
+      const native=$(selector);
+      native.value=id;
+      native.dispatchEvent(new Event("change",{bubbles:true}));
+    },
+    onAction:(kind,operation,id,label)=>openHeaderEntryAction(kind,operation,id,label),
   });
-  $("#project-settings-trigger").addEventListener("keydown",e=>{
-    if(["ArrowDown","Enter"," "].includes(e.key)){
-      e.preventDefault();openSettingsMenu();
-      $("#project-settings-rename").focus();
-    }else if(e.key==="Escape")closeSettingsMenu();
-  });
-  $("#project-settings-menu").addEventListener("keydown",e=>{
-    if(e.key==="Escape"){e.preventDefault();closeSettingsMenu(true);}
-    if(e.key==="ArrowDown"||e.key==="ArrowUp"){
-      e.preventDefault();
-      const choices=[...$("#project-settings-menu").querySelectorAll('[role="menuitem"]')];
-      const position=choices.indexOf(document.activeElement);
-      choices[(position+(e.key==="ArrowDown"?1:-1)+choices.length)%choices.length]?.focus();
-    }
-  });
-  $("#project-settings-rename").addEventListener("click",beginRenameProject);
-  $("#project-settings-delete").addEventListener("click",beginDeleteProject);
   $("#project-rename-form").addEventListener("submit",renameProject);
   $("#project-delete-confirm").addEventListener("click",deleteProject);
   $$("[data-close-project-action]").forEach(el=>
     el.addEventListener("click",closeProjectActionDialogs));
-  $("#project-picker-trigger").addEventListener("click",()=>{
-    const expanded=$("#project-picker-trigger").getAttribute("aria-expanded")==="true";
-    if(expanded)closeProjectPicker();
-    else openProjectPicker();
-  });
-  $("#project-picker-trigger").addEventListener("keydown",e=>{
-    if(["ArrowDown","ArrowUp","Enter"," "].includes(e.key)){
-      e.preventDefault();
-      openProjectPicker(true);
-    }else if(e.key==="Escape")closeProjectPicker();
-  });
-  $("#project-picker-menu").addEventListener("click",e=>{
-    const option=e.target.closest("[data-project-id]");
-    if(!option)return;
-    const id=option.dataset.projectId;
-    closeProjectPicker(true);
-    if(state.project!==id){
-      $("#top-project").value=id;
-      $("#top-project").dispatchEvent(new Event("change",{bubbles:true}));
-    }
-  });
-  $("#project-picker-menu").addEventListener("keydown",e=>{
-    const options=[...$("#project-picker-menu").querySelectorAll('[role="option"]')];
-    const index=options.indexOf(document.activeElement);
-    if(e.key==="Escape"){
-      e.preventDefault();closeProjectPicker(true);
-    }else if(["ArrowDown","ArrowUp","Home","End"].includes(e.key)){
-      e.preventDefault();
-      const next=e.key==="Home"?0:e.key==="End"?options.length-1:
-        (index+(e.key==="ArrowUp"?-1:1)+options.length)%options.length;
-      options[next]?.focus();
-    }
-  });
-  document.addEventListener("pointerdown",e=>{
-    if(!e.target.closest("#project-picker"))closeProjectPicker();
-    if(!e.target.closest("#project-settings-trigger,#project-settings-menu"))closeSettingsMenu();
-  });
-  document.addEventListener("focusin",e=>{
-    if(!e.target.closest("#project-picker"))closeProjectPicker();
-    if(!e.target.closest("#project-settings-trigger,#project-settings-menu"))closeSettingsMenu();
-  });
+  $("#header-entry-action-form").addEventListener("submit",submitHeaderEntryAction);
+  $("#header-entry-action-cancel").addEventListener("click",()=>
+    $("#header-entry-action-dialog").close());
   $("#top-project").addEventListener("change",async e=>{
     // Capture the ID before awaiting autosave; later changes must win.
     const targetId=e.target.value;
     if(!state.projects.some(p=>p.id===targetId)||targetId===state.project)return;
     const epoch=++projectLoadEpoch;
+    const finish=beginWorkspaceLoading("Переключение проекта…");
     try{
       await window.VolleyballAutoSave.flush();
       if(epoch!==projectLoadEpoch)return;
@@ -2149,7 +3131,7 @@ function bind() {
         renderSources(); // Restore the actual project if autosave failed.
         alertBox("Не удалось переключить проект: "+error.message);
       }
-    }
+    }finally{finish();}
   });
   $("#video-preparation-retry").addEventListener("click",async()=>{
     if(!state.project)return;
@@ -2161,7 +3143,27 @@ function bind() {
     }catch(error){alertBox(error.message)}
     finally{button.disabled=false}
   });
-  $("#project-video-dropzone").addEventListener("click",chooseProjectSourcePaths);
+  const projectDropzone=$("#project-video-dropzone");
+  projectDropzone.addEventListener("click",chooseProjectSourcePaths);
+  $("#project-video-file-input").addEventListener("change",event=>{
+    acceptProjectFiles(event.target.files);
+    event.target.value="";
+  });
+  projectDropzone.addEventListener("dragenter",event=>{
+    event.preventDefault();projectDropzone.classList.add("is-dragover");
+  });
+  projectDropzone.addEventListener("dragover",event=>{
+    event.preventDefault();event.dataTransfer.dropEffect="copy";
+    projectDropzone.classList.add("is-dragover");
+  });
+  projectDropzone.addEventListener("dragleave",event=>{
+    if(!projectDropzone.contains(event.relatedTarget))
+      projectDropzone.classList.remove("is-dragover");
+  });
+  projectDropzone.addEventListener("drop",event=>{
+    event.preventDefault();projectDropzone.classList.remove("is-dragover");
+    acceptProjectFiles(event.dataTransfer?.files);
+  });
   $("#new-project-video-options").addEventListener("change",event=>{
     if(event.target.matches(".dialog-source-check"))updateDialogSelection();
   });
@@ -2181,13 +3183,8 @@ function bind() {
     const button=e.target.closest("[data-source]");
     if(button)selectSource(button.dataset.source).catch(err=>alertBox(err.message));
   });
-  $("#players-video").addEventListener("change",async e=>{
-    await window.VolleyballAutoSave.flush();
-    state.video=e.target.value;
-    renderSources();
-    loadReport().catch(err=>alertBox(err.message));
-    window.VolleyballAnalysisUI.setVideo(state.video);
-  });
+  $("#players-video").addEventListener("change",e=>
+    selectSource(e.target.value).catch(err=>alertBox(err.message)));
   $("#analysis-context-summary").addEventListener("click",e=>{
     const button=e.target.closest("[data-reset-context]");
     if(button)resetVideoContext(button.dataset.resetContext).catch(err=>console.warn(err));
@@ -2195,9 +3192,8 @@ function bind() {
   const typeDescriptions={
     ball:"Настройки обнаружения мяча VballNet для полного анализа проекта.",
     players:"Настройки модели RAVEL и отслеживания игроков.",
-    tracking:"Параметры построения траекторий и игровых событий.",
-    performance:"Параметры использования вычислительных ресурсов.",
-    outputs:"Настройки сохраняемых результатов и диагностики."
+    performance:"Параметры использования вычислительных ресурсов для нейросетей.",
+    outputs:"Дополнительные файлы с обнаружениями нейросетей."
   };
   function selectAnalysisStage(id){
     $$(".analysis-stage-tab").forEach(button=>{
@@ -2228,14 +3224,13 @@ function bind() {
     });
   });
   selectAnalysisStage("analysis-stage-ball");
-  async function launchAnalysis(kind="default"){
+  async function launchAnalysis(){
     if(!state.project)throw Error("Сначала выберите проект");
     const analysisForm=$("#analysis-form");
     const validation=window.VolleyballAnalysisPresets?.validate?.({focus:true});
     if(validation&&!validation.valid)throw Error(validation.message);
     if(!analysisForm.reportValidity())throw Error("Проверьте выделенное поле анализа");
     const params=Object.fromEntries(new FormData(analysisForm).entries());
-    params.beach=analysisForm.querySelector('[name="beach"]').checked;
     analysisForm.querySelectorAll("[data-advanced-check]").forEach(el=>{
       params[el.name]=el.checked;
     });
@@ -2245,22 +3240,9 @@ function bind() {
     state.activeAnalysisProfile=params.profile_name;
     Object.assign(params,window.VolleyballAnalysisUI.params());
     await window.VolleyballAutoSave.flush();
-    // Main button analyzes the project; stage tabs only edit parameters.
-    const scope=["ball","players"].includes(kind)?kind:
-      kind==="tracking"?"full-segment":"full-project";
-    if(scope==="full-project"){
-      await submitTask("/api/analyze",params,"analysis");
-    }else{
-      const range=window.VolleyballAnalysisUI.currentRange();
-      const video=window.VolleyballAnalysisUI.activeVideo();
-      if(!range||!video||range.end-range.start<2)
-        throw Error("Выберите видео и диапазон не короче 2 секунд на шкале выше");
-      params.video=video;
-      params.start=range.start;
-      params.seconds=Number((range.end-range.start).toFixed(3));
-      params.mode=scope==="full-segment"?"full":scope;
-      await submitTask("/api/analysis-experiment",params,"analysis");
-    }
+    // All tabs configure the same immutable primary neural inference.
+    // CPU tracking and event processing start only in Preview.
+    await submitTask("/api/analyze",params,"analysis");
     const panel=$("#analysis-job-panel");
     if(!panel.hidden)panel.scrollIntoView({behavior:"smooth",block:"start"});
   }
@@ -2379,6 +3361,146 @@ function bind() {
   });
   $("#cancel-job").addEventListener("click",()=>api("/api/cancel",{}).then(pollJob).catch(e=>alertBox(e.message)));
   $("#montage-cancel").addEventListener("click",()=>api("/api/cancel",{}).then(pollJob).catch(e=>alertBox(e.message)));
+  $$("[data-player-mode]").forEach(button=>button.addEventListener("click",()=>{
+    setPlayerMode(button.dataset.playerMode);
+  }));
+  $("#bulk-player-target").addEventListener("change",updateChosen);
+  $("#save-selected-ids").addEventListener("click",()=>assignSpecificTracks(
+    Array.from(state.selected),$("#bulk-player-target").value));
+  $("#refresh-player-album").addEventListener("click",()=>renderPlayerAlbum(true).catch(console.warn));
+  $("#player-album-gallery").addEventListener("click",event=>{
+    const cancel=event.target.closest("[data-cancel-album-delete]");
+    if(cancel){
+      cancelPlayerAlbumDelete(cancel.closest(".player-album-actions")
+        ?.querySelector("[data-remove-album-photo]"));
+      return;
+    }
+    const button=event.target.closest("[data-remove-album-photo]");
+    if(button)requestPlayerAlbumDelete(button);
+  });
+  const thresholdRange=$("#player-reid-threshold");
+  const thresholdNumber=$("#player-reid-threshold-number");
+  function showThresholdValue(value){
+    const candidate=Number(value);
+    if(!Number.isInteger(candidate)||candidate<55||candidate>99)return false;
+    thresholdRange.value=String(candidate);
+    thresholdNumber.value=String(candidate);
+    $("#player-reid-threshold-value").textContent=candidate+"%";
+    return true;
+  }
+  async function updateReidThreshold(value){
+    if(!showThresholdValue(value)){
+      $("#players-action-feedback").textContent="Порог сходства должен быть от 55 до 99%.";
+      showThresholdValue(state.playerGroups?.threshold_percent??85);
+      renderPlayerGroups();return;
+    }
+    const threshold_percent=Number(value),context=playerGroupsContext();
+    if(!state.project||!state.video||!analysisCacheId())return;
+    if(state.playerGroups?.status!=="ready"||playerReidThresholdSaving){
+      state.playerReidThresholdPending={context,value:threshold_percent};
+      $("#players-action-feedback").textContent="Порог "+threshold_percent+
+        "% будет применён после текущего пересчёта ReID.";
+      renderPlayerGroups();
+      return;
+    }
+    state.playerReidThresholdPending=null;
+    if(Number(state.playerGroups.threshold_percent)===threshold_percent)return;
+    playerReidThresholdSaving=true;
+    state.playerReidThresholdPending={context,value:threshold_percent};
+    thresholdRange.disabled=true;
+    thresholdNumber.disabled=true;
+    try{
+      const [project_id,video,cache_id]=context.split("\u0000");
+      const reply=await api("/api/player-groups/threshold",{
+        project_id,video,cache_id,threshold_percent});
+      if(context!==playerGroupsContext())return;
+      state.playerGroups=reply;
+      state.playerReidThresholdPending=null;
+      renderPlayerGroups();
+      await loadPlayerGroups();
+    }catch(error){
+      if(context===playerGroupsContext()){
+        state.playerReidThresholdPending=null;
+        showThresholdValue(state.playerGroups?.threshold_percent??85);
+        $("#players-action-feedback").textContent="Не удалось сохранить порог ReID: "+error.message;
+      }
+    }finally{
+      playerReidThresholdSaving=false;
+      if(context===playerGroupsContext())renderPlayerGroups();
+    }
+  }
+  commitPlayerReidThreshold=updateReidThreshold;
+  thresholdRange.addEventListener("input",event=>showThresholdValue(event.target.value));
+  thresholdNumber.addEventListener("input",event=>{
+    const value=Number(event.target.value);
+    if(Number.isInteger(value)&&value>=55&&value<=99){
+      thresholdRange.value=String(value);
+      $("#player-reid-threshold-value").textContent=value+"%";
+    }
+  });
+  thresholdRange.addEventListener("change",event=>updateReidThreshold(event.target.value));
+  thresholdNumber.addEventListener("change",event=>updateReidThreshold(event.target.value));
+  const autoEnable=$("#player-auto-assign-enabled");
+  const autoThreshold=$("#player-auto-assign-threshold");
+  let autoPolicyRequest=false;
+  async function saveAutoPolicy(){
+    const threshold=Number(autoThreshold.value);
+    if(autoPolicyRequest||!state.project||!state.video||!analysisCacheId())return;
+    if(!Number.isInteger(threshold)||threshold<55||threshold>99){
+      $("#players-action-feedback").textContent="Порог автопривязки: от 55 до 99%.";
+      renderPlayerGroups();return;
+    }
+    const context=playerGroupsContext();
+    autoPolicyRequest=true;
+    autoEnable.disabled=true;
+    autoThreshold.disabled=true;
+    try{
+      const [project_id,video,cache_id]=context.split("\u0000");
+      state.playerGroups=await api("/api/player-groups/auto-assign",{
+        project_id,video,cache_id,threshold_percent:threshold,enabled:autoEnable.checked});
+      if(context!==playerGroupsContext())return;
+      renderPlayerGroups();
+      loadPlayerGroups().catch(console.warn);
+    }catch(error){
+      if(context===playerGroupsContext()){
+        $("#players-action-feedback").textContent="Не удалось настроить автопривязку: "+error.message;
+        renderPlayerGroups();
+      }
+    }finally{
+      autoPolicyRequest=false;
+      if(context===playerGroupsContext())renderPlayerGroups();
+    }
+  }
+  autoEnable.addEventListener("change",saveAutoPolicy);
+  autoThreshold.addEventListener("change",saveAutoPolicy);
+  $("#player-groups-rebuild").addEventListener("click",async()=>{
+    if(!state.project||!state.video||!analysisCacheId())return;
+    if(state.playerGroups?.groups?.length&&!window.confirm(
+      "Пересчитать группы с нуля? Ручные исправления групп будут сброшены, привязки к игрокам сохранятся."))return;
+    const button=$("#player-groups-rebuild");
+    button.disabled=true;
+    try{
+      state.playerGroups=await api("/api/player-groups/start",{
+        project_id:state.project,video:state.video,cache_id:analysisCacheId()});
+      renderPlayerGroups();
+      loadPlayerGroups().catch(console.warn);
+    }catch(error){alertBox(error.message)}
+    finally{button.disabled=false}
+  });
+  $("#player-groups-list").addEventListener("change",event=>{
+    if(event.target.matches(".group-player-picker"))rememberPlayerPickerChange(event.target);
+  });
+  $("#player-groups-list").addEventListener("click",async event=>{
+    const button=event.target.closest("[data-group-link]");
+    if(!button)return;
+    const picker=button.closest(".player-appearance-card")?.querySelector(".group-player-picker");
+    const group=(state.playerGroups?.groups||[]).find(g=>g.id===button.dataset.groupLink);
+    if(!group)return;
+    button.disabled=true;
+    try{await assignSpecificTracks(group.track_ids,picker?.value,
+      {card:button.closest(".player-appearance-card")})}
+    finally{button.disabled=false}
+  });
   let trackSearchTimer=null;
   $("#track-search").addEventListener("input",()=>{
     clearTimeout(trackSearchTimer);
@@ -2397,6 +3519,8 @@ function bind() {
       state.players=reply.players;
       state.activePlayerId=player_id;
       renderPlayers();
+      if(state.playerMode==="view")renderPlayerAlbum().catch(console.warn);
+      loadPlayerGroups().catch(console.warn);
       $("#players-action-feedback").textContent="Игрок добавлен в состав этого проекта.";
       alertBox("");
     }catch(error){alertBox(error.message)}
@@ -2413,22 +3537,24 @@ function bind() {
       state.activePlayerId=created?.id||null;
       $("#new-player-name").value="";
       $("#players-action-feedback").textContent="Игрок «"+name+"» создан. Теперь выберите его Track ID.";
-      renderPlayers();alertBox("");
+      renderPlayers();
+      if(state.playerMode==="view")renderPlayerAlbum().catch(console.warn);
+      loadPlayerGroups().catch(console.warn);alertBox("");
     }catch(error){alertBox(error.message)}
   });
   $("#named-list").addEventListener("click",event=>{
-    const button=event.target.closest("[data-player-id]");
-    if(!button||state.playerAssignBusy)return;
-    const playerId=button.dataset.playerId;
-    state.activePlayerId=playerId;
-    $("#player-manage").open=false;
-    if(state.selected.size){
-      // A roster-card click is the confirmation for all checked track IDs.
-      assignSelected(false,playerId).catch(error=>alertBox(error.message));
+    const remove=event.target.closest("[data-remove-project-player]");
+    if(remove){
+      state.activePlayerId=remove.dataset.removeProjectPlayer;
+      $("#delete-player").click();
       return;
     }
-    $("#players-action-feedback").textContent="";
+    const button=event.target.closest("[data-player-id]");
+    if(!button||state.playerAssignBusy)return;
+    state.activePlayerId=button.dataset.playerId;
+    $("#player-manage").open=false;
     renderPlayers();
+    if(state.playerMode==="view")renderPlayerAlbum().catch(console.warn);
   });
   $("#rename-player-form").addEventListener("submit",async event=>{
     event.preventDefault();
@@ -2447,7 +3573,16 @@ function bind() {
     button.disabled=true;
     try{
       await api("/api/players/photos/collect",{player_id});
-      $("#players-action-feedback").textContent="Сбор кадров запущен. Фото появятся в карточке после обновления страницы.";
+      $("#players-action-feedback").textContent="Сбор фотографий запущен. Они появятся в просмотре после сохранения.";
+      setTimeout(async()=>{
+        if(player_id!==state.activePlayerId)return;
+        try{
+          const counts=await api("/api/players/photos");
+          state.photoCounts=counts.counts||state.photoCounts;
+          renderPlayers();
+          if(state.playerMode==="view")await renderPlayerAlbum(true);
+        }catch(error){console.warn("album refresh",error)}
+      },2500);
       alertBox("");
     }catch(error){alertBox(error.message)}
     finally{button.disabled=false}
@@ -2473,6 +3608,10 @@ function bind() {
   });
   $("#show-more").addEventListener("click",()=>{state.limit+=100;renderPlayers()});
   $("#raw-players").addEventListener("change",e=>{
+    if(e.target.matches(".track-player-picker")){
+      rememberPlayerPickerChange(e.target);
+      return;
+    }
     if(!e.target.classList.contains("row-select"))return;
     const id=e.target.dataset.id;
     if(e.target.checked){
@@ -2485,6 +3624,26 @@ function bind() {
     schedulePlayerPhotos();
   });
   $("#raw-players").addEventListener("click",e=>{
+    const attach=e.target.closest("[data-track-link]");
+    if(attach){
+      const picker=attach.closest("tr")?.querySelector(".track-player-picker");
+      assignSpecificTracks([attach.dataset.trackLink],picker?.value).catch(console.warn);
+      return;
+    }
+    const candidateButton=e.target.closest("[data-select-candidate]");
+    if(candidateButton){
+      const group=candidateButton.dataset.selectCandidate;
+      const match=(state.playerGroups?.groups||[]).find(item=>item.id===group);
+      const ids=match?match.track_ids.map(String):(state.report?.raw||[]).filter(row=>
+        row.candidate_group_id===group).map(row=>String(row.player_track_id));
+      for(const id of ids){
+        if(state.selected.size>=200)break;
+        state.selected.add(id);
+      }
+      syncTrackSelection();
+      schedulePlayerPhotos();
+      return;
+    }
     const button=e.target.closest(".photo-peek");
     if(!button)return;
     state.previewId=button.dataset.id;

@@ -62,9 +62,30 @@ def _quality(item: dict) -> float:
 
 
 def _build_index(cache: Path, stamp: dict) -> dict:
-    payload = json.loads((cache / "players.json").read_text(encoding="utf-8"))
-    predictions = payload.get("predictions", [])
-    if not isinstance(predictions, list):
+    source_file = cache / "players.json"
+    # Streaming keeps a large RAVEL analysis from allocating gigabytes merely
+    # to prepare three appearance samples per Track ID.
+    if source_file.stat().st_size > 8 * 1024 * 1024:
+        try:
+            import ijson
+        except ImportError:
+            payload = json.loads(source_file.read_text(encoding="utf-8"))
+            predictions = payload.get("predictions", [])
+            fps, video_source = payload.get("fps") or 30, payload.get("video") or ""
+        else:
+            with source_file.open("rb") as source:
+                fps = next(ijson.items(source, "fps"), 30)
+            with source_file.open("rb") as source:
+                video_source = next(ijson.items(source, "video"), "")
+            def stream_predictions():
+                with source_file.open("rb") as source:
+                    yield from ijson.items(source, "predictions.item", use_float=True)
+            predictions = stream_predictions()
+    else:
+        payload = json.loads(source_file.read_text(encoding="utf-8"))
+        predictions = payload.get("predictions", [])
+        fps, video_source = payload.get("fps") or 30, payload.get("video") or ""
+    if not isinstance(predictions, list) and not hasattr(predictions, "__next__"):
         raise ValueError("Неверный формат players.json")
     buckets = {}
     for record in predictions:
@@ -114,8 +135,8 @@ def _build_index(cache: Path, stamp: dict) -> dict:
         # For very short tracks, 1-3 can be the same frame; de-duplicate.
         best[tid] = [r for i, r in enumerate(selected) if i == 0 or r["frame"] not in {
             q["frame"] for q in selected[:i]}]
-    return {"stamp": stamp, "fps": float(payload.get("fps") or 30),
-            "source": str(payload.get("video") or ""), "tracks": best}
+    return {"stamp": stamp, "fps": float(fps),
+            "source": str(video_source), "tracks": best}
 
 
 def get_index(cache: Path, project_id=None) -> dict:
@@ -137,7 +158,7 @@ def get_index(cache: Path, project_id=None) -> dict:
 def photos_metadata(video: str, track_id, project_id=None, cache_id=None) -> dict:
     data.video_path(video)
     from .analysis_runs import cache_for
-    cache = cache_for(video,project_id,cache_id) if cache_id else data.find_cache(video, project_id)
+    cache = cache_for(video,project_id,data.neural_cache_id(cache_id)) if cache_id else data.find_cache(video, project_id)
     if cache is None:
         raise FileNotFoundError("Видео ещё не проанализировано")
     tid = validate_track_id(track_id)
@@ -155,7 +176,7 @@ def photos_metadata(video: str, track_id, project_id=None, cache_id=None) -> dic
 def photo_path(video: str, track_id, sample: int = 0, project_id=None, cache_id=None) -> Path:
     data.video_path(video)
     from .analysis_runs import cache_for
-    cache = cache_for(video,project_id,cache_id) if cache_id else data.find_cache(video, project_id)
+    cache = cache_for(video,project_id,data.neural_cache_id(cache_id)) if cache_id else data.find_cache(video, project_id)
     if cache is None:
         raise FileNotFoundError("Видео ещё не проанализировано")
     tid = validate_track_id(track_id)

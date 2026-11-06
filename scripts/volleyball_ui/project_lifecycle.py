@@ -10,6 +10,7 @@ import fcntl
 from contextlib import contextmanager
 import os
 import signal
+import shutil
 import time
 from pathlib import Path
 
@@ -171,3 +172,18 @@ def archive_with_cancellation(project_id: str) -> dict:
             # A failed archive remains accessible and may be retried.
             if not success and marker.exists():
                 marker.unlink()
+
+def delete_permanently_with_cancellation(project_id: str) -> dict:
+    """Permanently remove only this project's owned files after stopping jobs.
+
+    Source recordings live outside results/projects and shared prepared caches
+    live in results/prepared. Neither is traversed by this deletion.
+    """
+    result = archive_with_cancellation(project_id)
+    root = (projects.PROJECTS_DIR / ".trash").resolve()
+    target = root / project_id
+    if (not result.get("archived") or not target.is_dir() or target.is_symlink()
+            or target.resolve().parent != root):
+        raise RuntimeError("Проект архивирован, но каталог для удаления не найден")
+    shutil.rmtree(target)
+    return {**result, "archived": False, "deleted": True}

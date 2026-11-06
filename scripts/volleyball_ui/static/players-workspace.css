@@ -125,3 +125,114 @@
   .players-stack .player-bulk-summary{flex-basis:100%}
   .players-stack .player-bulk-actions{flex-basis:100%}
 }
+
+/* Appearance-based track groups, separate from confirmed real-player roster. */
+.player-appearance-panel{min-width:0}
+.player-appearance-panel .panel-heading{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.player-groups-status{font-size:12px;color:#b8d0c0;margin:8px 0 12px}
+.player-groups-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(305px,1fr));gap:10px;max-height:600px;overflow:auto}
+.player-appearance-card{display:flex;align-items:center;gap:10px;padding:10px;border:1px solid #355441;border-radius:10px;background:#152b22;min-width:0}
+.player-appearance-card>img{width:65px;height:84px;flex:0 0 65px;object-fit:cover;border-radius:6px;background:#203a2d}
+.player-appearance-info{display:flex;flex:1 1 auto;min-width:0;flex-direction:column;gap:4px;overflow-wrap:anywhere}
+.player-appearance-info strong{color:#f0faf2;font-size:13px}
+.player-appearance-info small{font-size:11px;color:#b1cbbc}
+.player-appearance-actions{display:flex;flex:0 0 auto;flex-direction:column;gap:7px;max-width:160px}
+.player-appearance-actions button{white-space:normal}
+@media(max-width:660px){.player-groups-list{grid-template-columns:1fr}.player-appearance-card{flex-wrap:wrap}.player-appearance-actions{width:100%;max-width:none;flex-direction:row}.player-appearance-actions button{flex:1}}
+
+/* Tunable similarity threshold and informational project-player predictions. */
+.player-reid-controls{display:flex;align-items:center;flex-wrap:wrap;gap:10px 13px;margin:10px 0 14px;padding:12px 14px;border:1px solid #355441;border-radius:9px;background:#172c23}
+.player-reid-controls label{flex:0 1 270px;font-size:12px;font-weight:600;color:#c7e6d0}
+.player-reid-controls input[type=range]{min-width:155px;max-width:340px;flex:1 1 170px;accent-color:#89d5a6}
+.player-reid-controls .player-reid-number-label{display:flex;align-items:center;gap:8px;flex:0 0 auto;white-space:nowrap}
+.player-reid-controls input[type=number]{width:70px;min-width:70px;max-width:70px;padding:7px 8px;text-align:center;font-weight:700;font-variant-numeric:tabular-nums}
+.player-reid-controls output{min-width:40px;text-align:right;font-weight:700;color:#e5ffe8;font-variant-numeric:tabular-nums}
+.player-reid-controls small{flex:1 1 100%;font-size:11px;color:#a9c8b7}
+.player-guess-cell{min-width:165px;max-width:260px}
+.player-reid-guess{color:#c4cfca;font-size:12px;overflow-wrap:anywhere}
+.player-reid-guess.is-likely{color:#b3e8be}
+.player-guess-cell .track-subline{white-space:normal;line-height:1.4}
+
+/* Enlarged multi-frame Track ID gallery. A fixed portal avoids clipping by
+   the horizontally/vertically scrollable players table. */
+.player-track-hover-preview{
+  position:fixed;
+  z-index:2300;
+  box-sizing:border-box;
+  max-width:calc(100vw - 24px);
+  max-height:calc(100dvh - 24px);
+  overflow:auto;
+  border:1px solid #7ab18b;
+  border-radius:14px;
+  background:#13271f;
+  color:#e9f7e8;
+  box-shadow:0 18px 55px #030d0ccc;
+  padding:15px;
+}
+.player-track-hover-preview[hidden]{display:none!important}
+.player-track-hover-heading{display:flex;align-items:baseline;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:12px}
+.player-track-hover-title{font-size:15px;font-weight:800}
+.player-track-hover-count{font-size:11px;color:#b3d4ba}
+.player-track-hover-message{font-size:12px;line-height:1.5;color:#bad6bf;margin:8px 0}
+.player-track-hover-images{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.player-track-hover-photo{display:flex;flex-direction:column;justify-content:center;gap:6px;min-width:0;margin:0;border:1px solid #3f6d50;border-radius:10px;overflow:hidden;background:#1a3028}
+.player-track-hover-photo img{display:block;width:100%;height:260px;object-fit:contain;background:#091711}
+.player-track-hover-photo figcaption{color:#d1eacd;font-size:11px;padding:0 8px 8px;text-align:center;font-variant-numeric:tabular-nums}
+.player-track-hover-photo.is-unavailable img{opacity:.2}
+.player-track-hover-hint{display:block;color:#a3c0ac;font-size:11px;margin-top:10px}
+.player-track-row .photo-peek:hover,.player-track-row .photo-peek:focus-visible{border-color:#bbefa0;outline:2px solid #80cc8b;outline-offset:2px}
+.player-appearance-card>img[data-photo-track-id],.player-suggestion>img[data-photo-track-id]{cursor:zoom-in}
+@media(max-width:570px){
+  .player-track-hover-preview{padding:10px}
+  .player-track-hover-images{grid-template-columns:repeat(3,minmax(0,1fr));gap:5px}
+  .player-track-hover-photo img{height:170px}
+  .player-track-hover-photo figcaption{font-size:9px;padding:0 2px 6px}
+}
+
+/* Unified players workspace: roster, album and two assignment modes. */
+.players-unified{padding:20px;display:flex;flex-direction:column;gap:18px;min-width:0}
+.players-unified .player-overview-main{align-items:center}
+.players-unified .players-health{display:flex;flex-wrap:wrap;gap:8px;margin:0;flex:1 1 560px}
+.players-unified .player-health-metric{flex:1 1 100px;min-width:95px;padding:8px 11px}
+.players-unified .player-health-metric strong{font-size:18px}
+.players-unified .players-identity-panel{border-top:1px solid #365843;padding-top:16px}
+.players-unified .player-library-add{max-width:100%}
+.player-mode-switch{display:flex;gap:7px;flex-wrap:wrap;padding:6px;border:1px solid #365843;border-radius:12px;background:#11241e}
+.player-mode-switch button{flex:1 1 180px;min-height:42px;border:1px solid transparent;border-radius:9px;background:transparent;color:#aec8b6;cursor:pointer;font-weight:650}
+.player-mode-switch button.is-active{background:#315840;border-color:#77b987;color:#fff}
+.player-mode-switch button:hover{color:#fff;border-color:#75a887}
+.player-mode-pane[hidden]{display:none!important}
+.player-mode-pane{min-width:0}
+.player-mode-pane .panel-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.player-album-gallery{display:grid;grid-template-columns:repeat(auto-fill,minmax(158px,1fr));gap:12px}
+.player-album-card{margin:0;border:1px solid #395b46;background:#152b22;border-radius:10px;padding:8px;min-width:0}
+.player-album-card img{display:block;width:100%;height:180px;object-fit:contain;background:#091c17;border-radius:6px}
+.player-album-card figcaption{font-size:11px;line-height:1.5;margin:7px 0;color:#c5dfce;overflow-wrap:anywhere}
+.player-album-actions{display:grid;grid-template-columns:minmax(0,1fr);gap:6px;margin-top:6px;min-height:34px}
+.player-album-actions.is-confirming{grid-template-columns:repeat(2,minmax(0,1fr))}
+.player-album-actions button{width:100%;min-width:0;margin:0;padding:6px 5px;white-space:nowrap}
+.player-album-actions .is-confirm-delete{background:#70342f;border-color:#b76a65;color:#fff}
+.player-album-actions .is-confirm-delete:hover{background:#913d36}
+.player-roster-item{position:relative;flex:0 0 260px;min-width:235px}
+.players-stack .player-roster-item .player-identity-slot{width:100%;height:100%;max-width:none;padding-right:32px}
+.player-roster-remove{position:absolute;top:6px;right:6px;width:24px;height:24px;border:1px solid #996b64;border-radius:7px;background:#432d2b;color:#ffd6cd;cursor:pointer}
+.player-roster-remove:hover{background:#753b35}
+.player-track-assign{display:flex;flex-direction:column;align-items:stretch;gap:5px;min-width:155px}
+.player-track-assign select,.player-appearance-actions select,.player-bulk-target select{width:100%;min-width:0}
+.player-reid-pick-hint{display:block;font-size:11px;line-height:1.45;color:#b9d8be;overflow-wrap:anywhere}
+.player-appearance-info .player-reid-pick-hint{color:#d9eac6}
+.player-track-assign button{white-space:nowrap}
+.player-bulk-target{flex:1 1 200px;margin:0}
+.player-bulk-target span{font-size:11px}
+.player-bulk-bar .player-bulk-actions{flex-basis:auto}
+.player-appearance-actions{min-width:135px}
+.player-appearance-card .player-appearance-actions select{font-size:12px}
+.players-unified .players-review-columns{border-top:1px solid #365843;padding-top:15px}
+.players-unified .players-review-columns>article{min-width:0}
+.players-unified .player-action-feedback{margin:0;min-height:18px;line-height:18px}
+@media(max-width:700px){
+  .players-unified{padding:14px}
+  .players-unified .player-overview-main .field{flex-basis:100%}
+  .players-unified .player-roster-item{flex-basis:225px}
+  .player-bulk-target{flex-basis:100%}
+}

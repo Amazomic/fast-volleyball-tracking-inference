@@ -121,8 +121,12 @@ def validate_request(raw: dict) -> dict:
         profile = run["profile"]
         for name in videos:
             cache_id = run["videos"].get(name)
-            if not cache_id or not cache_for(name, project_id, cache_id):
+            cache = cache_for(name, project_id, cache_id) if cache_id else None
+            if not cache:
                 raise ValueError("В выбранном профиле отсутствует результат видео: " + name)
+            if not (cache / "analysis/events.json").is_file() or not (
+                    cache / "analysis/game-tracks.json").is_file():
+                raise ValueError("Для монтажа сначала выполните CPU-обработку выбранного первичного анализа.")
             caches[name] = cache_id
     else:
         # Compatibility with legacy callers; the browser always sends run_id.
@@ -167,7 +171,7 @@ def sources_for(config: dict) -> list[dict]:
         if not original.is_file():
             raise ValueError("Исходное видео для монтажа отсутствует: " + video)
         sources.append({
-            "video": video, "cache": cache,
+            "video": video, "project_id": config["project_id"], "cache": cache,
             "video_path": original,  # NEVER cache/analysis.mp4 or prepared/...
             "analysis_offset_sec": analysis_offset(cache),
             "fps": 30.0,
@@ -241,6 +245,7 @@ def preview_selection(raw: dict) -> dict:
             "player_count": group.get("player_count"),
             "player_track_ids": group.get("player_track_ids", []),
             "linked_player_ids": group.get("linked_player_ids", []),
+            "linked_players": group.get("linked_players", []),
             "actions_total": group.get("actions_total", 0),
             "action_counts": group.get("action_counts", {}),
             "selected": group["rally_id"] in selected_ids,

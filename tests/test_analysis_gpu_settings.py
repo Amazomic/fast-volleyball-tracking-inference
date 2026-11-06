@@ -19,7 +19,7 @@ PRESETS=BASE/"scripts/volleyball_ui/static/analysis-presets.js"
 class AnalysisGpuSettingsTests(unittest.TestCase):
     def test_gpu_default_and_user_choice_in_players_section(self):
         page=HTML.read_text(encoding="utf-8")
-        players=page.split('id="analysis-pipeline-advanced"',1)[1].split('id="analysis-stage-tracking"',1)[0]
+        players=page.split('id="analysis-pipeline-advanced"',1)[1].split('id="analysis-stage-performance"',1)[0]
         self.assertIn('name="player_model"',players)
         self.assertIn('name="player_backend" id="analysis-player-device"',players)
         self.assertIn('<option value="onnx-cuda" selected>GPU',players)

@@ -199,7 +199,7 @@ class LocalSourceTests(unittest.TestCase):
         self.assertIn('id="new-project-video-options"',html)
         self.assertIn('edit?api("/api/videos"):Promise.resolve({videos:[]})',js)
         self.assertIn('target.hidden=videos.length===0;',js)
-        self.assertNotIn('id="project-video-file-input"',html)
+        self.assertIn('id="project-video-file-input"',html)
         self.assertIn('/api/local-videos/add',js)
         self.assertIn('/api/local-videos/picker/start',js)
         self.assertIn('/api/local-videos/picker/status',js)

@@ -113,6 +113,10 @@ class QuickReelStandaloneTests(unittest.TestCase):
             self.assertEqual(result["video"],"montage/highlights_reel.mp4")
             self.assertTrue(result["default_analysis"])
             self.assertEqual(result["duration"],34.4)
+            self.assertFalse((folder/"montage"/"highlights_reel.mp4").exists())
+            archived=self.jobs.archived_result_for(reel_id)
+            self.assertIsNotNone(archived)
+            self.assertEqual(archived[1].read_bytes(),b"mp4")
         self.assertFalse((self.root/"projects").exists())
 
     def test_changed_music_is_rejected_before_analysis(self):

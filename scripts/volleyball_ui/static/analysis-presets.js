@@ -1,7 +1,7 @@
 "use strict";
 window.VolleyballAnalysisPresets=(()=>{
-  // Only model pair and supported execution devices differ between profiles.
-  // Thresholds, ID matching, frame step, output and width inherit form defaults.
+  // Neural profiles differ in detector configuration; amateur matching and
+  // automatic association run on cached predictions after GPU inference.
   const presets={
     accuracy:{
       name:"Точность",
@@ -43,7 +43,36 @@ window.VolleyballAnalysisPresets=(()=>{
         player_device:"GPU",
         gpu_device_id:0,
         gpu_memory_limit_mb:0,
-        player_action_threshold:0.5
+        player_action_threshold:0.5,
+        player_identity_mode:"amateur",
+        player_reid_threshold_percent:88,
+        player_auto_assign:true,
+        player_auto_assign_threshold_percent:97,
+        player_session_gap_sec:120
+      }
+    },
+    amateur:{
+      name:"Любительский матч · ReID",
+      description:"RAVEL-013 + VballNetV4c, сохранение игроков между розыгрышами и ReID с автоматической привязкой при сходстве от 97%.",
+      tradeoff:"Более чувствительная детекция может добавить ложные рамки; CPU ReID дополнительно обрабатывает снимки игроков. Привязки без уверенного совпадения остаются ручными.",
+      values:{
+        ball_model:"VballNetV4c_seq9_grayscale_20260908_213829.onnx",
+        player_model:"RAVEL-VB-013-9f",
+        backend:"onnx",
+        player_backend:"onnx-cuda",
+        player_device:"GPU",
+        gpu_device_id:0,
+        gpu_memory_limit_mb:0,
+        player_score_threshold:0.35,
+        player_close_threshold:0.18,
+        player_hysteresis_frames:120,
+        player_match_center_distance:0.14,
+        player_match_iou:0.06,
+        player_identity_mode:"amateur",
+        player_reid_threshold_percent:88,
+        player_auto_assign:true,
+        player_auto_assign_threshold_percent:97,
+        player_session_gap_sec:120
       }
     }
   };
@@ -60,13 +89,17 @@ window.VolleyballAnalysisPresets=(()=>{
   let applying=false;
   const labels={
     ball_model:"Модель мяча",ball_threshold:"Порог мяча",player_model:"Модель игроков",
-    player_score_threshold:"Порог игроков",player_action_threshold:"Порог касания",player_close_threshold:"Закрытие трека",
+    player_score_threshold:"Порог игроков",player_action_threshold:"Порог сохранения Touch (GPU)",player_close_threshold:"Закрытие трека",
+    player_reader:"Декодер RAVEL",player_decode_hwaccel:"Аппаратный декодер",
+    player_decode_threads:"Потоки декодирования",
     player_hysteresis_frames:"Удержание ID",player_match_center_distance:"Дистанция ID",
     player_match_iou:"IoU сопоставления",player_frame_step:"Пропуск кадров",
-    player_stride:"Шаг клипа",track_min_duration:"Длина трека",
-    track_max_distance:"Дистанция трекинга",backend:"Движок",
+    player_identity_mode:"Распознавание игроков (CPU)",player_reid_threshold_percent:"Группировка ReID, %",
+    player_auto_assign:"Автоматическая привязка",player_auto_assign_threshold_percent:"Автопривязка ReID, %",
+    player_session_gap_sec:"Граница игровой сессии, с",
+    player_stride:"Шаг клипа",backend:"Движок",
     player_device:"OpenVINO (устаревшая настройка)",player_backend:"Устройство игроков",
-    gpu_device_id:"GPU ID",gpu_memory_limit_mb:"Арена VRAM, МБ",beach:"Пляжный волейбол",
+    gpu_device_id:"GPU ID",gpu_memory_limit_mb:"Арена VRAM, МБ",
     threads:"Потоки CPU",analysis_width:"Ширина кадра",
     manual_width_enabled:"Ручная ширина"
   };
@@ -225,7 +258,9 @@ window.VolleyballAnalysisPresets=(()=>{
       .replace(/^VballNetV4c.*/,"V4c");
   }
   function difference(current,base){
-    return Object.keys(base).filter(key=>String(current[key])!==String(base[key]));
+    // Older saved profiles can include CPU-only/diagnostic flags no longer
+    // exposed by the primary analysis form. They must not create fake diffs.
+    return Object.keys(current).filter(key=>String(current[key])!==String(base[key]));
   }
   function clearNotice(){
     $("analysis-preset-applied").hidden=true;

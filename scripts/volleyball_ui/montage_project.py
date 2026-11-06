@@ -87,7 +87,24 @@ def plan_rallies(sources: list[dict], seconds: float, *, min_rally: float = 1.5,
                             min_sec=rally_min_sec, context_padding=padding)
         else:
             groups = loader(cache, ranking, context_padding=padding)
+        identity_by_track={}
+        if source.get("project_id"):
+            from .data import groups_for
+            neural_cache=(cache.parent.parent if cache.parent.name=="postprocessing" else cache)
+            for player in groups_for(source["video"],source["project_id"],neural_cache.name):
+                for tid in player.get("track_ids",[]):
+                    identity_by_track[str(tid)]={
+                        "id":player["id"],"name":player["name"]}
         for group in groups:
+            verified={}
+            for tid in group.get("player_track_ids",[]):
+                person=identity_by_track.get(str(tid))
+                if person:
+                    verified.setdefault(person["id"],{
+                        "id":person["id"],"name":person["name"],"track_ids":[]})
+                    verified[person["id"]]["track_ids"].append(str(tid))
+            group["linked_player_ids"]=sorted(verified)
+            group["linked_players"]=list(verified.values())
             if manual:
                 # Manual list mirrors reconstructed rallies from Results,
                 # including those without an automatic ranking score.

@@ -4,7 +4,81 @@
   const E=id=>document.getElementById(id);
   const files=new Map();
   let music=null, busy=false, running=false, reelId="";
-  let pollTimer=null, loadingStatus=false;
+  let pollTimer=null, loadingStatus=false, cancelPending=false;
+  const dismissKey="volley-quick-reel-dismissed-id";
+  let dismissedReelId="";
+  try{dismissedReelId=localStorage.getItem(dismissKey)||""}catch{}
+  // Completed exports live on the server; do not persist result IDs in the browser.
+  let historyRequest=0;
+
+  async function refreshHistory(){
+    const request=++historyRequest;
+    const list=E("quick-reel-history-list");
+    try{
+      const payload=await api("/api/quick-reel/history");
+      if(request!==historyRequest)return;
+      list.replaceChildren();
+      const rows=Array.isArray(payload.results)?payload.results:[];
+      if(!rows.length){
+        const empty=document.createElement("p");
+        empty.className="quick-reel-empty";
+        empty.textContent="Готовых рилсов пока нет.";
+        list.append(empty);
+        return;
+      }
+      for(const item of rows){
+        const row=document.createElement("div");
+        row.className="quick-reel-history-row";
+        const primary=document.createElement("a");
+        primary.href=item.url;
+        primary.target="_blank";
+        primary.rel="noopener";
+        const when=new Date(Number(item.created_at)*1000);
+        const date=Number.isNaN(when.getTime())?"Рилс":when.toLocaleString(
+          document.documentElement.lang==="en"?"en-US":"ru-RU",
+          {day:"2-digit",month:"2-digit",year:"numeric",hour:"2-digit",minute:"2-digit"});
+        const names=(item.videos||[]).map(String);
+        primary.textContent=date+" · "+(names.length
+          ?names.slice(0,2).join(", ")+(names.length>2?" +"+(names.length-2):"")
+          :"Готовый рилс")+(Number.isFinite(Number(item.duration))
+             ?" · "+fmt(item.duration):"");
+        primary.title="Открыть готовое видео";
+        const download=document.createElement("a");
+        download.href=item.download_url;
+        download.download="quick_reel_"+String(item.id).slice(0,8)+".mp4";
+        download.textContent="Скачать MP4";
+        download.className="quick-reel-history-download";
+        const remove=document.createElement("button");
+        remove.type="button";
+        remove.className="quick-reel-history-delete";
+        remove.textContent="×";
+        remove.title="Удалить готовый рилс";
+        remove.setAttribute("aria-label","Удалить рилс от "+date);
+        remove.addEventListener("click",async()=>{
+          if(!window.confirm("Удалить этот готовый рилс без возможности восстановления?"))
+            return;
+          remove.disabled=true;
+          try{
+            await api("/api/quick-reel/delete",{id:item.id});
+            await refreshHistory();
+          }catch(error){
+            remove.disabled=false;
+            status("Не удалось удалить рилс: "+error.message,true);
+          }
+        });
+        row.append(primary,download,remove);
+        list.append(row);
+      }
+    }catch(error){
+      if(request===historyRequest){
+        list.replaceChildren();
+        const message=document.createElement("p");
+        message.className="quick-reel-empty";
+        message.textContent="Не удалось загрузить историю: "+error.message;
+        list.append(message);
+      }
+    }
+  }
 
   async function api(url,payload){
     let response;
@@ -23,7 +97,7 @@
   }
   async function checkBackend(){
     const state=await api("/api/health");
-    if(!state.ok||state.reload_required||Number(state.api_version)<12)
+    if(!state.ok||state.reload_required||Number(state.api_version)<15)
       throw Error("Сервер не обновлён. Перезапустите Volley Studio и обновите страницу.");
   }
   function status(message="",error=false){
@@ -70,7 +144,7 @@
     E("quick-reel-music-section").classList.toggle("is-ready",Boolean(music));
     E("quick-reel-submit").disabled=busy||running||!files.size||!music;
     E("quick-reel-cancel").hidden=!running;
-    E("quick-reel-cancel").disabled=!running;
+    E("quick-reel-cancel").disabled=!running||cancelPending;
     for(const id of ["quick-reel-dropzone","quick-reel-music-dropzone"])
       E(id).disabled=busy||running;
   }
@@ -145,12 +219,15 @@
   }
   function header(update,results){
     if(!reelId)return;
-    E("quick-reel-activity").hidden=false;
+    E("quick-reel-activity").hidden=dismissedReelId===reelId;
     const progress=Math.max(0,Math.min(100,Number(update.progress)||0));
     const state=String(update.status||"queued");
     const labels={running:"Выполняется",queued:"В очереди",complete:"Готово",
       failed:"Ошибка",cancelled:"Остановлено"};
     E("quick-reel-header-state").textContent=labels[state]||state;
+    const cancellable=state==="running"||state==="queued";
+    E("quick-reel-header-cancel").hidden=!cancellable;
+    E("quick-reel-header-cancel").disabled=cancelPending;
     E("quick-reel-header-stage").textContent=
       update.error||update.stage||"Ожидание подготовки";
     E("quick-reel-header-meter").value=state==="complete"?100:progress;
@@ -170,12 +247,13 @@
       list.append(row);
     }
     const ready=Boolean(results?.available||update.available);
-    E("quick-reel-header-result").hidden=!ready;
-    if(ready&&results?.download_url)
-      E("quick-reel-header-download").href=results.download_url;
-    E("quick-reel-open").textContent=ready?"✦ Рилс готов":
-      state==="running"?"✦ Быстрый рилс · "+Math.round(progress)+"%":
-      "✦ Быстрый рилс";
+    const download=E("quick-reel-header-download");
+    download.hidden=!ready||!results?.download_url;
+    if(!download.hidden)download.href=results.download_url;
+    else download.removeAttribute("href");
+    // The sidebar action always starts a new quick reel. Readiness is merely
+    // a dismissible notification in the header, not a persistent button state.
+    E("quick-reel-open").textContent="✦ Быстрый рилс";
   }
   function progress(percent,stage){
     E("quick-reel-progress").hidden=false;
@@ -185,17 +263,9 @@
   }
   async function revealResult(result){
     if(!result.available)return;
-    E("quick-reel-result").hidden=false;
-    const video=E("quick-reel-video");
-    if(E("quick-reel-dialog").open&&video.getAttribute("src")!==result.url)
-      video.src=result.url;
-    E("quick-reel-download").href=result.download_url;
-    E("quick-reel-result-note").textContent=
-      "Видео: "+fmt(result.duration)+" · музыка: "+fmt(result.music_duration)+
-      (result.duration+0.4<result.music_duration?
-        ". Недостаточно полных розыгрышей для длины трека.":"");
-    progress(100,"Рилс готов");
-    status("Готово. Результат доступен также в верхнем блоке страницы.");
+    progress(100,"Обработка завершена");
+    status("Рилс готов. Ссылка на MP4 добавлена в список внизу.");
+    await refreshHistory();
   }
   async function poll(){
     if(!reelId||loadingStatus)return;
@@ -240,12 +310,12 @@
     try{
       await checkBackend();
       status("Регистрируем задачу обработки…");
-      E("quick-reel-result").hidden=true;
       const job=await api("/api/quick-reel/start",{
         videos:[...files.keys()],audio_path:music.path
       });
       reelId=job.reel_id;
-      localStorage.setItem("volley-quick-reel-id",reelId);
+      dismissedReelId="";
+      try{localStorage.removeItem(dismissKey)}catch{}
       running=true;
       header({status:"queued",progress:0,stage:"Проверяем исходные файлы",
         videos:[...files.values()].map(item=>({video:item.name,state:"queued"}))});
@@ -255,15 +325,43 @@
     }catch(error){status(error.message,true)}
     finally{setBusy(false)}
   }
+  async function cancelReel(){
+    if(!running||!reelId||cancelPending)return;
+    cancelPending=true;render();
+    E("quick-reel-header-cancel").disabled=true;
+    try{
+      await api("/api/quick-reel/cancel",{id:reelId});
+      status("Останавливаем обработку…");
+    }catch(error){status(error.message,true)}
+    finally{
+      cancelPending=false;
+      await poll();
+    }
+  }
   function showDialog(){
     const dialog=E("quick-reel-dialog");
+    if(!running){
+      // A fresh creation form must not display the previous finished task.
+      E("quick-reel-progress").hidden=true;
+      status("");
+      files.clear();
+      music=null;
+      render();
+    }
     if(!dialog.open)dialog.showModal();
     checkBackend().catch(error=>status(error.message,true));
-    if(reelId)poll();
+    if(running)poll();
+    // The single completed archive is the sole source of the history list.
+    refreshHistory().catch(console.warn);
   }
   function init(){
     E("quick-reel-open").addEventListener("click",showDialog);
     E("quick-reel-header-open").addEventListener("click",showDialog);
+    E("quick-reel-header-close").addEventListener("click",()=>{
+      dismissedReelId=reelId;
+      try{localStorage.setItem(dismissKey,reelId)}catch{}
+      E("quick-reel-activity").hidden=true;
+    });
     E("quick-reel-close").addEventListener("click",()=>E("quick-reel-dialog").close());
     for(const [id,kind,inputId] of [
       ["quick-reel-dropzone","video","quick-reel-video-input"],
@@ -288,15 +386,32 @@
       });
     }
     E("quick-reel-submit").addEventListener("click",launch);
-    E("quick-reel-cancel").addEventListener("click",async()=>{
-      if(!running)return;
-      try{await api("/api/cancel",{});status("Останавливаем обработку…")}
-      catch(error){status(error.message,true)}
-      await poll();
-    });
-    try{reelId=localStorage.getItem("volley-quick-reel-id")||""}catch{}
+    E("quick-reel-cancel").addEventListener("click",cancelReel);
+    E("quick-reel-header-cancel").addEventListener("click",cancelReel);
     render();
-    if(reelId)startPoll();
+    E("quick-reel-activity").hidden=true;
+    // Recover progress ONLY for an actually running task, not the last
+    // completed result. A finished reel belongs in history, never the header.
+    (async()=>{
+      let activeId="";
+      try{activeId=(await api("/api/quick-reel/latest")).reel_id||""}
+      catch(error){console.warn("Quick Reel latest:",error)}
+      if(reelId||!activeId)return; // Another creation was launched meanwhile.
+      try{
+        const [current,job]=await Promise.all([
+          api("/api/quick-reel/status?id="+encodeURIComponent(activeId)),
+          api("/api/job")
+        ]);
+        if(reelId)return;
+        if(["queued","running"].includes(current.status)&&
+           job.kind==="quick_reel"&&job.reel_id===activeId&&
+           job.status==="running"){
+          reelId=activeId;
+          running=true;
+          startPoll();
+        }
+      }catch(error){console.warn("Quick Reel recovery:",error)}
+    })().catch(error=>console.warn(error));
   }
   if(document.readyState==="loading")
     document.addEventListener("DOMContentLoaded",init,{once:true});

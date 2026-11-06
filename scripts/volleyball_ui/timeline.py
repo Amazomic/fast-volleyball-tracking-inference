@@ -86,6 +86,15 @@ def timeline(video: str, project_id=None, *, duration_sec: float | None = None,
     ]
     rallies.sort(key=lambda r: r["start"])
     actions.sort(key=lambda a: a["time"])
+    if project_id:
+        from .data import groups_for
+        verified={
+            str(tid):group["id"]
+            for group in groups_for(video,project_id,cache.name)
+            for tid in group.get("track_ids",[])
+        }
+        for action in actions:
+            action["verified_player_id"] = verified.get(action.get("player_id"))
     from .rally_view import from_tracks, settings
     cfg = settings(gap_sec, min_sec, context_sec)
     # Modern projects contain full tracked trajectories and classification.
@@ -98,7 +107,7 @@ def timeline(video: str, project_id=None, *, duration_sec: float | None = None,
     merged = from_tracks(cache, offset, fps, duration_sec, **{
         "gap_sec": cfg["gap_sec"], "min_sec": cfg["min_sec"],
         "context_sec": cfg["context_sec"],
-        "source_video": video,
+        "source_video": video, "project_id": project_id,
     })
     if merged is not None:
         rallies = merged["rallies"]

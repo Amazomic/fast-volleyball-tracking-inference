@@ -9,13 +9,32 @@ v45) и длина клипа берутся из sidecar ``.json``.
 
     uv run python src/inference_player_ball_openvino.py video.mp4 \
         --model ov/RAVEL-VB-012-9f.xml --output ../uploads/mix/
+
+Релиз с головой действия (RAVEL-VB-013: ``ov/RAVEL-VB-013-9f.xml`` и та же сеть
+в ``models/RAVEL-VB-013-9f.onnx`` -- игроки + касание, 9 кадров 640x360) отдаёт ещё ``action_logits`` [B, T, K, C]:
+log-вероятности «этот игрок на этом кадре совершает действие такого типа»,
+последний канал -- «нет действия»; имена каналов -- ``action_names`` sidecar
+(у модели касания ``["Touch", "none"]``). Игрок, у которого лучшее действие не
+слабее ``--action-threshold``, получает поля ``action`` и ``action_score``; в
+JSONL они идут в словаре ``extra`` строки игрока. Касание держится несколько
+кадров вокруг удара (пик на кадре касания), так что событие -- это пик
+``action_score`` вдоль трека. Донесённые гистерезисом рамки (``interpolated``)
+действия не несут.
+
+    uv run python src/inference_player_ball_openvino.py video.mp4 \
+        --model ov/RAVEL-VB-013-9f.xml --action-threshold 0.5 --output out.jsonl
 """
 
 from __future__ import annotations
 
 import argparse
+import bisect
 import json
+import os
+import subprocess
+import sys
 import time
+from urllib.parse import urlparse
 from collections import defaultdict, deque
 from pathlib import Path
 from typing import Any
@@ -26,7 +45,15 @@ import openvino as ov
 from scipy.optimize import linear_sum_assignment
 from tqdm import tqdm
 
+try:
+    from .predictions_io import FIELDS, FORMAT_V1, FORMAT_V3, dump_line, expand_frame, frame_record, iter_records
+except ImportError:
+    from predictions_io import FIELDS, FORMAT_V1, FORMAT_V3, dump_line, expand_frame, frame_record, iter_records
+
 ROOT = Path(__file__).resolve().parent.parent
+# A JSONL run leaves a checkpoint every this many clips (about 30 s of video at the
+# defaults): after a crash the detector redoes at most that much.
+CHECKPOINT_EVERY_CLIPS = 50
 DEFAULT_MODEL = ROOT / "ov" / "RAVEL-VB-012-9f.xml"
 
 # Точки голов -- как в ``infer_tape_vb6_v31``: пики карты ``body_point_logits``
@@ -47,6 +74,21 @@ ZONE_ABOVE = 0.08
 ZONE_BELOW = 0.45
 MATCHED_COLOUR = (0, 220, 0)
 LOOSE_COLOUR = (0, 0, 255)
+# Поля действия в записи игрока; донесённая гистерезисом рамка их теряет.
+# ``TOUCH_KEY`` -- вероятность лучшего действия игрока при любом пороге, только
+# для ленты касаний на видео; в JSONL не пишется (снимается в finalize).
+TOUCH_KEY = "_touch_p"
+ACTION_FIELDS = ("action", "action_score", TOUCH_KEY)
+ACTION_THRESHOLD = 0.5
+# Цвета действий -- как у ``vb-action/infer_tape_vb6_v50.py`` (draw_actions);
+# касание модели касаний -- красное, неизвестное имя -- белое.
+ACTION_COLOURS = {
+    "Touch": (0, 0, 255),
+    "Serve": (255, 255, 0),
+    "Receive": (80, 220, 80),
+    "Set": (255, 160, 40),
+    "Attack": (60, 60, 255),
+}
 
 
 def _box_iou(left: list[float], right: list[float]) -> float:
@@ -181,8 +223,14 @@ def decode_batch(
     head_threshold: float = HEAD_THRESHOLD,
     action_names: list[str] | None = None,
     action_threshold: float = ACTION_THRESHOLD,
+    preserve_player_candidates: bool = False,
 ) -> list[list[dict]]:
     """Decode the tensor ABI exported with the RAVEL-VB OpenVINO model.
+
+    ``action_names`` -- имена каналов ``action_logits`` (последний -- «нет
+    действия»); работает, только если модель отдаёт ``action_logits``.
+    Игрок получает ``action`` / ``action_score``, когда лучшее действие не
+    слабее ``action_threshold``.
 
     ``ball_threshold`` -- порог мяча; ``None`` оставляет прежнее поведение,
     когда мяч отсекается тем же ``score_threshold``, что и игроки.
@@ -245,9 +293,13 @@ def decode_batch(
             boxes = boxes.clip(0.0, 1.0)
             selected = np.flatnonzero(scores >= score_threshold)
             if selected.size:
-                selected = selected[
-                    _nms(boxes[selected], scores[selected], iou_threshold)
-                ]
+                if not preserve_player_candidates:
+                    selected = selected[
+                        _nms(boxes[selected], scores[selected], iou_threshold)
+                    ]
+                # Preserve weak, duplicate and nearby player proposals in the
+                # immutable raw sidecar. The normal output still applies
+                # framewise NMS and the chosen tracker's open/close gates.
                 selected = selected[np.argsort(scores[selected])[::-1]][:max_players]
                 for query_index in selected:
                     query_index = int(query_index)
@@ -267,8 +319,13 @@ def decode_batch(
                         ].tolist()
                     if action_probabilities is not None:
                         row = action_probabilities[batch_index, frame_slot, query_index]
+                        record["action_scores"] = {
+                            action_names[index]: round(float(prob), 6)
+                            for index, prob in enumerate(row)
+                        }
                         # The final class is "none": it is not a contact event.
                         best = int(row[:-1].argmax())
+                        record[TOUCH_KEY] = float(row[best])
                         if float(row[best]) >= action_threshold:
                             record["action"] = action_names[best]
                             record["action_score"] = round(float(row[best]), 3)
@@ -374,6 +431,17 @@ class PlayerHysteresis:
         self.max_center_distance = max_center_distance
         self.tracks: dict[int, dict] = {}
         self.next_track_id = 0
+
+    def state(self) -> dict:
+        """What a resumed run needs to go on with the same track ids."""
+        return {
+            "next_track_id": self.next_track_id,
+            "tracks": [[track_id, state] for track_id, state in self.tracks.items()],
+        }
+
+    def restore(self, state: dict) -> None:
+        self.next_track_id = int(state["next_track_id"])
+        self.tracks = {int(track_id): track for track_id, track in state["tracks"]}
 
     @staticmethod
     def _center_distance(left: list[float], right: list[float]) -> float:
@@ -482,6 +550,9 @@ class PlayerHysteresis:
                 float(previous[0] + offset[0]), float(previous[1] + offset[1]),
                 float(previous[2] + offset[0]), float(previous[3] + offset[1]),
             ]
+            # Действие было на том кадре, который рамку донёс, а не на этом.
+            for key in ACTION_FIELDS:
+                prediction.pop(key, None)
             prediction["frame_index"] = frame_index
             prediction["track_id"] = track_id
             prediction["interpolated"] = True
@@ -513,6 +584,159 @@ def _action_names_of(metadata: dict[str, Any]) -> list[str] | None:
     names=metadata.get("action_names")
     if not isinstance(names,list) or len(names)<2 or names[-1]!="none":
         raise ValueError("RAVEL action metadata must define action_names ending in 'none'")
+    return [str(name) for name in names]
+
+
+# Limited (TV) range luma -> the full range OpenCV's YUV->BGR conversion yields; a grey model
+# fed the Y plane straight from the decoder must see the same scale as the BGR->grey path.
+_TV_TO_FULL_LUT = np.clip((np.arange(256) - 16) * 255.0 / 219.0 + 0.5, 0, 255).astype(np.uint8)
+
+
+class YuvFrame:
+    """A decoded 4:2:0 frame (``i420`` planar or ``nv12`` from NVDEC): the Y plane for grey
+    models, BGR made only when asked for."""
+
+    __slots__ = ("buffer", "width", "height", "limited_range", "layout")
+
+    def __init__(self, buffer: np.ndarray, width: int, height: int, limited_range: bool, layout: str = "i420") -> None:
+        self.buffer = buffer
+        self.width = width
+        self.height = height
+        self.limited_range = limited_range
+        self.layout = layout
+
+    @property
+    def shape(self) -> tuple[int, int, int]:
+        return (self.height, self.width, 3)
+
+    @property
+    def y(self) -> np.ndarray:
+        return self.buffer[: self.width * self.height].reshape(self.height, self.width)
+
+    def bgr(self) -> np.ndarray:
+        code = cv2.COLOR_YUV2BGR_NV12 if self.layout == "nv12" else cv2.COLOR_YUV2BGR_I420
+        return cv2.cvtColor(self.buffer.reshape(self.height * 3 // 2, self.width), code)
+
+
+def to_bgr(frame: "np.ndarray | YuvFrame") -> np.ndarray:
+    return frame.bgr() if isinstance(frame, YuvFrame) else frame
+
+
+def _color_range(source: str) -> str:
+    """``tv`` / ``pc`` / ``unknown`` as ffprobe reports the first video stream."""
+    try:
+        out = subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=color_range",
+             "-of", "csv=p=0", source],
+            capture_output=True, text=True, timeout=60, check=True,
+        ).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return "unknown"
+    return out or "unknown"
+
+
+class FfmpegYuvSource:
+    """Frames decoded by an ffmpeg process as yuv420p, read over a pipe.
+
+    OpenCV's ``read()`` converts every full-size frame to BGR; this hands over the raw
+    planes and leaves the conversion to the few places that need colour (``YuvFrame.bgr``).
+    The subset of ``cv2.VideoCapture`` the detector loop uses: ``isOpened``, ``get``,
+    ``grab``, ``read``, ``release``.
+
+    ``hwaccel="cuda"`` decodes on the NVIDIA card (NVDEC, ``-hwaccel cuda``) and downloads
+    the frames as ``nv12``; the CPU then only resizes the Y plane. Needs ``libnvcuvid`` from
+    the host driver: in Docker ``NVIDIA_DRIVER_CAPABILITIES`` must include ``video``.
+    """
+
+    def __init__(self, source: str, threads: int = 0, hwaccel: str = "none") -> None:
+        probe = cv2.VideoCapture(source)
+        self.fps = float(probe.get(cv2.CAP_PROP_FPS) or 0.0)
+        self.width = int(probe.get(cv2.CAP_PROP_FRAME_WIDTH))
+        self.height = int(probe.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        self.frame_count = int(probe.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+        probe.release()
+        self.limited_range = _color_range(source) != "pc"
+        self.hwaccel = hwaccel if hwaccel and hwaccel != "none" else None
+        # NVDEC hands over nv12 (interleaved chroma); asking for yuv420p would add a conversion.
+        self.layout = "nv12" if self.hwaccel else "i420"
+        self._size = self.width * self.height * 3 // 2
+        self._process: subprocess.Popen | None = None
+        if self.width and self.height:
+            decode = ["-hwaccel", self.hwaccel] if self.hwaccel else ["-threads", str(threads)]
+            self._process = subprocess.Popen(
+                ["ffmpeg", "-v", "error", "-nostdin", *decode, "-i", source, "-map", "0:v:0",
+                 "-fps_mode", "passthrough", "-f", "rawvideo", "-pix_fmt", "nv12" if self.hwaccel else "yuv420p", "-"],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=0,
+            )
+
+    def isOpened(self) -> bool:
+        return self._process is not None
+
+    def get(self, prop: int) -> float:
+        return {
+            cv2.CAP_PROP_FPS: self.fps,
+            cv2.CAP_PROP_FRAME_WIDTH: float(self.width),
+            cv2.CAP_PROP_FRAME_HEIGHT: float(self.height),
+            cv2.CAP_PROP_FRAME_COUNT: float(self.frame_count),
+        }.get(prop, 0.0)
+
+    _returned_any = False
+
+    def _next(self) -> np.ndarray | None:
+        if self._process is None or self._process.stdout is None:
+            return None
+        buffer = np.empty(self._size, dtype=np.uint8)
+        view = memoryview(buffer)
+        filled = 0
+        while filled < self._size:
+            got = self._process.stdout.readinto(view[filled:])
+            if not got:
+                return None
+            filled += got
+        self._returned_any = True
+        return buffer
+
+    def grab(self) -> bool:
+        if self._next() is None:
+            self._check_failure()
+            return False
+        return True
+
+    def read(self) -> tuple[bool, YuvFrame | None]:
+        buffer = self._next()
+        if buffer is None:
+            self._check_failure()
+            return False, None
+        return True, YuvFrame(buffer, self.width, self.height, self.limited_range, self.layout)
+
+    def _check_failure(self) -> None:
+        """An ffmpeg that died before the first frame (no NVDEC, bad file) must not look like an empty video."""
+        if self._process is None or self._process.stderr is None:
+            return
+        code = self._process.wait()
+        message = self._process.stderr.read().decode("utf-8", "replace").strip()
+        if code and not self._returned_any:
+            raise RuntimeError(f"ffmpeg decoder failed (exit {code}): {message[-1500:]}")
+        if message:
+            print(f"ffmpeg: {message[-1500:]}", file=sys.stderr)
+
+    def release(self) -> None:
+        if self._process is not None:
+            for stream in (self._process.stdout, self._process.stderr):
+                if stream is not None:
+                    stream.close()
+            self._process.kill()
+            self._process.wait()
+            self._process = None
+
+
+def action_names_of(metadata: dict[str, Any]) -> list[str] | None:
+    """Имена каналов ``action_logits`` релиза, ``None`` у релиза без действия."""
+    if "action_logits" not in (metadata.get("output_names") or ()):
+        return None
+    names = metadata.get("action_names")
+    if not isinstance(names, list) or len(names) < 2:
+        raise ValueError("a release with action_logits must list action_names in its metadata")
     return [str(name) for name in names]
 
 
@@ -582,8 +806,11 @@ class RavelVBOpenVINO:
         self.outputs = {name: compiled.output(name) for name in output_names}
         self.action_names = _action_names_of(self.metadata)
 
-    def preprocess(self, bgr: np.ndarray) -> np.ndarray:
+    def preprocess(self, frame: "np.ndarray | YuvFrame") -> np.ndarray:
         """Кадр -> тензор модели: размер, число каналов и шкала [0, 1].
+
+        ``YuvFrame`` (reader ``ffmpeg``) с серой моделью: берётся плоскость Y без
+        конверсии в BGR, с переводом TV-диапазона в полный, как делает OpenCV.
 
         Уменьшение идёт через ``INTER_AREA`` -- тем же способом, каким нарезаны
         кадры обучающего датасета; при увеличении area не годится, и тогда
@@ -592,6 +819,16 @@ class RavelVBOpenVINO:
         """
         width = int(self.config["image_width"])
         height = int(self.config["image_height"])
+        if isinstance(frame, YuvFrame) and int(self.config["input_channels"]) == 1:
+            plane = frame.y
+            shrinking = width <= plane.shape[1] and height <= plane.shape[0]
+            grey = cv2.resize(
+                plane, (width, height), interpolation=cv2.INTER_AREA if shrinking else cv2.INTER_LINEAR
+            )
+            if frame.limited_range:
+                grey = cv2.LUT(grey, _TV_TO_FULL_LUT)
+            return np.ascontiguousarray(grey[None].astype(np.float32) / 255.0)
+        bgr = to_bgr(frame)
         shrinking = width <= bgr.shape[1] and height <= bgr.shape[0]
         resized = cv2.resize(
             bgr,
@@ -686,6 +923,7 @@ def _draw_predictions(
     frame_index: int,
     fps: float,
     predictions: list[dict],
+    touch: "TouchOverlay | None" = None,
 ) -> np.ndarray:
     canvas = frame.copy()
     players = balls = 0
@@ -729,7 +967,158 @@ def _draw_predictions(
         cv2.LINE_AA,
     )
     _draw_heads(canvas, predictions)
+    _draw_actions(canvas, predictions)
+    if touch is not None:
+        touch.draw(canvas, frame_index, predictions)
     return canvas
+
+
+def find_touch_events(
+    curve: np.ndarray, threshold: float, smooth: int, min_gap: int
+) -> list[tuple[int, float]]:
+    """Пики сглаженной вероятности касания: ``find_events`` из vb-action.
+
+    ``curve[i]`` -- самая сильная вероятность касания среди игроков кадра.
+    Сглаживание окном ``smooth`` кадров, жадный выбор от сильного пика к
+    слабому, два события не ближе ``min_gap`` кадров. Возвращает
+    ``[(кадр, сглаженная вероятность)]`` по возрастанию кадра.
+    """
+    if not len(curve):
+        return []
+    kernel = np.ones(max(smooth, 1), np.float32) / max(smooth, 1)
+    peak = np.convolve(curve.astype(np.float32), kernel, mode="same")
+    events: list[tuple[int, float]] = []
+    for index in np.argsort(-peak, kind="stable"):
+        if peak[index] < threshold:
+            break
+        if any(abs(int(index) - frame) < min_gap for frame, _ in events):
+            continue
+        events.append((int(index), float(peak[index])))
+    return sorted(events)
+
+
+class TouchOverlay:
+    """Лента касаний внизу кадра и исполнитель события, как в vb-action ``infer_touch.py``.
+
+    * лента -- вероятность касания по времени +-``strip_seconds``, серая линия
+      -- порог, красные риски -- события (пики), белая черта -- текущий кадр;
+    * исполнитель события +-``hold`` кадров -- красная рамка ``TOUCH #n``,
+      на самом кадре события весь кадр обведён красным.
+    """
+
+    COLOUR = (40, 40, 255)
+    CURVE = (255, 160, 40)
+
+    def __init__(
+        self,
+        curve: np.ndarray,
+        events: list[tuple[int, float]],
+        boxes: dict[int, list[float]],
+        fps: float,
+        threshold: float,
+        strip_seconds: float,
+        hold: int,
+    ) -> None:
+        self.curve = curve
+        self.events = events
+        self.boxes = boxes
+        self.fps = fps
+        self.threshold = threshold
+        self.half = max(int(strip_seconds * fps), 1)
+        self.hold = hold
+        self.event_frames = [frame for frame, _ in events]
+
+    def draw(self, canvas: np.ndarray, index: int, predictions: list[dict]) -> None:
+        height, width = canvas.shape[:2]
+        number = bisect.bisect_right(self.event_frames, index)
+        # Исполнитель ближайшего события: рамка кадра, больше всех совпавшая с рамкой события.
+        players = [item for item in predictions if item["class_name"] == "player"]
+        for position in range(max(number - 2, 0), min(number + 2, len(self.events))):
+            frame, score = self.events[position]
+            box = self.boxes.get(frame)
+            if abs(frame - index) > self.hold or box is None or not players:
+                continue
+            overlap = [_box_iou(item["bbox_xyxy"], box) for item in players]
+            best = int(np.argmax(overlap))
+            if overlap[best] < 0.3:
+                continue
+            x1, y1, x2, y2 = [int(round(v)) for v in players[best]["bbox_xyxy"]]
+            thick = max(int(round(height / 200)), 4)
+            cv2.rectangle(canvas, (x1, y1), (x2, y2), self.COLOUR, thick)
+            _outlined(canvas, f"TOUCH #{position + 1} {score:.2f}", (x1, max(y1 - 10, 60)),
+                      height / 1000, self.COLOUR)
+            if frame == index:
+                cv2.rectangle(canvas, (0, 0), (width - 1, height - 1), self.COLOUR, thick * 3)
+        self._strip(canvas, index)
+        _outlined(canvas, f"touches {number}", (10, 80), height / 1300, (255, 255, 255))
+
+    def _strip(self, canvas: np.ndarray, index: int) -> None:
+        height, width = canvas.shape[:2]
+        strip_h = max(int(height * 0.1), 50)
+        top = height - strip_h
+        region = canvas[top:]
+        region[:] = (region.astype(np.float32) * 0.45).astype(np.uint8)
+        first, last = index - self.half, index + self.half
+
+        def x_of(i: int) -> int:
+            return int((i - first) / max(last - first, 1) * (width - 1))
+
+        def y_of(p: float) -> int:
+            return int(height - 6 - p * (strip_h - 14))
+
+        line = max(int(round(height / 500)), 1)
+        cv2.line(canvas, (0, y_of(self.threshold)), (width, y_of(self.threshold)), (110, 110, 110), line)
+        lo, hi = max(first, 0), min(last, len(self.curve) - 1)
+        if hi > lo:
+            xs = ((np.arange(lo, hi + 1) - first) / max(last - first, 1) * (width - 1)).astype(np.int32)
+            ys = (height - 6 - self.curve[lo:hi + 1] * (strip_h - 14)).astype(np.int32)
+            cv2.polylines(canvas, [np.stack([xs, ys], 1)], False, self.CURVE, line + 1, cv2.LINE_AA)
+        start = bisect.bisect_left(self.event_frames, first)
+        stop = bisect.bisect_right(self.event_frames, last)
+        for frame in self.event_frames[start:stop]:
+            cv2.line(canvas, (x_of(frame), top + 4), (x_of(frame), height - 4), self.COLOUR, line + 1)
+        cv2.line(canvas, (x_of(index), top), (x_of(index), height), (255, 255, 255), line)
+        _outlined(canvas, "touch p", (8, top + 22), height / 2000, self.CURVE)
+
+
+def _outlined(canvas: np.ndarray, text: str, origin: tuple[int, int], scale: float,
+              colour: tuple[int, int, int]) -> None:
+    scale = max(scale, 0.5)
+    thickness = max(int(round(scale * 2)), 1)
+    cv2.putText(canvas, text, origin, cv2.FONT_HERSHEY_SIMPLEX, scale, (0, 0, 0), thickness + 3, cv2.LINE_AA)
+    cv2.putText(canvas, text, origin, cv2.FONT_HERSHEY_SIMPLEX, scale, colour, thickness, cv2.LINE_AA)
+
+
+def _draw_actions(canvas: np.ndarray, predictions: list[dict]) -> None:
+    """Игрок с действием -- поверх обычных рамок, как ``draw_actions`` vb-action.
+
+    Толстая рамка цвета действия, под ней плашка «Touch 0.93», а справа в
+    шапке -- список действий кадра.
+    """
+    acting = [
+        item for item in predictions
+        if item["class_name"] == "player" and item.get("action")
+    ]
+    for item in acting:
+        x1, y1, x2, y2 = [int(round(value)) for value in item["bbox_xyxy"]]
+        colour = ACTION_COLOURS.get(item["action"], (255, 255, 255))
+        cv2.rectangle(canvas, (x1, y1), (x2, y2), colour, 4)
+        label = f"{item['action']} {float(item['action_score']):.2f}"
+        (width, height), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)
+        cv2.rectangle(canvas, (x1, y2), (x1 + width + 8, y2 + height + 10), colour, -1)
+        cv2.putText(
+            canvas, label, (x1 + 4, y2 + height + 4), cv2.FONT_HERSHEY_SIMPLEX,
+            0.7, (0, 0, 0), 2, cv2.LINE_AA,
+        )
+    if acting:
+        summary = "  ".join(
+            f"{item['action']} {float(item['action_score']):.2f}" for item in acting
+        )
+        (width, _), _ = cv2.getTextSize(summary, cv2.FONT_HERSHEY_SIMPLEX, 0.65, 2)
+        cv2.putText(
+            canvas, summary, (max(canvas.shape[1] - width - 12, 10), 24),
+            cv2.FONT_HERSHEY_SIMPLEX, 0.65, (80, 255, 255), 2, cv2.LINE_AA,
+        )
 
 
 def _draw_heads(canvas: np.ndarray, predictions: list[dict]) -> None:
@@ -794,16 +1183,29 @@ def _draw_heads(canvas: np.ndarray, predictions: list[dict]) -> None:
     )
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(
+    default_model: Path = DEFAULT_MODEL, default_device: str = "CPU"
+) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Detect and track volleyball players and the ball with RAVEL-VB."
     )
     parser.add_argument("video", help="input video")
-    parser.add_argument("--model", default=str(DEFAULT_MODEL))
-    parser.add_argument("--backend", choices=("openvino", "onnx-cuda", "onnx-cpu"), default="openvino")
+    parser.add_argument("--model", default=str(default_model))
+    parser.add_argument("--backend", choices=("openvino","onnx-cuda","onnx-cpu"), default="openvino")
     parser.add_argument(
         "--output",
-        help="write predictions to this JSON file or directory",
+        help=(
+            "write predictions to this file or directory: a .jsonl is written "
+            "frame by frame as the video goes, a .json once at the end"
+        ),
+    )
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help=(
+            "with a .jsonl output: go on from the last checkpoint of an unfinished "
+            "run with the same settings; a finished one is left as it is"
+        ),
     )
     parser.add_argument("--output-video", help="write annotated video to this file")
     parser.add_argument(
@@ -843,12 +1245,36 @@ def parse_args() -> argparse.Namespace:
             "ни на что не влияет"
         ),
     )
-    parser.add_argument("--action-threshold",type=float,default=ACTION_THRESHOLD,
-                        help="Touch probability threshold (RAVEL-VB-013)")
+    parser.add_argument(
+        "--action-threshold",
+        type=float,
+        default=ACTION_THRESHOLD,
+        help=(
+            "порог действия (касания) игрока по action_logits; у релизов без "
+            "головы действия ни на что не влияет. На проверке касаний портала "
+            "сравнивали при 0.7"
+        ),
+    )
+    parser.add_argument(
+        "--strip-seconds", type=float, default=4.0,
+        help="лента касаний на видео: секунд в каждую сторону от кадра",
+    )
+    parser.add_argument(
+        "--touch-smooth", type=int, default=5,
+        help="событие касания -- пик сглаженной этим окном (кадров) вероятности",
+    )
+    parser.add_argument(
+        "--touch-min-gap", type=int, default=10,
+        help="два события касания не ближе стольких кадров",
+    )
+    parser.add_argument(
+        "--touch-hold", type=int, default=6,
+        help="столько кадров вокруг события исполнитель обведён TOUCH",
+    )
     parser.add_argument("--nms-iou", type=float, default=0.5)
     parser.add_argument("--close-threshold", type=float, default=0.20)
-    parser.add_argument("--hysteresis-frames", type=int, default=18)
-    parser.add_argument("--match-center-distance", type=float, default=0.11,
+    parser.add_argument("--hysteresis-frames", type=int, default=60)
+    parser.add_argument("--match-center-distance", type=float, default=0.15,
                         help="max normalized bbox center distance when reconnecting player tracks")
     parser.add_argument("--match-iou", type=float, default=0.08,
                         help="minimum overlap for matching player detections across frames")
@@ -865,10 +1291,27 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--gpu-device-id", type=int, default=0)
     parser.add_argument("--gpu-memory-limit-mb", type=int, default=0)
     parser.add_argument(
+        "--reader",
+        choices=("opencv", "ffmpeg"),
+        default=os.getenv("INFERENCE_READER", "opencv"),
+        help="opencv: cv2.VideoCapture, every frame converted to BGR; "
+        "ffmpeg: yuv420p over a pipe, the grey model reads the Y plane (no conversion)",
+    )
+    parser.add_argument(
+        "--decode-threads", type=int, default=int(os.getenv("INFERENCE_DECODE_THREADS", "0")),
+        help="ffmpeg decoder threads for --reader ffmpeg (0: auto)",
+    )
+    parser.add_argument(
+        "--decode-hwaccel",
+        choices=("none", "cuda"),
+        default=os.getenv("INFERENCE_DECODE_HWACCEL", "none"),
+        help="hardware decoder for --reader ffmpeg: cuda = NVDEC (needs the video capability of the NVIDIA driver)",
+    )
+    parser.add_argument(
         "--device",
         choices=("CPU", "GPU", "AUTO"),
-        default="CPU",
-        help="OpenVINO-only device; ignored for ONNX backends",
+        default=default_device,
+        help="inference device; the ONNX runner reads GPU as CUDA",
     )
     parser.add_argument(
         "--performance-hint",
@@ -878,8 +1321,22 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def main() -> None:
-    args = parse_args()
+def main(
+    runtime: type | None = None,
+    default_model: Path = DEFAULT_MODEL,
+    default_device: str = "CPU",
+) -> None:
+    """Run the detector; ``runtime`` is the class that executes the model.
+
+    ``inference_player_ball_onnx.py`` passes its ONNX Runtime class here, so both
+    runtimes share the arguments, the decoding and the output format.
+    """
+    runtime = runtime or RavelVBOpenVINO
+    args = parse_args(default_model, default_device)
+    if args.resume and args.save_raw_players:
+        # Resuming JSONL would truncate and rewrite the separate raw sidecars,
+        # silently losing the frames decoded before the checkpoint.
+        raise ValueError("--resume with --save-raw-players is unsupported; rerun inference without --resume")
     if args.stride < 1:
         raise ValueError("--stride must be >= 1")
     if args.frame_step < 1:
@@ -907,7 +1364,10 @@ def main() -> None:
         raise ValueError("frame counts and thread count must be non-negative")
 
     model_path = Path(args.model).expanduser().resolve()
-    video_path = Path(args.video).expanduser().resolve()
+    # An http(s) URL is read by OpenCV's FFmpeg straight from the network (an outside node).
+    video_is_url = urlparse(args.video).scheme in {"http", "https"}
+    video_path = Path(urlparse(args.video).path) if video_is_url else Path(args.video).expanduser().resolve()
+    video_source = args.video if video_is_url else str(video_path)
     output_path = None
     if args.output:
         output_arg = args.output
@@ -921,15 +1381,47 @@ def main() -> None:
         if args.output_video
         else None
     )
-    if not video_path.is_file():
+    if not video_is_url and not video_path.is_file():
         raise FileNotFoundError(f"video not found: {video_path}")
     if not model_path.is_file():
         raise FileNotFoundError(f"OpenVINO model not found: {model_path}")
-    model = (RavelVBOpenVINO(model_path, args.num_threads, args.performance_hint, args.device)
-             if args.backend == "openvino" else
-             RavelVBONNX(model_path, args.num_threads,
-                         "cuda" if args.backend == "onnx-cuda" else "cpu",
-                         args.gpu_device_id, args.gpu_memory_limit_mb))
+    model = (runtime(model_path, args.num_threads, args.performance_hint, args.device)
+             if runtime is not RavelVBOpenVINO else
+             (RavelVBOpenVINO(model_path, args.num_threads, args.performance_hint, args.device)
+                          if args.backend == "openvino" else
+                          RavelVBONNX(model_path, args.num_threads,
+                                      "cuda" if args.backend == "onnx-cuda" else "cpu",
+                                      args.gpu_device_id, args.gpu_memory_limit_mb)))
+    settings = {
+        "model": str(model_path),
+        "video": video_source,
+        "stride": args.stride,
+        "frame_step": args.frame_step,
+        "score_threshold": args.score_threshold,
+        "ball_threshold": args.ball_threshold,
+        "head_threshold": args.head_threshold,
+        "close_threshold": None if args.no_player_hysteresis else args.close_threshold,
+        "hysteresis_frames": 0 if args.no_player_hysteresis else args.hysteresis_frames,
+        "include_features": bool(args.include_features),
+    }
+    # Только у релиза с действием: прежние незаконченные прогоны других моделей
+    # продолжаются по --resume, как раньше.
+    if _metadata_has_action(model_path):
+        settings["action_threshold"] = args.action_threshold
+    # The detector streams into a plain .jsonl only; it is packed once the processing is over.
+    streaming = output_path is not None and output_path.name.endswith(".jsonl")
+    if args.resume and not streaming:
+        raise ValueError("--resume needs a .jsonl --output")
+    resume_from: dict | None = None
+    resume_offset = 0
+    if args.resume and output_path.is_file():
+        state, resume_from, resume_offset = _resume_point(output_path, settings)
+        if state == "complete":
+            print(json.dumps({"output": str(output_path), "complete": True}, ensure_ascii=False))
+            return
+        if state == "fresh":
+            print(f"{output_path}: no checkpoint of the same settings, starting over", file=sys.stderr)
+
     config = model.config
     clip_length = int(config["clip_length"])
     if args.stride > clip_length:
@@ -947,9 +1439,13 @@ def main() -> None:
     for _ in range(args.warmup_runs):
         model.infer(warmup)
 
-    capture = cv2.VideoCapture(str(video_path))
+    capture = (
+        FfmpegYuvSource(video_source, args.decode_threads, args.decode_hwaccel)
+        if args.reader == "ffmpeg"
+        else cv2.VideoCapture(video_source)
+    )
     if not capture.isOpened():
-        raise ValueError(f"cannot open video: {video_path}")
+        raise ValueError(f"cannot open video: {video_source}")
     fps = float(capture.get(cv2.CAP_PROP_FPS)) or 30.0
     width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
     height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
@@ -957,14 +1453,26 @@ def main() -> None:
     frames: deque[np.ndarray] = deque(maxlen=clip_length)
     indices: deque[int] = deque(maxlen=clip_length)
     raw_by_frame: dict[int, list[dict]] = defaultdict(list)
+    complete_by_frame: dict[int, list[dict]] = defaultdict(list)
+    # Only drawing needs the predictions of past frames; a JSONL run keeps nothing else.
+    keep_frames = args.show or output_video_path is not None
     predictions_by_frame: dict[int, list[dict]] = defaultdict(list)
+    # Касание для ленты на видео: (лучшая вероятность кадра, рамка этого игрока).
+    has_action = getattr(model, "action_names", None) is not None
+    touch_by_frame: dict[int, tuple[float, list[float] | None]] = {}
     predictions: list[dict] = []
     raw_path = (output_path.with_name("players.raw.jsonl")
                 if args.save_raw_players and output_path is not None else None)
     raw_file = None
+    full_raw_file = None
     if raw_path is not None:
         raw_path.parent.mkdir(parents=True, exist_ok=True)
         raw_file = raw_path.open("w", encoding="utf-8", newline="\n")
+        # All decoder proposals and action scores are kept separately from
+        # the published players.json contract for CPU-only replay.
+        full_raw_file = raw_path.with_name("players.raw.v2.jsonl").open(
+            "w", encoding="utf-8", newline="\n")
+    written_predictions = 0
     hysteresis = (
         None
         if args.no_player_hysteresis
@@ -985,11 +1493,53 @@ def main() -> None:
     last_clip_start: int | None = None
     inference_runs = 0
     model_elapsed = 0.0
+    earlier_pipeline_seconds = 0.0
+    # Keep weak decoder evidence once for many independent CPU replays.
+    # This is NOT a claim that a detection below the normal threshold is
+    # correct; the CPU tracker must still validate it.
+    raw_candidate_floor = .02
     candidate_threshold = (
-        min(.05, args.score_threshold, args.close_threshold)
+        min(raw_candidate_floor, args.score_threshold, args.close_threshold)
         if raw_file is not None else
         args.score_threshold if args.no_player_hysteresis else args.close_threshold
     )
+
+    output_handle = None
+    if streaming:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        if resume_from is not None:
+            # The lines after the checkpoint are redone: the run goes on from there.
+            output_handle = open(output_path, "r+b")
+            output_handle.truncate(resume_offset)
+            output_handle.seek(resume_offset)
+            next_finalize_frame = int(resume_from["next_frame"])
+            last_clip_start = resume_from["last_clip_start"]
+            shown = next_finalize_frame // args.frame_step
+            inference_runs = int(resume_from["inference_runs"])
+            model_elapsed = float(resume_from["model_seconds"])
+            earlier_pipeline_seconds = float(resume_from["pipeline_seconds"])
+            written_predictions = int(resume_from["predictions"])
+            for frame, items in resume_from["raw_pending"]:
+                raw_by_frame[int(frame)] = items
+            if hysteresis is not None and resume_from.get("hysteresis") is not None:
+                hysteresis.restore(resume_from["hysteresis"])
+            if output_video_path is not None:
+                for frame, items in _written_frames(output_path):
+                    predictions_by_frame[frame] = items
+        else:
+            output_handle = open(output_path, "wb")
+            header = {
+                "type": "header",
+                "format": FORMAT_V3,
+                **settings,
+                "source_size": {"width": width, "height": height},
+                "fps": fps,
+                "clip_length": clip_length,
+                "reported_frames": reported_total,
+                "fields": FIELDS,
+            }
+            output_handle.write(dump_line(header).encode("utf-8"))
+            _sync(output_handle)
 
     def infer_clip(
         clip_frames: list[np.ndarray],
@@ -1007,21 +1557,25 @@ def main() -> None:
             model.ball_width,
             model.ball_height,
             args.include_features,
-            ball_threshold=args.ball_threshold,
+            ball_threshold=0.0 if full_raw_file is not None else args.ball_threshold,
             head_threshold=args.head_threshold,
-            action_names=model.action_names,
+            action_names=getattr(model, "action_names", None),
             action_threshold=args.action_threshold,
+            preserve_player_candidates=full_raw_file is not None,
+            max_players=32 if full_raw_file is not None else 16,
         )[0]
         for item in decoded:
             slot = int(item.pop("frame_slot"))
             if slot >= real_frame_count:
                 continue
+            item["frame_index"] = clip_indices[slot]
+            if full_raw_file is not None:
+                complete_by_frame[item["frame_index"]].append(dict(item))
             if (
                 item["class_name"] == "ball"
                 and float(item["score"]) < args.ball_threshold
             ):
                 continue
-            item["frame_index"] = clip_indices[slot]
             raw_by_frame[item["frame_index"]].append(item)
 
     def _show_frame(current_frame: int) -> None:
@@ -1063,7 +1617,7 @@ def main() -> None:
 
     def finalize_frames(end_frame: int) -> None:
         """Finalize frames that cannot be affected by a later inference clip."""
-        nonlocal next_finalize_frame, show_active, show_window_open
+        nonlocal next_finalize_frame, show_active, show_window_open, written_predictions
         while next_finalize_frame < end_frame:
             current_frame = next_finalize_frame
             if current_frame % args.frame_step:
@@ -1072,8 +1626,13 @@ def main() -> None:
                 _show_frame(current_frame)
                 next_finalize_frame += 1
                 continue
+            unmerged = complete_by_frame.pop(current_frame, [])
             merged = merge_frame_predictions(raw_by_frame.pop(current_frame, []),
                                              iou_threshold=args.nms_iou)
+            if full_raw_file is not None:
+                full_raw_file.write(json.dumps({
+                    "frame": current_frame, "predictions": unmerged,
+                }, separators=(",", ":")) + "\n")
             if raw_file is not None:
                 # One JSONL row per inferred frame, independent of the player
                 # score/open/close thresholds and subsequent Track ID matching.
@@ -1093,8 +1652,12 @@ def main() -> None:
                     if item["class_name"] != "player"
                     or float(item["score"]) >= args.score_threshold
                 ]
+            frame_items: list[dict] = []
+            best_touch: tuple[float, list[float]] | None = None
             for filtered_item in filtered:
                 item = dict(filtered_item)
+                touch_p = item.pop(TOUCH_KEY, None)
+                item.pop("action_scores", None)
                 x1, y1, x2, y2 = item.pop("bbox_xyxy_norm")
                 item["frame_index"] = current_frame
                 item["time_sec"] = round(current_frame / fps, 4)
@@ -1104,22 +1667,56 @@ def main() -> None:
                     round(x2 * width, 2),
                     round(y2 * height, 2),
                 ]
-                predictions.append(item)
-                predictions_by_frame[current_frame].append(item)
+                if touch_p is not None and (best_touch is None or touch_p > best_touch[0]):
+                    best_touch = (touch_p, item["bbox_xyxy"])
+                frame_items.append(item)
+            if keep_frames and has_action:
+                touch_by_frame[current_frame] = best_touch or (0.0, None)
+            written_predictions += len(frame_items)
+            if output_handle is not None:
+                output_handle.write(dump_line(frame_record(current_frame, frame_items)).encode("utf-8"))
+            else:
+                predictions.extend(frame_items)
+            if keep_frames:
+                predictions_by_frame[current_frame] = frame_items
 
             _show_frame(current_frame)
+            if keep_frames and output_video_path is None:
+                predictions_by_frame.pop(current_frame - args.frame_step, None)
             next_finalize_frame += 1
+
+    def write_checkpoint() -> None:
+        """State at a clip boundary: a resumed run decodes again from ``next_frame``."""
+        checkpoint = {
+            "type": "checkpoint",
+            "next_frame": next_finalize_frame,
+            "last_clip_start": last_clip_start,
+            "inference_runs": inference_runs,
+            "model_seconds": round(model_elapsed, 6),
+            "pipeline_seconds": round(earlier_pipeline_seconds + time.perf_counter() - pipeline_started, 6),
+            "predictions": written_predictions,
+            "hysteresis": hysteresis.state() if hysteresis is not None else None,
+            # Predictions of the next frames from the overlap of the last clip.
+            "raw_pending": [[frame, items] for frame, items in sorted(raw_by_frame.items())],
+        }
+        output_handle.write(dump_line(checkpoint).encode("utf-8"))
+        _sync(output_handle)
 
     pipeline_started = time.perf_counter()
     with tqdm(
         total=reported_total or None, desc="RAVEL-VB", unit="frame"
     ) as progress:
+        if next_finalize_frame:
+            # Resumed: frames before the checkpoint are only decoded (seeking is not frame-accurate).
+            while frame_index < next_finalize_frame and capture.grab():
+                frame_index += 1
+            progress.update(frame_index)
         while True:
             ok, bgr = capture.read()
             if not ok:
                 break
             if show_active:
-                show_frames[frame_index] = bgr.copy()
+                show_frames[frame_index] = to_bgr(bgr).copy()
             # ``--frame-step`` выбрасывает кадры до сборки клипа: сеть видит те
             # же девять слотов, растянутые на большее время, а у невыбранного
             # кадра предсказаний нет вовсе.
@@ -1135,6 +1732,11 @@ def main() -> None:
                 infer_clip(list(frames), current_indices, clip_length)
                 last_clip_start = current_indices[0]
                 finalize_frames(last_clip_start + args.stride * args.frame_step)
+                if output_handle is not None:
+                    if inference_runs % CHECKPOINT_EVERY_CLIPS == 0:
+                        write_checkpoint()
+                    else:
+                        output_handle.flush()
             frame_index += 1
             progress.update(1)
     total = frame_index
@@ -1163,9 +1765,11 @@ def main() -> None:
     finally:
         if raw_file is not None:
             raw_file.close()
+        if full_raw_file is not None:
+            full_raw_file.close()
     if args.show:
         cv2.destroyAllWindows()
-    pipeline_elapsed = time.perf_counter() - pipeline_started
+    pipeline_elapsed = earlier_pipeline_seconds + time.perf_counter() - pipeline_started
     benchmark = {
         "processed_frames": total,
         "inference_runs": inference_runs,
@@ -1182,10 +1786,54 @@ def main() -> None:
         ),
         "device": model.device,
         "backend": args.backend,
+        "reader": args.reader,
+        "decode_hwaccel": args.decode_hwaccel if args.reader == "ffmpeg" else None,
     }
+    if output_handle is not None:
+        # The explicit flag for the readers: the video is over, nothing more will come.
+        end = {
+            "type": "end",
+            "last_frame": total - 1,
+            "processed_frames": total,
+            "predictions": written_predictions,
+            "benchmark": benchmark,
+        }
+        output_handle.write(dump_line(end).encode("utf-8"))
+        _sync(output_handle)
+        output_handle.close()
 
+    touch_overlay = None
+    if output_video_path is not None and has_action:
+        # Кадр, которого сеть не видела (--frame-step), несёт значение предыдущего.
+        curve = np.zeros(total, np.float32)
+        last_value = 0.0
+        for index in range(total):
+            if index in touch_by_frame:
+                last_value = touch_by_frame[index][0]
+            curve[index] = last_value
+        touch_events = find_touch_events(
+            curve, args.action_threshold, args.touch_smooth, args.touch_min_gap
+        )
+        touch_overlay = TouchOverlay(
+            curve,
+            touch_events,
+            {frame: touch_by_frame.get(frame, (0.0, None))[1] for frame, _ in touch_events},
+            fps,
+            args.action_threshold,
+            args.strip_seconds,
+            args.touch_hold,
+        )
+        print(
+            json.dumps(
+                {"touch_events": [
+                    {"frame": frame, "time_sec": round(frame / fps, 3), "score": round(score, 3)}
+                    for frame, score in touch_events
+                ]},
+                ensure_ascii=False,
+            )
+        )
     if output_video_path is not None:
-        render_capture = cv2.VideoCapture(str(video_path))
+        render_capture = cv2.VideoCapture(video_source)
         if not render_capture.isOpened():
             raise ValueError("cannot open the input video for rendering")
         writer = None
@@ -1207,7 +1855,7 @@ def main() -> None:
                 if not ok:
                     break
                 rendered = _draw_predictions(
-                    bgr, render_index, fps, records_for(render_index)
+                    bgr, render_index, fps, records_for(render_index), touch_overlay
                 )
                 if writer is not None:
                     writer.write(rendered)
@@ -1258,14 +1906,16 @@ def main() -> None:
         metadata_path = raw_path.with_name("players.raw.json")
         metadata_path.write_text(json.dumps({
             "format": "ravel-raw-players-v1",
-            "minimum_confidence": .05,
+            "minimum_confidence": raw_candidate_floor,
+            "pre_nms": full_raw_file is not None,
+            "max_players_per_frame": 32 if full_raw_file is not None else 16,
             "score_threshold": args.score_threshold,
             "close_threshold": args.close_threshold,
             "nms_iou": args.nms_iou,
             "frame_step": args.frame_step,
             "width": width, "height": height, "fps": fps,
         }, ensure_ascii=False), encoding="utf-8")
-    if output_path is not None:
+    if output_path is not None and not streaming:
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text(
             json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
@@ -1277,12 +1927,55 @@ def main() -> None:
                 "output_video": (
                     str(output_video_path) if output_video_path else None
                 ),
-                "predictions": len(predictions),
+                "predictions": written_predictions,
                 "benchmark": benchmark,
             },
             ensure_ascii=False,
         )
     )
+
+
+def _metadata_has_action(model_path: Path) -> bool:
+    metadata_path = model_path.with_suffix(".json")
+    if not metadata_path.is_file():
+        return False
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    return "action_logits" in (metadata.get("output_names") or ())
+
+
+def _sync(handle: Any) -> None:
+    handle.flush()
+    os.fsync(handle.fileno())
+
+
+def _resume_point(path: Path, settings: dict) -> tuple[str, dict | None, int]:
+    """``("complete" | "resume" | "fresh", last checkpoint, byte offset after it)``.
+
+    A run of other settings (model, video, sampling, thresholds) is not resumed.
+    """
+    header: dict | None = None
+    checkpoint: dict | None = None
+    offset = 0
+    for line_end, record in iter_records(path):
+        kind = record.get("type")
+        if kind == "header":
+            header = record if record.get("format") == FORMAT_V3 else None
+        elif kind == "checkpoint":
+            checkpoint, offset = record, line_end
+        elif kind == "end":
+            if header is not None and all(header.get(key) == value for key, value in settings.items()):
+                return "complete", None, 0
+    if header is None or any(header.get(key) != value for key, value in settings.items()):
+        return "fresh", None, 0
+    if checkpoint is None:
+        return "fresh", None, 0
+    return "resume", checkpoint, offset
+
+
+def _written_frames(path: Path):
+    for _, record in iter_records(path):
+        if record.get("type") == "frame":
+            yield int(record["frame_index"]), expand_frame(record)
 
 
 if __name__ == "__main__":

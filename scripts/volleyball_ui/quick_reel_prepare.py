@@ -11,6 +11,7 @@ from pathlib import Path
 
 from . import data
 from .preview import _read_info
+from .video_compat import is_analysis_ready
 
 
 def prepared_entry(value: str | Path):
@@ -37,9 +38,20 @@ def _valid(output: Path, marker: Path, identity: dict) -> bool:
             and output.is_file() and output.stat().st_size > 0)
 
 
+def ready_source_path(video: str | Path) -> Path | None:
+    source, _, output, marker, identity = prepared_entry(video)
+    if is_analysis_ready(source, identity["width"]):
+        return source
+    return output if _valid(output, marker, identity) else None
+
+
 def prepare_source(video: str, progress=None) -> tuple[Path, bool]:
     """Return (video, reused). No ordinary project references or results."""
     source, info, output, marker, identity = prepared_entry(video)
+    if is_analysis_ready(source, identity["width"]):
+        if progress:
+            progress(100, True)
+        return source, True
     output.parent.mkdir(parents=True, exist_ok=True)
     if _valid(output, marker, identity):
         if progress:

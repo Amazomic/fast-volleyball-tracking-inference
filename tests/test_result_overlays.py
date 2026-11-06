@@ -19,9 +19,12 @@ class ResultOverlayTests(unittest.TestCase):
             self.assertEqual(html.count('data-result-overlay="'+name+'"'),1)
             self.assertIn(name+":",js)
         self.assertIn('class="result-player-wrap"',html)
-        self.assertLess(html.index('class="result-preview-mode-bar"'),
-                        html.index('class="result-overlay-controls"'))
-        self.assertLess(html.index('class="result-overlay-controls"'),
+        self.assertIn('class="result-preview-mode-bar"',html)
+        self.assertEqual(html.count('name="result-preview-mode"'),2)
+        self.assertIn('Источник данных предпросмотра',html)
+        self.assertIn('id="result-raw-controls"',html)
+        self.assertIn('class="result-overlay-controls result-cpu-overlays"',html)
+        self.assertLess(html.index('class="result-overlay-controls result-cpu-overlays"'),
                         html.index('class="result-player-wrap"'))
         self.assertIn("localStorage.setItem(overlayKey()",js)
         self.assertIn("filter(actionVisible)",js)
@@ -30,23 +33,32 @@ class ResultOverlayTests(unittest.TestCase):
         self.assertIn(".result-video-main > .result-overlay-controls",css)
         self.assertIn("flex-wrap:wrap;",css)
         self.assertIn("grid-template-columns:minmax(0,1fr) 304px;",css)
-        for threshold in ("0","0.5","0.65","0.8"):
-            self.assertIn('data-result-confidence="'+threshold+'"',html)
-        self.assertIn('aria-pressed="true"',html)
+        self.assertNotIn('id="result-confidence-threshold"',html)
+        self.assertNotIn('data-result-confidence=',html)
+        self.assertNotIn('confidenceThreshold',js)
+        self.assertNotIn('passesConfidence',js)
+        self.assertIn('id="chain-inference"',html)
+        self.assertNotIn('id="chain-video"',html)
 
     def test_generic_touches_distinct_colors_and_confidence(self):
         html=(ROOT/"scripts/volleyball_ui/static/index.html").read_text(encoding="utf-8")
         js=(ROOT/"scripts/volleyball_ui/static/results-ui.js").read_text(encoding="utf-8")
         css=(ROOT/"scripts/volleyball_ui/static/result-media.css").read_text(encoding="utf-8")
-        self.assertIn("const actionVisible=a=>passesConfidence(a)",js)
-        self.assertIn("(overlays.touches||Boolean(overlays[typeToControl[a.type]]))",js)
+        self.assertIn("const actionVisible=a=>overlays.touches",js)
+        self.assertIn("overlays.touches||Boolean(overlays[typeToControl[a.type]])",js)
         self.assertIn("counters",js) if "counters" in js else self.assertIn("counts.touches++",js)
         self.assertIn('class="result-track-event result-track-touch"',js)
         self.assertIn("classifiedVisible(a)",js)
         for kind in ("attack","block","serve","dig","overhead_pass","touch"):
             self.assertIn(".result-track-event.result-track-"+kind,css)
-        self.assertIn('id="result-confidence-threshold"',html)
+        self.assertNotIn('id="result-confidence-threshold"',html)
+        self.assertNotIn("Зелёный след: мяч пока не обнаружен",js)
+        self.assertNotIn('id="result-trajectory-status"',html)
+        self.assertIn('id="result-trajectory-jump"',html)
+        self.assertLess(html.index('id="result-video-player"'),
+                        html.index('id="result-trajectory-jump"'))
         self.assertIn("trailStatus",js)
+        self.assertIn("position:absolute;right:14px;bottom:110px;",css)
         self.assertIn("Math.round(fps*2.0)",js)
 
     def test_only_reads_local_bounded_csv(self):

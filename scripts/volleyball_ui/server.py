@@ -28,15 +28,17 @@ from .projects import (all_projects, create_project, update_project, get_project
                        project_videos, project_summary, project_output, project_report,
                        project_logs_root, archive_project, project_dir)
 from .photos import photo_path, photos_metadata
-from .player_library import photo_counts, sync_photos, album_dir, collect_existing_player_photos
+from .player_library import (photo_counts, sync_photos, album_dir, collect_existing_player_photos,
+                             album_photos, album_photo_path, remove_album_photo)
 from .projects import assert_project_video
 from .data import read_json
 
 PUBLIC = Path(__file__).with_name("static")
 # The launcher can distinguish a stale Python process from freshly served JS.
-_API_VERSION = 12
+_API_VERSION = 27
 _SOURCE_FILES = [Path(__file__).with_name(name) for name in
-                 ("server.py", "data.py", "projects.py", "player_library.py", "montage_runner.py", "montage_library.py", "analysis_profiles.py", "prepared_videos.py", "video_uploads.py", "local_sources.py", "montage_audio.py", "project_lifecycle.py", "montage_source.py", "montage_encoding.py", "trajectory.py", "player_overlay.py", "quick_reel_audio.py", "quick_reel_runner.py", "quick_reel_jobs.py", "quick_reel_prepare.py", "quick_reel_analyze.py", "quick_reel_render.py", "quick_reel_selection.py", "file_selection.py")]
+                 ("server.py", "analysis_runs.py", "data.py", "projects.py", "player_identity_groups.py", "player_retracking.py", "player_library.py", "montage_runner.py", "montage_library.py", "analysis_profiles.py", "prepared_videos.py", "video_uploads.py", "local_sources.py", "montage_audio.py", "project_lifecycle.py", "montage_source.py", "montage_encoding.py", "trajectory.py", "player_overlay.py", "quick_reel_audio.py", "quick_reel_runner.py", "quick_reel_jobs.py", "quick_reel_prepare.py", "quick_reel_analyze.py", "quick_reel_render.py", "quick_reel_selection.py", "file_selection.py", "video_compat.py")]
+_SOURCE_FILES.append(Path(__file__).parents[1] / "volleyball_studio" / "advanced.py")
 _SOURCE_STAMPS = {str(p): p.stat().st_mtime_ns for p in _SOURCE_FILES if p.is_file()}
 RUN_DIR = RESULTS / "ui_runs"
 JOB_LOCK = threading.RLock()
@@ -134,7 +136,7 @@ def job_state() -> dict:
         _refresh_progress_events()
         log = _tail(JOB["log"])
         progress, stage = None, ""
-        meta=JOB.get("progress_event") if JOB["kind"] in ("analyze","highlights","experiment","quick_reel") else None
+        meta=JOB.get("progress_event") if JOB["kind"] in ("analyze","highlights","experiment","quick_reel","reprocess") else None
         if meta is not None:
             progress=meta.get("overall_percent")
             stage=meta.get("stage","")
@@ -151,7 +153,7 @@ def job_state() -> dict:
                         stage = event["stage"]
         if status=="complete":
             progress=100
-        if status=="running" and JOB["kind"] in ("analyze","highlights","experiment","quick_reel"):
+        if status=="running" and JOB["kind"] in ("analyze","highlights","experiment","quick_reel","reprocess"):
             progress=min(99.9,float(progress or 0))
         started=JOB.get("started_epoch")
         now=JOB.get("finished_epoch") or time.time()
@@ -172,6 +174,7 @@ def job_state() -> dict:
             "completed_stages":meta.get("completed_stages") if meta else None,
             "total_stages":meta.get("total_stages") if meta else None,
             "video_index":meta.get("video_index") if meta else None,
+            "video_name":meta.get("video_name") if meta else None,
             "videos_total":meta.get("videos_total") if meta else None,
             "frames":meta.get("frames") if meta else None,
             "total_frames":meta.get("total_frames") if meta else None,
@@ -270,6 +273,54 @@ def start_job(kind: str, options: dict) -> dict:
                 cmd = [sys.executable, str(ROOT / "scripts" / "run_project_analysis.py"),
                        "--project-id", project_id, "--profile-id", profile_id,
                        "--profile-name", name] + cmd[cmd.index("--backend"):]
+        elif kind == "reprocess":
+            from scripts.volleyball_studio.reprocess import MODES
+            mode = str(options.get("mode") or "baseline")
+            run_id = options.get("run_id")
+            touch_threshold = float(options.get("touch_threshold", .5))
+            if (not project_id or not isinstance(run_id, str) or not run_id or
+                    mode not in MODES or not math.isfinite(touch_threshold) or
+                    not 0 <= touch_threshold <= 1):
+                raise ValueError("Выберите анализ и корректный режим постобработки")
+            touch_gap = float(options.get("touch_min_interval_sec", .35))
+            touch_reach = float(options.get("touch_max_reach_ratio", .35))
+            if (not math.isfinite(touch_gap) or not .10 <= touch_gap <= 1.5 or
+                    not math.isfinite(touch_reach) or not .10 <= touch_reach <= 1.0):
+                raise ValueError("Touch: интервал 0.1–1.5 с, допуск 0.1–1 высоты игрока")
+            tracking = {}
+            for key,lo,hi in (
+                ("track_min_duration", .05, 30.),
+                ("track_max_distance", 1., 2000.),
+                ("track_player_threshold", 0., 1.),
+                ("track_ball_threshold", 0., 1.),
+            ):
+                value = float(options.get(key, {
+                    "track_min_duration": .5, "track_max_distance": 200.,
+                    "track_player_threshold": .35, "track_ball_threshold": .35,
+                }[key]))
+                if not math.isfinite(value) or not lo <= value <= hi:
+                    raise ValueError(f"{key}: недопустимое значение {lo}..{hi}")
+                tracking[key] = value
+            cmd = [sys.executable, "-m", "scripts.run_project_reprocess",
+                   "--project-id", project_id, "--run-id", run_id,
+                   "--mode", mode, "--touch-threshold", str(touch_threshold),
+                   "--touch-min-interval-sec", str(touch_gap),
+                   "--touch-max-reach-ratio", str(touch_reach)]
+            for name,value in tracking.items():
+                cmd.extend(("--"+name.replace("_","-"),str(value)))
+            if options.get("track_no_ball_fill") is True:
+                cmd.append("--track-no-ball-fill")
+            if options.get("beach") is True:
+                cmd.append("--beach")
+            for key, flag in (("ball_threshold", "--ball-threshold"),
+                              ("player_threshold", "--player-threshold")):
+                value = options.get(key)
+                if value is not None:
+                    number = float(value)
+                    lower = .02 if key == "player_threshold" else .05
+                    if not math.isfinite(number) or not lower <= number <= .95:
+                        raise ValueError(f"{key}: threshold must be {lower:.2f}..0.95")
+                    cmd += [flag, str(number)]
         elif kind == "experiment":
             from scripts.run_analysis_experiment import validate_config, experiment_root
             config=validate_config(options)
@@ -386,6 +437,9 @@ def start_job(kind: str, options: dict) -> dict:
                 )
             finally:
                 log_handle.close()
+        if kind == "quick_reel":
+            from .quick_reel_jobs import publish_latest
+            publish_latest(quick_request_id, audio["path"])
         JOB.update(process=process, id=job_id, kind=kind, log=log_file,
                    montage_mode=(options.get("mode") if kind == "highlights" else None),
                    started_at=time.strftime("%Y-%m-%d %H:%M:%S"), command=cmd,
@@ -402,8 +456,23 @@ def cancel_job():
     with JOB_LOCK:
         process = JOB["process"]
         if process and process.poll() is None:
-            os.killpg(process.pid, signal.SIGTERM)
+            if os.name == "nt":
+                # Windows has no os.killpg; stop descendant CPU/GPU workers too.
+                subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                               capture_output=True, check=False)
+            else:
+                os.killpg(process.pid, signal.SIGTERM)
     return job_state()
+
+
+def cancel_quick_reel(reel_id: str) -> dict:
+    with JOB_LOCK:
+        if (JOB.get("kind") != "quick_reel"
+                or JOB.get("quick_request_id") != reel_id
+                or JOB.get("process") is None
+                or JOB["process"].poll() is not None):
+            raise ValueError("Нет активного быстрого рилса для отмены")
+        return cancel_job()
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -488,6 +557,12 @@ class Handler(BaseHTTPRequestHandler):
                                    "default_threads": min(128, max(1, round(cores * 0.8)))})
             if route == "/api/videos":
                 return self._json({"videos": list_videos()})
+            if route == "/api/quick-reel/latest":
+                from .quick_reel_jobs import latest_reel_id
+                return self._json({"reel_id": latest_reel_id()})
+            if route == "/api/quick-reel/history":
+                from .quick_reel_jobs import completed_history
+                return self._json({"results": completed_history()})
             if route == "/api/quick-reel/status":
                 from .quick_reel_jobs import status_for, request_for, result_for
                 reel_id = query.get("id", [""])[0]
@@ -590,6 +665,12 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"players": global_players()})
             if route == "/api/players/photos":
                 return self._json({"counts": photo_counts(), "root": str(RESULTS / "players")})
+            if route == "/api/players/album":
+                return self._json(album_photos(query.get("player_id", [""])[0]))
+            if route == "/api/players/album-photo":
+                return self._file(album_photo_path(
+                    query.get("player_id", [""])[0],
+                    query.get("filename", [""])[0]), "image/jpeg")
             if route == "/api/report":
                 return self._json(report(query.get("video", [""])[0], query.get("project_id", [None])[0], query.get("cache_id", [None])[0]))
             if route == "/api/video-info":
@@ -631,6 +712,26 @@ class Handler(BaseHTTPRequestHandler):
                 length = video_info(name)["duration_sec"]
                 segment = get_segment(name, start_sec, length)
                 return self._file(segment, "video/mp4", allow_ranges=True)
+            if route == "/api/analysis-rallies":
+                project_id, name = query.get("project_id", [""])[0], query.get("video", [""])[0]
+                assert_project_video(project_id, name)
+                from .analysis_runs import cache_for
+                cache = cache_for(name, project_id, query.get("cache_id", [None])[0])
+                if not cache or not (cache / "analysis/events.json").is_file():
+                    return self._error(
+                        "Эта версия ещё не содержит CPU-событий и розыгрышей", 409)
+                from .rally_view import settings as rally_settings
+                cfg = rally_settings(query.get("gap_sec", ["3"])[0],
+                                     query.get("min_sec", ["3"])[0],
+                                     query.get("context_sec", ["1.5"])[0])
+                duration = _normalized_duration(cache / "analysis.mp4")
+                response = timeline(name, project_id, duration_sec=duration,
+                                    cache_id=query.get("cache_id", [None])[0],
+                                    **cfg)
+                response["reconstruction_available"] = (
+                    cache / "analysis/game-tracks.json").is_file()
+                response["preview_only"] = True
+                return self._json(response)
             if route == "/api/analysis-view":
                 project_id, name = query.get("project_id", [""])[0], query.get("video", [""])[0]
                 assert_project_video(project_id, name)
@@ -638,6 +739,30 @@ class Handler(BaseHTTPRequestHandler):
                 cache = cache_for(name, project_id, query.get("cache_id", [None])[0])
                 if not cache or not (cache / "analysis.mp4").is_file():
                     return self._json({"analyzed": False, "video": name, "rallies": [], "actions": []})
+                if not (cache / "analysis/events.json").is_file():
+                    if (cache / "inference.manifest.json").is_file():
+                        manifest=read_json(cache/"inference.manifest.json",{})
+                        duration=_normalized_duration(cache/"analysis.mp4")
+                        from .trajectory import ball_detection_capability
+                        from .player_overlay import player_detection_capability
+                        return self._json({
+                            "analyzed": False, "inference_ready": True,
+                            "postprocessed": False,
+                            "video": name, "rallies": [], "actions": [],
+                            "analysis_offset_sec":float(manifest.get("analysis_offset_sec") or 0),
+                            "coordinate_space":{"width":manifest.get("width"),
+                                                "height":manifest.get("height")},
+                            "duration_sec":duration,
+                            "ball_detection":ball_detection_capability(cache),
+                            "raw_ball_detection":ball_detection_capability(cache),
+                            "player_detection":player_detection_capability(cache),
+                            "media_url":("/api/analysis-media?project_id="+quote(project_id)
+                                         +"&video="+quote(name)+"&cache_id="+quote(
+                                            query.get("cache_id",[None])[0] or cache.name)),
+                            "message": "Нейросети завершены. Запустите CPU-обработку для расчёта розыгрышей.",
+                        })
+                    return self._json({"analyzed": False, "video": name,
+                                       "rallies": [], "actions": []})
                 from .rally_view import settings as rally_settings
                 cfg = rally_settings(query.get("gap_sec", ["3"])[0],
                                      query.get("min_sec", ["3"])[0],
@@ -646,12 +771,31 @@ class Handler(BaseHTTPRequestHandler):
                 response = timeline(name, project_id, duration_sec=duration, cache_id=query.get("cache_id", [None])[0], **cfg)
                 from .trajectory import ball_detection_capability
                 response["ball_detection"] = ball_detection_capability(cache)
+                # Raw detector mode always reads the immutable neural parent,
+                # regardless of the selected CPU postprocessing algorithm.
+                original = cache.parent.parent if cache.parent.name == "postprocessing" else cache
+                response["raw_ball_detection"] = ball_detection_capability(original)
                 from .player_overlay import player_detection_capability
                 response["player_detection"] = player_detection_capability(cache)
                 response["video"] = name
-                response["media_url"] = "/api/analysis-media?project_id=" + quote(project_id) + "&video=" + quote(name) + "&cache_id=" + cache.name
+                selected_cache_id = query.get("cache_id", [None])[0] or cache.name
+                response["media_url"] = "/api/analysis-media?project_id=" + quote(project_id) + "&video=" + quote(name) + "&cache_id=" + quote(selected_cache_id)
                 response["duration_sec"] = duration
+                touch_mp4 = cache / "players-annotated.mp4"
+                if touch_mp4.is_file() and touch_mp4.stat().st_size:
+                    response["upstream_touch_video_url"] = (
+                        "/api/analysis-upstream-touch-media?project_id=" + quote(project_id)
+                        + "&video=" + quote(name) + "&cache_id=" + quote(selected_cache_id))
                 return self._json(response)
+            if route == "/api/analysis-upstream-touch-media":
+                project_id, name = query.get("project_id", [""])[0], query.get("video", [""])[0]
+                assert_project_video(project_id, name)
+                from .analysis_runs import cache_for
+                cache = cache_for(name, project_id, query.get("cache_id", [None])[0])
+                if not cache or not (cache / "players-annotated.mp4").is_file():
+                    return self._error("Для выбранной ветки нет диагностического Touch MP4", 404)
+                return self._file(cache / "players-annotated.mp4", "video/mp4",
+                                  allow_ranges=True, download_name="ravel_touch_upstream.mp4")
             if route == "/api/video-media":
                 project_id, name = query.get("project_id", [""])[0], query.get("video", [""])[0]
                 assert_project_video(project_id, name)
@@ -697,13 +841,22 @@ class Handler(BaseHTTPRequestHandler):
                 path=result_media(query.get("project_id",[""])[0],
                                   query.get("id",[""])[0])
                 return self._file(path,"video/mp4",allow_ranges=True)
+            if route == "/api/analysis-ravel-ball":
+                from .ravel_ball import ravel_ball_window
+                project_id, name = query.get("project_id", [""])[0], query.get("video", [""])[0]
+                return self._json(ravel_ball_window(
+                    project_id, name, query.get("start", ["0"])[0],
+                    query.get("length", ["8"])[0],
+                    query.get("cache_id", [None])[0],
+                    threshold=query.get("threshold", [None])[0]))
             if route == "/api/analysis-trajectory":
                 project_id, name = query.get("project_id", [""])[0], query.get("video", [""])[0]
                 from .trajectory import trajectory_window
                 return self._json(trajectory_window(project_id, name,
                     query.get("start", ["0"])[0], query.get("length", ["10"])[0],
                     query.get("cache_id", [None])[0],
-                    threshold=query.get("threshold", [None])[0]))
+                    threshold=query.get("threshold", [None])[0],
+                    include_scores=query.get("scores", ["0"])[0] == "1"))
             if route == "/api/analysis-media":
                 project_id, name = query.get("project_id", [""])[0], query.get("video", [""])[0]
                 assert_project_video(project_id, name)
@@ -720,6 +873,11 @@ class Handler(BaseHTTPRequestHandler):
                                     query.get("mode", ["source"])[0],
                                     query.get("width", ["auto"])[0])
                 return self._file(img, "image/jpeg")
+            if route == "/api/player-groups":
+                from .player_identity_groups import overview
+                return self._json(overview(
+                    query.get("project_id", [""])[0], query.get("video", [""])[0],
+                    query.get("cache_id", [None])[0]))
             if route == "/api/player-suggestions":
                 from .player_tracks import suggest_continuations
                 project_id = query.get("project_id", [""])[0]
@@ -740,13 +898,12 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(job_state())
             if route in ("/api/quick-reel/result","/api/quick-reel/media",
                          "/api/quick-reel/download"):
-                from .quick_reel_jobs import result_for, request_for
+                from .quick_reel_jobs import result_for
                 reel_id = query.get("id", [""])[0]
-                request_for(reel_id)
                 result = result_for(reel_id)
                 if result is None:
                     return self._json({"available":False}) if route.endswith("/result") else self._error("Рилс пока не готов",404)
-                manifest, video_path = result
+                manifest, reel_video_path = result
                 query_string = "?id=" + quote(reel_id)
                 if route.endswith("/result"):
                     return self._json({"available":True,
@@ -755,7 +912,7 @@ class Handler(BaseHTTPRequestHandler):
                        "videos":manifest.get("videos",[]),
                        "url":"/api/quick-reel/media"+query_string,
                        "download_url":"/api/quick-reel/download"+query_string})
-                return self._file(video_path,"video/mp4",allow_ranges=True,
+                return self._file(reel_video_path,"video/mp4",allow_ranges=True,
                     download_name=("quick_reel.mp4" if route.endswith("/download") else None),
                     cache_control="no-store")
             if route == "/api/montage/outputs":
@@ -816,6 +973,9 @@ class Handler(BaseHTTPRequestHandler):
             static_files = {
                 "/": ("index.html", "text/html; charset=utf-8"),
                 "/app.js": ("app.js", "text/javascript; charset=utf-8"),
+                "/player-photo-hover.js": ("player-photo-hover.js", "text/javascript; charset=utf-8"),
+                "/header-chain.js": ("header-chain.js", "text/javascript; charset=utf-8"),
+                "/header-chain-menu.js": ("header-chain-menu.js", "text/javascript; charset=utf-8"),
                 "/quick-reel-ui.js": ("quick-reel-ui.js", "text/javascript; charset=utf-8"),
                 "/quick-reel.css": ("quick-reel.css", "text/css; charset=utf-8"),
                 "/i18n.js": ("i18n.js", "text/javascript; charset=utf-8"),
@@ -901,6 +1061,11 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(inspect_audio(body.get("path")))
             if route == "/api/quick-reel/start":
                 return self._json(start_job("quick_reel", body))
+            if route == "/api/quick-reel/cancel":
+                return self._json(cancel_quick_reel(body.get("id")))
+            if route == "/api/quick-reel/delete":
+                from .quick_reel_jobs import delete_completed
+                return self._json(delete_completed(body.get("id")))
             if route == "/api/video-upload/start":
                 from .video_uploads import start
                 return self._json(start(body.get("filename"), body.get("size")))
@@ -917,9 +1082,16 @@ class Handler(BaseHTTPRequestHandler):
                 from .file_selection import resolve_files
                 return self._json(resolve_files(body.get("files"),
                                                 kind=body.get("kind")))
+            if route == "/api/project/resolve-files":
+                from .file_selection import resolve_files
+                return self._json(resolve_files(body.get("files"),
+                                                kind="video", project_sources=True))
             if route == "/api/local-videos/picker/start":
                 from .local_sources import begin_picker
                 return self._json(begin_picker(body.get("kind", "video")))
+            if route == "/api/local-videos/picker/cancel":
+                from .local_sources import cancel_picker
+                return self._json(cancel_picker(body.get("picker_id")))
             if route == "/api/project-create":
                 from .prepared_videos import queue_project
                 project = create_project(body.get("name"), body.get("videos", []), body.get("ranges"), body.get("player_ids"))
@@ -940,6 +1112,25 @@ class Handler(BaseHTTPRequestHandler):
                     print("PROJECT PREPARATION QUEUE FAILED: " + project["id"] +
                           ": " + str(exc), file=sys.stderr, flush=True)
                 return self._json({"project": project})
+            if route in ("/api/analysis-run/rename", "/api/analysis-run/delete"):
+                from .analysis_runs import rename_run, delete_run
+                project_id = body.get("project_id")
+                run_id = body.get("run_id")
+                kind = body.get("kind")
+                if kind not in ("inference", "postprocess"):
+                    raise ValueError("Укажите тип записи: первичный анализ или CPU-версия")
+                # Do not change the hierarchy while a related CPU/GPU job
+                # is writing references into the same project.
+                with JOB_LOCK:
+                    active = (JOB["process"] is not None and
+                              JOB["process"].poll() is None and
+                              JOB.get("project_id") == project_id)
+                if active:
+                    raise ValueError("Дождитесь завершения задачи проекта перед изменением анализов")
+                if route.endswith("/rename"):
+                    return self._json(rename_run(project_id, run_id, body.get("name"),
+                                                 kind=kind))
+                return self._json(delete_run(project_id, run_id, kind=kind))
             if route == "/api/project-preparation/retry":
                 from .prepared_videos import queue_project, status
                 project_id = body.get("project_id")
@@ -948,6 +1139,9 @@ class Handler(BaseHTTPRequestHandler):
             if route == "/api/project-archive":
                 from .project_lifecycle import archive_with_cancellation
                 return self._json({"project": archive_with_cancellation(body.get("id"))})
+            if route == "/api/project-delete":
+                from .project_lifecycle import delete_permanently_with_cancellation
+                return self._json({"project": delete_permanently_with_cancellation(body.get("id"))})
             if route == "/api/analysis-context":
                 return self._json(save_context(
                     body.get("project_id"), body.get("video"), body.get("range"),
@@ -967,6 +1161,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(remove_profile(body.get("id")))
             if route == "/api/analyze":
                 return self._json(start_job("analyze", body))
+            if route == "/api/reprocess":
+                return self._json(start_job("reprocess", body))
             if route == "/api/analysis-experiment":
                 return self._json(start_job("experiment", body))
             if route == "/api/highlights":
@@ -990,6 +1186,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"players": create_player(body.get("name"), body.get("project_id"))})
             if route == "/api/players/attach":
                 return self._json({"players": attach_player(body.get("player_id"), body.get("project_id"))})
+            if route == "/api/players/photos/remove":
+                return self._json(remove_album_photo(
+                    body.get("player_id"), body.get("filename")))
             if route == "/api/players/photos/collect":
                 player_id = body.get("player_id")
                 album_dir(player_id)  # Reject unknown athlete IDs before starting a worker.
@@ -1000,6 +1199,32 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"players": rename_player(body.get("player_id"), body.get("name"), body.get("project_id"))})
             if route == "/api/players/delete":
                 return self._json({"players": delete_player(body.get("player_id"), body.get("project_id"))})
+            if route == "/api/player-groups/start":
+                from .player_identity_groups import start
+                return self._json(start(body.get("project_id"), body.get("video"), body.get("cache_id")))
+            if route == "/api/player-groups/threshold":
+                from .player_identity_groups import set_threshold
+                return self._json(set_threshold(
+                    body.get("project_id"), body.get("video"), body.get("cache_id"),
+                    body.get("threshold_percent")))
+            if route == "/api/player-groups/auto-assign":
+                from .player_identity_groups import set_auto_assign
+                return self._json(set_auto_assign(body.get("project_id"),
+                    body.get("video"), body.get("cache_id"),
+                    body.get("threshold_percent"), body.get("enabled")))
+            if route == "/api/player-groups/modify":
+                from .player_identity_groups import modify
+                return self._json(modify(body.get("project_id"), body.get("video"), body.get("cache_id"),
+                                         body.get("action"), body.get("ids")))
+            if route == "/api/player-groups/link":
+                from .player_identity_groups import link_group
+                project_id, video = body.get("project_id"), body.get("video")
+                result = link_group(project_id, video, body.get("cache_id"),
+                                    body.get("group_id"), body.get("player_id"))
+                threading.Thread(target=_sync_photos_safe,
+                                 args=(project_id, video, result.get("ids", []), body.get("cache_id")),
+                                 daemon=True, name="player-group-photo-enrollment").start() if result.get("ids") else None
+                return self._json(result)
             if route == "/api/assign":
                 groups = assign(body.get("video"), body.get("ids"), body.get("name"),
                                 body.get("project_id"), body.get("player_id"), body.get("cache_id"))
@@ -1016,7 +1241,7 @@ class Handler(BaseHTTPRequestHandler):
                                      daemon=True, name="player-photo-reconcile").start()
                 return self._json({"groups": groups})
             self._error("Неизвестная команда", 404)
-        except (ValueError, TypeError, json.JSONDecodeError) as exc:
+        except (ValueError, TypeError, FileNotFoundError, json.JSONDecodeError) as exc:
             self._error(exc)
         except Exception as exc:
             print(f"UI POST error {route}: {exc}", file=sys.stderr, flush=True)

@@ -1,41 +1,129 @@
-# Fast Volleyball Ball Tracking → Volley Studio
+# Volley Studio — volleyball analysis and automatic reels
 
-## Volley Studio — local volleyball analysis and reels
+**Volley Studio** is a local, browser-based workspace built on top of the
+[Fast Volleyball Tracking Inference](https://github.com/asigatchov/fast-volleyball-tracking-inference)
+pipeline. It turns amateur volleyball recordings into reusable match analyses,
+player-linked statistics, rally previews and original-quality 9:16 reels.
 
-This fork provides a browser-based workspace for **multi-video projects**, reusable **analysis profiles**, player detection and association, ball trajectories, touch/event previews, rally timelines, manual/automatic reel selection, vertical ball-following crops, and progress reporting.
+![Volley Studio interface — player association and analysis status](docs/images/volley-studio-interface.png)
 
-- Windows + WSL Ubuntu: double-click `start-volley-ui.cmd`.
-- WSL terminal from the repository root: `.venv/bin/python -m scripts.volleyball_ui`.
-- Open **http://127.0.0.1:8765**.
-- Source recordings: `project/`; project-scoped runs and montage results: `results/projects/`; reusable prepared videos: `results/prepared/`.
-- [Detailed UI guide (Russian)](docs/VOLLEY_STUDIO_UI.md).
+*Actual Studio interface, captured on 6 November 2026. Private player names and source filenames are redacted.*
 
-### How the current Studio pipeline works
+## Features
 
-1. **Import / preparation:** source recordings remain unchanged. FFmpeg automatically prepares a reusable H.264 / 30 FPS analysis copy in `results/prepared/`, shared between projects when the source identity and normalization parameters match. This is a separate, visible stage.
-2. **Neural inference:** VballNet (ball) produces `ball.csv`; RAVEL (players, its own ball detections, and—on RAVEL-013—Touch predictions) produces `players.json`. Model/backend selection belongs to the analysis profile.
-3. **Postprocessing:** `src/track_calculator_with_court.py` builds ball tracks, estimates geometric contacts and heuristically classifies rally-like intervals; `scripts/rally_boundaries.py` reconstructs groups and safe context. **RAVEL-013's direct Touch scores are currently a separate preview, not the input to rally classification.**
-4. **Results / montage:** each completed analysis has its own project-linked cache and ranking. Montage selects reconstructed rallies using these saved results and cuts the **original recording** at corresponding timestamps. Ball-following reels additionally use the saved track coordinates.
+- Multi-video projects with reusable prepared H.264 analysis copies, shared across projects without changing the source.
+- Global analysis presets, including an amateur-match / ReID profile, plus project-specific saved runs.
+- VballNet ball inference and RAVEL-013 player, ball and per-frame Touch predictions.
+- A separate **CPU postprocessing/replay** layer for ball filtering, tracks, Touch peaks, rally reconstruction and player continuity; tuning it normally does not repeat the expensive neural inference.
+- Player Track ID grouping using appearance/ReID features, suggested links to the player library, confidence thresholds and manual confirmation.
+- Preview, timeline, reports and editing linked to a specific analysis/postprocessing version.
+- Manual or automatic reel selection, vertical framing, original-source exports and optional audio.
+- A separate **Quick Reel** workflow: fresh analysis with default settings, while compatible already-prepared input video can be reused.
 
-Rally boundaries are **heuristic, not verified serve-to-point annotations**; a lost ball track can still truncate a detected interval. The application runs locally and does not upload videos to an external service. Athlete identity links are user-reviewed rather than verified by the detector.
+## Launch locally
 
-## Measured inference speed (CPU vs CUDA)
+From Windows, double-click [start-volley-ui.cmd](start-volley-ui.cmd). From WSL Ubuntu
+at the repository root:
 
-![Measured inference FPS for VballNet and RAVEL on Ryzen 9 / RTX 5070 Ti Laptop GPU](docs/images/benchmark-inference-fps.png)
+```bash
+.venv/bin/python -m scripts.volleyball_ui
+```
 
-Real nine-frame input benchmark from the Studio UI, recorded **3 November 2026** (series `03d06a978a92`; 10/10 CPU/GPU measurements). Hardware: **AMD Ryzen 9 9955HX**, **NVIDIA GeForce RTX 5070 Ti Laptop GPU**, **26 CPU threads**, **ONNX Runtime 1.31.1**.
+Open **http://127.0.0.1:8765** in a browser. For setup and the original CLI,
+see [Installation](#installation) and [Quick start](#quick-start-tested) below.
+For the interface, see the [Russian UI guide](docs/VOLLEY_STUDIO_UI.md).
 
-| Model | CPU FPS | CUDA FPS |
+## Studio architecture
+
+The key design rule is **infer once, interpret many times**. Model execution
+is the expensive stage; interpreting cached predictions, tweaking thresholds
+and re-linking players are independent, versioned CPU operations.
+
+```mermaid
+flowchart TD
+    P[Project + source recordings] --> V[Video preparation / shared cache]
+    G[Global analysis profile] --> I
+    V --> I[Primary inference: VballNet + RAVEL]
+    I --> C[Immutable inference cache + manifest]
+    C --> R[CPU replay / postprocessing]
+    R --> X[Version A: tracks, Touch, rallies, ranking]
+    R --> Y[Version B: different CPU settings]
+    X --> U[Preview, player associations, reports]
+    Y --> U
+    U --> M[Montage: clips from original recordings]
+    P --> Q[Quick Reel: independent default analysis]
+    V -. reusable prepared video .-> Q
+```
+
+The persisted relationship is:
+
+```text
+Global analysis profiles (shared across all projects)
+Project
+  ├── source videos / project settings / selected players
+  └── video
+      └── primary analysis run (profile snapshot, range, GPU inference cache)
+          ├── original postprocessing result
+          ├── CPU postprocessing version A
+          └── CPU postprocessing version B
+              └── preview → player linking → report → montage
+```
+
+| Stage | Main implementation | Reuses |
+| --- | --- | --- |
+| Import and video preparation | `scripts/volleyball_ui/prepared_videos.py`, `scripts/volleyball_studio/video_inputs.py` | Original files and compatible prepared videos in `results/prepared/` |
+| Neural inference (GPU/CPU backend) | `src/inference_onnx_seq_gray_v2.py`, `src/inference_player_ball_openvino.py`, `scripts/run_project_analysis.py` | VballNet + RAVEL detections and scores, saved as versioned inference inputs |
+| CPU replay and event interpretation | `scripts/run_project_reprocess.py`, `scripts/volleyball_studio/reprocess.py`, `scripts/volleyball_studio/touch_peaks.py` | Saved candidates/scores, independent `postprocessing/<version-id>/` outputs |
+| Player identity association | `scripts/volleyball_ui/player_identity_groups.py`, `player_amateur_match.py`, `player_reference_matching.py` | Track ID groups, reference photos and configurable matching confidence |
+| Browser interface and montage | `scripts/volleyball_ui/server.py`, `static/`, `montage_runner.py`, `src/make_reels.py` | Chosen postprocessing version and **original** media for final encoding |
+
+RAVEL-013's per-frame Touch probabilities are retained and can feed
+peak selection and spatial validation in `ravel-touch` / `combined` modes.
+The CPU modes are `baseline`, `ravel-touch`, `ravel-geometry` and `combined`.
+An inferred Touch is a hypothesis, **not** independently verified contact.
+Rally boundaries are heuristic and can be imperfect if ball observations are
+missing. New inference is still needed when changing the model, frame sampling
+or thresholds below the retained candidate floor.
+
+Project runs and postprocessing versions are isolated; shared profiles and
+prepared videos do not imply shared project results. Saved athlete references
+can be reused, while manual associations remain authoritative. Automatic
+identity linking has conservative similarity and ambiguity checks.
+
+Additional details: [inference vs CPU replay](docs/inference-postprocessing.md),
+[architecture audit](docs/refactor-audit-2026-11-05.md).
+
+## Measured model performance
+
+![CPU and CUDA inference benchmark, 4 November 2026](docs/images/benchmark-inference-2026-11-04.svg)
+
+**Latest complete local series: 4 November 2026 (UTC), ID `60ac909865be`.**
+Hardware: AMD Ryzen 9 9955HX, NVIDIA RTX 5070 Ti Laptop GPU,
+26 ONNX CPU threads, ONNX Runtime 1.31.1. All **10/10** model/device
+measurements completed.
+
+| Model | ONNX CPU FPS | ONNX CUDA FPS |
 | --- | ---: | ---: |
-| VballNetV4c | 309.8 | 1,955.5 |
-| VballNetFastV1 | 770.1 | 3,780.2 |
-| RAVEL-VB-011 | 328.5 | 1,665.2 |
-| RAVEL-VB-012 | 68.4 | 382.5 |
-| **RAVEL-VB-013** | **68.0** | **371.1** |
+| VballNetV4c | 307.5 | 2,254.8 |
+| VballNetFastV1 | 961.9 | 3,881.8 |
+| RAVEL-VB-011 | 396.8 | 1,696.7 |
+| RAVEL-VB-012 | 77.8 | 468.3 |
+| **RAVEL-VB-013** | **70.6** | **389.8** |
 
-These are **inference-only throughput figures**, not real-world full-video processing speed or detection accuracy. Each model uses the same nine decoded source frames, resized and converted to that model's required input shape **before timing**; CPU and CUDA runs are sequential. Throughput is calculated as 9 frames divided by median synchronous inference latency. Video decoding, preprocessing, tracking, rally classification, rendering, and encoding are excluded. Different models have different native input resolutions.
+**Method:** Each model receives nine actual decoded video frames converted to
+its input resolution *before* timing. CPU/CUDA runs are sequential (three
+warmups, 12 synchronous inference calls per repeat, two repeats).
+FPS is nine frames divided by the median model-call latency. This is
+**inference-only throughput, not end-to-end video FPS or model accuracy**:
+video decoding, input conversion, postprocessing, tracking, rally analysis
+and encoding are excluded. Different model input resolutions also make
+throughput alone insufficient to compare detection quality.
 
-To reproduce on a local project: `uv run scripts/benchmark_project.py --project-id <project-id>`. The older accuracy/CPU-speed table below uses a **different machine and benchmark**, and should not be compared directly.
+To benchmark a project: `uv run scripts/benchmark_project.py --project-id <project-id>`.
+The [3 November benchmark chart](docs/images/benchmark-inference-fps.png)
+is retained for historical comparison. The legacy accuracy benchmark farther
+below uses a *different machine and methodology* and must not be compared
+directly with these numbers.
 
 ## Live demos
 - VPS: [Tracking - ball](https://demo.vb-ai.ru/)
@@ -43,7 +131,7 @@ To reproduce on a local project: `uv run scripts/benchmark_project.py --project-
 
 High-speed pipeline for volleyball ball detection, rally extraction, and automatic generation of 9:16 reels.
 
-[![src/ball_tracker.py](examples/ball-tracking.jpg)](https://www.youtube.com/watch?v=TBDrTMFMoFA)
+[![RAVEL-VB-013: players + touch](examples/player-touch.gif)](https://youtu.be/1ha7WU9sH2k)
 
 ## Standalone ball-tracking CLI (legacy pipeline)
 

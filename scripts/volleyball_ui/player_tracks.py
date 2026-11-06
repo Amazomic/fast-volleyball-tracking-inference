@@ -16,12 +16,32 @@ from .projects import assert_project_video
 
 @lru_cache(maxsize=5)
 def _compute(path: str, mtime_ns: int, size: int):
-    payload = json.loads(Path(path).read_text(encoding="utf-8"))
-    fps = float(payload.get("fps") or 30)
-    dimensions = payload.get("source_size") or {}
+    source = Path(path)
+    if size > 8 * 1024 * 1024:
+        try:
+            import ijson
+        except ImportError:
+            payload = json.loads(source.read_text(encoding="utf-8"))
+            fps = float(payload.get("fps") or 30)
+            dimensions = payload.get("source_size") or {}
+            predictions = payload.get("predictions", [])
+        else:
+            with source.open("rb") as handle:
+                fps = float(next(ijson.items(handle, "fps"), 30) or 30)
+            with source.open("rb") as handle:
+                dimensions = next(ijson.items(handle, "source_size"), {}) or {}
+            def iter_detections():
+                with source.open("rb") as handle:
+                    yield from ijson.items(handle, "predictions.item", use_float=True)
+            predictions = iter_detections()
+    else:
+        payload = json.loads(source.read_text(encoding="utf-8"))
+        fps = float(payload.get("fps") or 30)
+        dimensions = payload.get("source_size") or {}
+        predictions = payload.get("predictions", [])
     width, height = float(dimensions.get("width") or 1), float(dimensions.get("height") or 1)
     tracks = {}
-    for item in payload.get("predictions", []):
+    for item in predictions:
         if not isinstance(item, dict) or item.get("class_name") != "player" or item.get("track_id") is None:
             continue
         box = item.get("bbox_xyxy")
@@ -64,14 +84,23 @@ def _compute(path: str, mtime_ns: int, size: int):
     return {"fps":fps,"tracks":tracks}
 
 
-def tracks_for(name: str, project_id=None, cache_id=None) -> dict:
+def tracks_for(name: str, project_id=None, cache_id=None, *, selected_version=False) -> dict:
+    """Read immutable GPU IDs by default, or IDs visible in a selected CPU replay.
+
+    ReID, reference photos and confirmed player links must use GPU IDs. The
+    results screen may instead request the replay-filtered detection subset.
+    """
     if project_id:
         assert_project_video(project_id,name)
     from .analysis_runs import cache_for
-    cache = cache_for(name,project_id,cache_id) if cache_id else find_cache(name,project_id)
+    from .data import neural_cache_id
+    chosen_id = cache_id if selected_version else neural_cache_id(cache_id)
+    cache = cache_for(name,project_id,chosen_id) if chosen_id else find_cache(name,project_id)
     if not cache:
         return {"fps":30,"tracks":{}}
-    path=cache/"players.json"
+    path=cache/"players.replay.json" if selected_version else cache/"players.json"
+    if not path.is_file():
+        path=cache/"players.json"
     if not path.is_file():
         return {"fps":30,"tracks":{}}
     stat=path.stat()

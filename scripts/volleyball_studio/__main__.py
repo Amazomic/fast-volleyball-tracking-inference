@@ -44,6 +44,8 @@ def parser():
     p.add_argument("--no-ducking", dest="ducking", action="store_false")
     p.add_argument("--preview-only", action="store_true")
     p.add_argument("--analyze-only", action="store_true")
+    p.add_argument("--inference-only", action="store_true",
+                   help="Run neural inference and save a verifiable cache; skip postprocessing")
     p.add_argument("--selection-file", type=Path)
     p.add_argument("--workers", type=int, default=0)
     p.add_argument("--benchmark", action="store_true")
@@ -205,14 +207,24 @@ def main():
                 manifest["warnings"].extend(warnings)
                 manifest["analysis"].append({"source": str(video), "cache": str(cache), "candidates": len(items)})
                 per_video = result / "videos" / (video.stem + "_" + key(str(video))[:8])
-                save(per_video / "analysis/index.json", {"source": str(video), "ball_csv": str(cache / "ball/analysis/ball.csv"), "players": str(cache / "players.json"), "events": str(cache / "analysis/events.json"), "tracks": str(cache / "tracks/analysis/tracks")})
-                save(per_video / "reports/processing.json", {"status": "analyzed", "cache": str(cache), "source": str(video), "candidates": len(items)})
+                save(per_video / "analysis/index.json", {"source": str(video), "ball_csv": str(cache / "ball/analysis/ball.csv"), "players": str(cache / "players.json"), "events": None if args.inference_only else str(cache / "analysis/events.json"), "tracks": None if args.inference_only else str(cache / "tracks/analysis/tracks")})
+                save(per_video / "reports/processing.json", {"status": "inference_ready" if args.inference_only else "analyzed", "cache": str(cache), "source": str(video), "candidates": len(items)})
                 print(json.dumps({"stage": "C Game Analysis", "videos_done": number, "videos_total": len(videos), "highlights": len(candidates), "overall_percent": round(3+50*number/len(videos), 1)}), flush=True)
             except Exception as error:
                 manifest["errors"].append({"source": str(video), "error": str(error)})
                 save(result / "videos" / (video.stem + "_" + key(str(video))[:8]) / "reports/processing.json", {"status": "failed", "source": str(video), "error": str(error)})
                 print(f"Ошибка анализа {video.name}: {error}", flush=True)
             save(result / "manifest.json", manifest)
+        if args.inference_only:
+            manifest.update(status="inference_ready" if not manifest["errors"] else "partial",
+                            seconds=time.monotonic()-started)
+            save(result / "manifest.json", manifest)
+            print(json.dumps({"status": manifest["status"], "result": str(result),
+                              "caches": [a["cache"] for a in manifest["analysis"]]},
+                             ensure_ascii=False))
+            if manifest["errors"]:
+                raise SystemExit(2)
+            return
         candidates = themed_candidates(candidates, args.events, args.event_confidence, args.long_rallies)
         if args.events and not candidates:
             message = "Недостаточно уверенных событий " + str(args.events) + "; другие игровые события не подставляются."

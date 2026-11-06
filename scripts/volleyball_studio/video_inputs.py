@@ -64,6 +64,52 @@ def cached_source_identity(source: Path, prepared: Path | None) -> list:
     return value
 
 
+def _check_segment_disk_space(input_path: Path, directory: Path, *,
+                              start: float, seconds: float | None,
+                              width: int) -> None:
+    """Reject large FFmpeg outputs early when a near-full disk will fail.
+
+    libx264 ultrafast CRF18 can be much larger than the H.264 source. Use an
+    intentionally conservative planning estimate, not a predicted output size.
+    Only runs for cache misses: linked prepared sources and cached segments
+    don't need this disk reservation.
+    """
+    import math
+    from .common import probe
+    stats = shutil.disk_usage(directory)
+    info = probe(input_path)
+    try:
+        duration = float(info.get("format", {}).get("duration", 0))
+    except (TypeError, ValueError):
+        duration = 0.0
+    if not math.isfinite(duration) or duration <= 0:
+        duration = 0.0
+    remaining = max(0.0, duration - max(0.0, start)) if duration else 0.0
+    length = min(remaining, seconds) if seconds and remaining else (
+        seconds if seconds else remaining)
+    ratio = min(1.0, length / duration) if duration else 1.0
+    video = next((x for x in info.get("streams", [])
+                  if x.get("codec_type") == "video"), {})
+    source_width = int(video.get("width") or width)
+    scale = min(4.0, max(0.25, (width/max(1,source_width))**2))
+    # Conservative estimate for an intra-heavy fast encode plus a safety
+    # margin left for JSON, RAVEL, ball model and subsequent job output.
+    estimated_output = max(80 * 2**20,
+                           input_path.stat().st_size * ratio * scale * 3.0)
+    recommended = estimated_output + 512 * 2**20
+    if stats.free < recommended:
+        end = start + length if length else duration
+        raise RuntimeError(
+            "Недостаточно места для создания фрагмента анализа: "
+            f"диапазон {start:.1f}–{end:.1f} с; "
+            f"свободно {stats.free/2**30:.2f} ГиБ, "
+            f"рекомендуется ≥{recommended/2**30:.2f} ГиБ "
+            "(оценка с запасом для H.264 и дальнейшего анализа). "
+            "Выберите короткий фрагмент 30–90 секунд "
+            "или освободите место на диске. "
+            "Нейросети ещё не запущены; сначала создаётся MP4.")
+
+
 def prepare_proxy(*, source: Path, prepared: Path | None, proxy: Path,
                   start: float, seconds: float | None, width: int,
                   threads: int, prepared_input: bool = False) -> str:
@@ -116,6 +162,9 @@ def prepare_proxy(*, source: Path, prepared: Path | None, proxy: Path,
         if _valid(shared, manifest, signature):
             operation = "reused"
         else:
+            _check_segment_disk_space(input_path, directory,
+                                      start=clip_start, seconds=clip_seconds,
+                                      width=width)
             temp = directory / (signature + "." + str(os.getpid()) + ".part.mp4")
             try:
                 if temp.exists():

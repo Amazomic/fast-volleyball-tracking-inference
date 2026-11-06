@@ -26,7 +26,7 @@
   flex:0 0 auto;
 }
 .result-media-panel .result-video-main .result-player-wrap{
-  flex:1 1 auto;
+  flex:0 0 auto;
   width:100%;
   height:clamp(380px,62vh,680px);
   min-height:380px;
@@ -171,12 +171,13 @@
 }
 .result-media-panel .result-timeline[hidden],
 .result-media-panel .analysis-video-divider[hidden]{display:none!important}
-.result-media-panel .result-timeline{
+.result-media-panel .result-video-main > .result-timeline{
   display:block;
+  flex:0 0 auto;
   width:100%;
   max-width:none;
   min-width:0;
-  margin:0;
+  margin:10px 0 0;
   padding:0;
   border:0;
   border-radius:0;
@@ -286,8 +287,8 @@
 .result-media-panel .result-video-main > .result-overlay-controls{
   width:100%;
   min-width:0;
-  margin:0 0 12px;
-  padding:10px 12px;
+  margin:0 0 9px;
+  padding:7px 10px;
   border:1px solid #3e634d;
   border-radius:10px;
   background:#152b23;
@@ -303,15 +304,15 @@
   display:flex;
   flex-wrap:wrap;
   align-items:center;
-  gap:7px;
+  gap:5px;
 }
 .result-overlay-options label{
   display:inline-flex;
   align-items:center;
   flex:0 0 auto;
-  gap:6px;
-  min-height:34px;
-  padding:6px 9px;
+  gap:5px;
+  min-height:26px;
+  padding:3px 7px;
   border:1px solid #3d584e;
   border-radius:7px;
   background:#1b332a;
@@ -331,11 +332,11 @@
 }
 .result-overlay-options input{
   margin:0;
-  width:15px;
-  height:15px;
+  width:13px;
+  height:13px;
   accent-color:#9ed979;
   cursor:pointer;
-  flex:0 0 15px;
+  flex:0 0 13px;
 }
 .result-ball-trail{
   position:absolute;
@@ -424,58 +425,14 @@
 .result-overlay-controls label[data-kind] span{
   flex:1;min-width:0;
   border-left:3px solid var(--swatch);
-  padding-left:7px;
+  padding-left:5px;
 }
 .result-overlay-controls label[data-kind] small{
   color:var(--swatch);
   font:700 11px ui-monospace,Consolas,monospace;
   font-variant-numeric:tabular-nums;
-  min-width:15px;
+  min-width:12px;
   text-align:right;
-}
-.result-overlay-confidence{
-  display:flex;
-  flex-wrap:wrap;
-  gap:8px 12px;
-  align-items:center;
-  margin-top:9px;
-  padding-top:9px;
-  border-top:1px solid #355547;
-}
-.result-overlay-controls .result-confidence-label{
-  flex:0 0 auto;
-  color:#bbd9c4;
-  font-size:11px;
-  font-weight:700;
-}
-.result-confidence-options{
-  display:flex;
-  flex-wrap:wrap;
-  gap:3px;
-  padding:3px;
-  border:1px solid #3b5748;
-  border-radius:8px;
-  background:#11221b;
-}
-.result-confidence-options button{
-  min-height:29px;
-  padding:5px 12px;
-  border:1px solid transparent;
-  border-radius:6px;
-  background:transparent;
-  color:#b9d3c2;
-  font:700 11px system-ui,sans-serif;
-  cursor:pointer;
-}
-.result-confidence-options button.active,
-.result-confidence-options button[aria-pressed="true"]{
-  color:#102018;
-  border-color:#9bdd8d;
-  background:#afea9c;
-}
-.result-confidence-options button:focus-visible{
-  outline:2px solid #f1ffd5;
-  outline-offset:2px;
 }
 .result-ball-threshold-controls{
   display:grid;
@@ -509,6 +466,44 @@
   color:#a3bcb0;
   font-size:10px;
   line-height:1.4;
+}
+.result-only-view-note{margin:9px 0 0;font-size:10px;line-height:1.5;color:#97b1a6}
+.result-cpu-tools{
+  width:100%;min-width:0;margin:0 0 13px;padding:15px;
+  border:1px solid #3f5c58;border-radius:11px;background:#152321;
+  color:#dbece2;
+}
+.result-cpu-head strong{display:block;font-size:13px;color:#daefd7}
+.result-cpu-head p{margin:7px 0 12px;font-size:11px;line-height:1.6;color:#a8c0b5}
+.result-cpu-head b{color:#d9e6ca}
+.result-cpu-params{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.result-cpu-params .result-ball-threshold-controls{
+  min-width:0;margin:0;padding:12px;align-content:start;
+  border:1px solid #304a43;border-radius:9px;background:#182c25;
+}
+.result-cpu-params .result-ball-threshold-head{gap:6px}
+.result-cpu-params .result-ball-threshold-head label{flex:1 1 155px}
+.result-cpu-params .result-ball-threshold-head button{margin-left:0}
+.result-cpu-tools .result-reprocess-mode-hint{
+  margin:0;color:#aac8b3;font-size:11px;line-height:1.5
+}
+.result-cpu-tools .analysis-reprocess-controls .field.is-irrelevant{opacity:.5}
+.result-cpu-tools .result-reprocess-panel{margin-top:13px}
+.result-cpu-tools .result-overlay-status{margin-top:12px}
+.result-cpu-tools #result-reprocess-status{display:block;line-height:1.5}
+@media(max-width:930px){.result-cpu-params{grid-template-columns:1fr}}
+.result-reprocess-panel{
+  margin-top:12px;
+  padding:12px 0 4px;
+  border-top:1px solid #355547;
+  display:grid;
+  gap:9px;
+}
+.result-reprocess-panel strong{font-size:12px;color:#bbd9c4}
+.result-reprocess-panel small{color:#a3bcb0;font-size:10px;line-height:1.4}
+.result-reprocess-panel .analysis-reprocess-controls{grid-template-columns:minmax(150px,2fr) minmax(75px,.6fr) auto}
+@media(max-width:680px){
+  .result-reprocess-panel .analysis-reprocess-controls{grid-template-columns:minmax(0,1fr) minmax(75px,.5fr)}
 }
 .result-overlay-status{
   display:flex;
@@ -620,6 +615,58 @@
   padding:13px;border-radius:10px;white-space:pre-wrap;color:#acc8b5;font-size:11px;line-height:1.55}
 @media(max-width:760px){.result-diagnostics-panel .pipeline-settings-grid{grid-template-columns:1fr}}
 
+
+/* Two explicit provenance modes: raw GPU detections vs saved CPU events. */
+.result-preview-mode-bar{display:flex;align-items:center;flex-wrap:wrap;gap:7px;margin:10px 0 4px}
+.result-preview-mode-bar label{display:inline-flex;align-items:center;gap:8px;cursor:pointer;border:1px solid #416450;border-radius:9px;padding:9px 13px;font-size:12px;font-weight:750;color:#d4e4d5;background:#1b3027}
+.result-preview-mode-bar label:has(input:checked){background:#30563e;border-color:#99cb72;color:#f0ffdf}
+.result-preview-mode-bar input{accent-color:#a8ee72}
+.result-source-explainer{font-size:11px;color:#b2d2bb;margin:2px 0 10px;line-height:1.5}
+.result-raw-controls{margin-bottom:10px}
+.result-raw-source-switch{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin:8px 0 12px}
+.result-raw-source-label{font-size:12px;font-weight:700;color:#c8e0ce}
+.result-raw-source-switch label{display:inline-flex;align-items:center;gap:7px;cursor:pointer;
+  padding:7px 12px;border:1px solid #416450;border-radius:8px;background:#1b3027;
+  color:#c8e0ce;font-size:12px;font-weight:700}
+.result-raw-source-switch label:has(input:checked){background:#30563e;border-color:#99cb72;color:#f0ffdf}
+.result-raw-source-switch input{accent-color:#a8ee72}
+.result-raw-controls [data-result-raw-group][hidden]{display:none!important}
+.result-raw-note{display:block;margin-top:10px;color:#b5cbbb;font-size:11px}
+.result-raw-ball{position:absolute;z-index:12;transform:translate(-50%,-50%);pointer-events:none;
+ border-radius:20px;padding:4px 7px;font-size:10px;font-weight:800;white-space:nowrap;
+ border:2px solid;box-shadow:0 0 0 3px #102820a0}
+.result-raw-vball{border-color:#ffdb55;background:#665415d9;color:#fff2a4}
+.result-raw-ravel{border-color:#5cdbed;background:#174b59e5;color:#d4faff}
+.result-raw-ball[hidden],.result-raw-controls[hidden],.result-raw-ball-trail[hidden]{display:none!important}
+.result-raw-filters{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin:10px 0}
+.result-raw-filters label{display:grid;gap:6px;font-size:12px;color:#d9eadb}
+.result-raw-filters output{font-weight:800;color:#b8f28e}
+.result-raw-filters input[type=range]{width:100%;accent-color:#a5ed84}
+.result-raw-trail-controls{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:12px 0 3px}
+.result-raw-trail-controls label{display:inline-flex;align-items:center;gap:7px;font-size:12px;color:#d9eadb;cursor:pointer}
+.result-raw-trail-controls select{width:auto;min-width:80px;padding:5px 8px}
+.result-raw-controls [data-result-raw-group][hidden]{display:none!important}
+.result-raw-ball-trail{position:absolute;inset:0;width:100%;height:100%;z-index:11;pointer-events:none;overflow:visible}
+.result-raw-ball-trail path{fill:none;stroke:#ffdb55;stroke-width:4;stroke-linecap:round;stroke-linejoin:round;opacity:.85}
+.result-raw-ball-trail circle{fill:#ffdb55;stroke:#14211f;stroke-width:2}
+.result-raw-ball-trail[data-source="ravelBall"] path{stroke:#5cdbed}
+.result-raw-ball-trail[data-source="ravelBall"] circle{fill:#5cdbed}
+.raw-touch-mode .result-cpu-overlays,
+.raw-touch-mode .result-rally-sidebar,
+.raw-touch-mode .result-cpu-tools,
+.raw-touch-mode #result-playback-mode,
+.raw-touch-mode #result-trajectory-jump,
+.raw-touch-mode #result-trajectory-indicator,
+.raw-touch-mode .result-timeline-heading,
+.raw-touch-mode #result-rally-track,
+.raw-touch-mode #result-timeline-ticks,
+.raw-touch-mode #result-rally-summary,
+.raw-touch-mode #result-rally-settings,
+.raw-touch-mode .result-timeline > .footnote{display:none!important}
+.raw-touch-mode .result-media-panel .result-video-layout{grid-template-columns:minmax(0,1fr)}
+.raw-touch-mode .result-timeline:has(> #result-model-touch-section[hidden]){display:none!important}
+@media(max-width:650px){.result-preview-mode-bar label{flex:1 1 100%}}
+
 /* Raw model-touch mode hides rallies without reserving an empty column. */
 .raw-touch-mode .result-media-panel .result-video-layout{grid-template-columns:minmax(0,1fr)}
 
@@ -645,4 +692,90 @@
   .result-rally-entry .result-rally-number{min-width:0}
   .result-rally-entry .result-rally-play{display:none}
   .result-rally-montage{padding:5px 4px}
+}
+
+
+/* Optional upstream RAVEL-013 Touch video, tied to the selected cache branch. */
+.result-touch-diagnostic-actions{display:flex;align-items:center;flex-wrap:wrap;gap:8px}
+#result-upstream-touch-video{
+  display:inline-flex;align-items:center;min-height:28px;
+  padding:5px 9px;border:1px solid #729969;border-radius:7px;
+  font-size:11px;font-weight:750;color:#cdebbd;text-decoration:none;
+  background:#203b2e;
+}
+#result-upstream-touch-video[hidden]{display:none!important}
+#result-upstream-touch-video:hover{background:#31513b;color:#f4ffe8}
+
+/* Playback mode switch in the bottom-right corner of the video.
+   Keep native video controls and the next-ball action unobstructed. */
+#result-playback-mode{
+  position:absolute;right:14px;bottom:62px;z-index:9;
+  display:inline-flex;align-items:center;gap:8px;max-width:calc(100% - 28px);
+  padding:8px 11px;min-height:36px;width:auto;
+  border:1px solid #85ad92;border-radius:8px;
+  background:rgba(9,28,24,.88);color:#effff0;
+  font:700 11px/1.2 'Manrope',sans-serif;
+  text-align:left;cursor:pointer;
+  box-shadow:0 3px 14px #0009;
+  backdrop-filter:blur(6px);
+}
+#result-playback-mode:hover{background:#274d38;border-color:#b3efa0}
+#result-playback-mode:focus-visible{outline:2px solid #f0d396;outline-offset:2px}
+#result-playback-mode-icon{
+  font:800 14px/1 ui-monospace,Consolas,monospace;
+  color:#b4efa5;white-space:nowrap;
+}
+#result-playback-mode-name{
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}
+@media(max-width:680px){
+  #result-playback-mode{right:10px;bottom:57px;padding:7px 9px;min-height:32px}
+}
+
+/* The optional next-ball action overlays the player instead of inserting
+   a layout row when the tracked ball temporarily disappears. */
+.result-player-wrap #result-trajectory-jump{
+  position:absolute;right:14px;bottom:110px;z-index:11;
+  width:auto;min-height:33px;padding:6px 10px;
+  border:1px solid #72eaa5;border-radius:7px;
+  background:rgba(13,62,36,.9);color:#c6ffdb;
+  font:700 11px/1.3 'Manrope',sans-serif;
+  cursor:pointer;
+}
+.result-player-wrap #result-trajectory-jump:hover,
+.result-player-wrap #result-trajectory-jump:focus-visible{
+  background:#236841;
+}
+.result-player-wrap #result-trajectory-jump[hidden]{display:none!important}
+@media(max-width:680px){
+  .result-player-wrap #result-trajectory-jump{bottom:99px;right:10px}
+}
+
+/* Physical Touch validation settings only appear for RAVEL Touch modes. */
+.result-touch-validation-settings{
+  display:grid;grid-template-columns:repeat(2,minmax(0,1fr));
+  gap:10px;margin-top:10px;
+}
+.result-touch-validation-settings[hidden]{display:none!important}
+.result-touch-validation-settings .field{margin:0;min-width:0}
+.result-touch-validation-settings input{width:100%}
+@media(max-width:680px){
+  .result-touch-validation-settings{grid-template-columns:minmax(0,1fr)}
+}
+
+/* Per-version CPU geometry settings, kept below the video/timeline. */
+.result-cpu-tracking{margin-top:10px;border-top:1px solid var(--border);padding-top:10px}
+.result-cpu-tracking summary{cursor:pointer;font-weight:600;font-size:12px}
+.result-cpu-tracking-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px 14px;margin-top:12px}
+.result-cpu-tracking-grid .field{min-width:0;margin:0}
+.result-cpu-tracking-grid input[type="number"]{width:100%}
+@media(max-width:680px){.result-cpu-tracking-grid{grid-template-columns:1fr}}
+
+
+.result-rally-recalc-status{
+  margin:8px 0 0;
+  font-size:11px;
+  line-height:1.5;
+  color:#c2e1b8;
+  font-variant-numeric:tabular-nums;
 }
