@@ -75,9 +75,11 @@ class ReplayTests(unittest.TestCase):
         folder.mkdir(parents=True, exist_ok=True)
         track = {
             "start_frame": 1, "last_frame": 30,
-            "positions": [[[frame*10+2, 22], frame] for frame in range(1, 31)],
+            "positions": [[[frame*10+2 if frame<=5 else 52+20*(frame-5), 22], frame]
+                          for frame in range(1, 31)],
             "frame_observations": [
-                {"frame": frame, "x": frame*10+2, "y": 22}
+                {"frame": frame,
+                 "x": frame*10+2 if frame<=5 else 52+20*(frame-5), "y": 22}
                 for frame in range(1, 31)],
             "player_interaction": {"contacts": [{
                 "frame": 15, "ball_x": 152, "ball_y": 22,
@@ -88,6 +90,25 @@ class ReplayTests(unittest.TestCase):
                                       "rally_confidence": .95},
         }
         save(folder / "track_0001.json", track)
+
+    def test_deleted_player_ids_are_removed_from_cpu_replay_and_versioned(self):
+        with patch("scripts.volleyball_studio.reprocess.run",
+                   side_effect=self.fake_tracker):
+            original = reprocess(self.cache, mode="baseline")
+            filtered = reprocess(
+                self.cache, mode="baseline", excluded_player_ids={"9"})
+        self.assertNotEqual(original, filtered)
+        self.assertFalse((original / "players.replay.json").exists())
+        player_data = json.loads(
+            (filtered / "players.replay.json").read_text(encoding="utf-8"))
+        self.assertFalse([p for p in player_data["predictions"]
+                          if p.get("class_name") == "player"])
+        settings = json.loads(
+            (filtered / "postprocess.manifest.json").read_text(
+                encoding="utf-8"))["settings"]
+        self.assertEqual(settings["excluded_player_ids"], ["9"])
+        self.assertEqual((self.cache / "players.json").read_bytes(),
+                         self.original_bytes)
 
     def test_default_ravel013_replay_uses_touch_peaks(self):
         with patch("scripts.volleyball_studio.reprocess.run",
@@ -154,7 +175,8 @@ class ReplayTests(unittest.TestCase):
         track = {
             "start_frame": 1, "last_frame": 100,
             "frame_observations": [
-                {"frame": i, "x": 30, "y": 55} for i in range(1, 101)]
+                {"frame": i, "x": 30-5*min(abs(i-12),abs(i-62)), "y": 55}
+                for i in range(1, 101)]
         }
         def sample(frame, score, box=None, player=7):
             return {"frame_index": frame, "class_name": "player",
@@ -244,7 +266,8 @@ class ReplayTests(unittest.TestCase):
         timeline = json.loads((output / "analysis/events.json").read_text())
         self.assertTrue(any(event["status"] == "model_prediction"
                             for event in timeline["events"]))
-        self.assertTrue((output / "players.replay.json").is_file())
+        self.assertFalse((output / "players.replay.json").is_file())
+        self.assertEqual((self.cache / "players.json").read_bytes(),self.original_bytes)
 
     def test_preview_thresholds_feed_cpu_replay_and_preserve_original(self):
         """Both preview sliders must affect saved tracking inputs, not only overlays."""
@@ -288,10 +311,14 @@ class ReplayTests(unittest.TestCase):
         # Reconstructed CPU tracklets receive distinct stable IDs instead.
         rebuilt_ids = [p["track_id"] for p in replay["predictions"]
                        if p.get("class_name") == "player"]
-        self.assertEqual(len(rebuilt_ids), 1)
+        self.assertTrue(rebuilt_ids)
         self.assertNotIn(23, rebuilt_ids)
         original = json.loads((self.cache / "players.json").read_text(encoding="utf-8"))
-        self.assertNotIn(23, [p.get("track_id") for p in original["predictions"]])
+        original_ids = {p.get("track_id") for p in original["predictions"]
+                        if p.get("class_name") == "player"}
+        self.assertTrue(set(rebuilt_ids) - original_ids,
+                        "The weak raw candidate must survive CPU replay with a fresh ID")
+        self.assertNotIn(23, original_ids)
         stored = json.loads((version / "postprocess.manifest.json").read_text(encoding="utf-8"))
         self.assertEqual(stored["settings"]["ball_threshold"], .7)
         self.assertEqual(stored["settings"]["player_threshold"], .25)

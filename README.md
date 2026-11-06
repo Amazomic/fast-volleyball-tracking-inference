@@ -29,7 +29,9 @@ at the repository root:
 .venv/bin/python -m scripts.volleyball_ui
 ```
 
-Open **http://127.0.0.1:8765** in a browser. For setup and the original CLI,
+Open **http://127.0.0.1:8765** in a browser. Double-clicking `start-volley-ui.cmd` again **reuses the existing server** rather than launching a duplicate. To perform a complete restart, use the **↻ Перезапустить студию** button in the left sidebar (or `start-volley-ui.cmd /restart`). Both use one server-side restart endpoint: the Python interpreter is replaced in-place, port 8765 remains the single listener, and the browser refreshes only after the new instance becomes healthy. Active analysis, CPU reprocessing, and montage jobs block restarts; the launcher never force-kills them or starts a second instance after an unconfirmed restart. `scripts/volleyball_ui/ensure-fresh.ps1` implements the shared launcher health check and safe restart logic. Normal F5 does not restart the server; cached results remain available.
+
+For setup and the original CLI,
 see [Installation](#installation) and [Quick start](#quick-start-tested) below.
 For the interface, see the [Russian UI guide](docs/VOLLEY_STUDIO_UI.md).
 
@@ -38,6 +40,8 @@ For the interface, see the [Russian UI guide](docs/VOLLEY_STUDIO_UI.md).
 The key design rule is **infer once, interpret many times**. Model execution
 is the expensive stage; interpreting cached predictions, tweaking thresholds
 and re-linking players are independent, versioned CPU operations.
+The immutable source-data contract and default CPU interpretation are documented
+in [the architecture decision](docs/ARCHITECTURE_INFERENCE_POSTPROCESSING.md).
 
 ```mermaid
 flowchart TD

@@ -16,6 +16,18 @@ def track(start, end, count=20):
 
 
 class ReIdRecommendationTests(unittest.TestCase):
+    def test_close_candidates_still_have_a_unique_best_match(self):
+        roster = [{"id": "p1", "name": "Первый"}, {"id": "p2", "name": "Второй"}]
+        album = {"p1": [(np.array([.96, .28]), ("old", "v", "c", "1"))],
+                 "p2": [(np.array([.955, .2966]), ("old", "v", "c", "2"))]}
+        with patch.object(refs.data, "players_for", return_value=roster), \
+             patch.object(refs.data, "groups_for", return_value=[]), \
+             patch.object(refs, "_album_features", side_effect=lambda pid, *a: album[pid]):
+            matches, _ = refs.match_players({"3": np.array([1., 0.])},
+                "project", "video", "cache", "openvino_reid", lambda: None)
+        self.assertEqual(matches["3"]["player_id"], "p1")
+        self.assertFalse(matches["3"]["ambiguous"])
+
     def test_all_tracks_compared_including_short_and_unassigned(self):
         vec = {"1": np.array([1., 0.]), "2": np.array([.90, .436]),
                "3": np.array([0., 1.]), "4": np.array([.1, .995])}

@@ -118,8 +118,8 @@ def stitch_rallies(features: dict, tracks: dict, groups: list[dict],
 
 
 def auto_assignment_proposals(matches: dict, groups: list[dict], tracks: dict,
-                              confirmed: dict, *, threshold_percent: int = 97,
-                              margin: float = .04) -> dict[str, list[str]]:
+                              confirmed: dict, *, threshold_percent: int = 90,
+                              margin: float = 0) -> dict[str, list[str]]:
     """Select candidate automatic player links without changing confirmed labels.
 
     Auto links never become confirmed ReID references. Simultaneous track IDs
@@ -132,13 +132,13 @@ def auto_assignment_proposals(matches: dict, groups: list[dict], tracks: dict,
         row = matches.get(tid) or {}
         similarity = row.get("similarity")
         runner = row.get("runner_up_similarity")
-        if similarity is None or row.get("confirmed") or row.get("ambiguous"):
+        if similarity is None or row.get("confirmed"):
             return None
-        if float(similarity) < threshold - .0001:
+        if float(similarity) <= threshold:
             return None
-        if runner is not None and float(similarity)-float(runner) <= margin + 1e-6:
+        if runner is not None and float(similarity)-float(runner) <= margin:
             return None
-        if not row.get("player_id") or int(row.get("reference_count") or 0) < 2:
+        if not row.get("player_id") or int(row.get("reference_count") or 0) < 1:
             return None
         return str(row["player_id"])
     grouped = set()

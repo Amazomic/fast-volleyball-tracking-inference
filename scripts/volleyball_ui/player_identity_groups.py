@@ -83,12 +83,19 @@ def overview(project_id: str, video: str, cache_id: str | None,
                  or doc.get("reference_stamp") != reference_stamp(project_id)
                  or doc.get("identity_mode", "standard") != settings.get("mode", "standard")
                  or doc.get("auto_assign_enabled", False) != settings.get("auto_assign_enabled", False)
-                 or doc.get("auto_assign_threshold_percent", 97) !=
-                    settings.get("auto_assign_threshold_percent", 97))
+                 or doc.get("auto_assign_threshold_percent", 90) !=
+                    settings.get("auto_assign_threshold_percent", 90))
         if stale and not state.get("running") and not state.get("error") and auto_start:
             _start(project_id, video, data.neural_cache_id(cache_id), cache, source, target,
                    preserve=bool(doc))
             state = _JOBS.get(_job_key(target), {})
+        excluded = data.excluded_track_ids(video, project_id, cache_id)
+        visible_groups = []
+        for group in doc.get("groups", []) if doc else []:
+            members = [tid for tid in group.get("track_ids", [])
+                       if str(tid) not in excluded]
+            if len(members) >= 2:
+                visible_groups.append({**group, "track_ids": members})
         return {"status": ("running" if state.get("running") else "error" if state.get("error") else "ready" if doc else "empty"),
                 "progress": state.get("progress", 0),
                 "stage": state.get("stage", ""),
@@ -102,17 +109,28 @@ def overview(project_id: str, video: str, cache_id: str | None,
                 "candidate_people": doc.get("candidate_people") if doc else None,
                 "retracking": doc.get("retracking") if doc else None,
                 "reference_counts": doc.get("reference_counts", {}) if doc else {},
-                "player_matches": doc.get("player_matches", {}) if doc else {},
-                "nearest_tracks": doc.get("nearest_tracks", {}) if doc else {},
-                "missing_visual_ids": doc.get("missing_visual_ids", []) if doc else [],
-                "groups": doc.get("groups", []) if doc else [],
-                "unmatched_ids": doc.get("unmatched_ids", []) if doc else [],
-                "suggestions": doc.get("suggestions", []) if doc else [],
+                "player_matches": {tid: guess for tid, guess in
+                                  (doc.get("player_matches", {}) if doc else {}).items()
+                                  if tid not in excluded},
+                "nearest_tracks": {tid: [near for near in candidates
+                                        if str(near.get("track_id")) not in excluded]
+                                   for tid, candidates in
+                                   (doc.get("nearest_tracks", {}) if doc else {}).items()
+                                   if tid not in excluded},
+                "missing_visual_ids": [tid for tid in (doc.get("missing_visual_ids", []) if doc else [])
+                                       if str(tid) not in excluded],
+                "groups": visible_groups,
+                "unmatched_ids": [tid for tid in (doc.get("unmatched_ids", []) if doc else [])
+                                  if str(tid) not in excluded],
+                "suggestions": [item for item in (doc.get("suggestions", []) if doc else [])
+                                if str(item.get("a")) not in excluded and
+                                   str(item.get("b")) not in excluded],
                 "method": doc.get("method") if doc else None,
                 "identity_mode": doc.get("identity_mode", "standard") if doc else "standard",
-                "auto_assign_threshold_percent": doc.get("auto_assign_threshold_percent", 97) if doc else 97,
+                "auto_assign_threshold_percent": doc.get("auto_assign_threshold_percent", 90) if doc else 97,
                 "auto_assign_enabled": doc.get("auto_assign_enabled", False) if doc else False,
-                "auto_links": doc.get("auto_links", {}) if doc else {},
+                "auto_links": {pid: [tid for tid in tids if str(tid) not in excluded]
+                               for pid, tids in (doc.get("auto_links", {}) if doc else {}).items()},
                 "generated_at": doc.get("generated_at") if doc else None}
 
 
@@ -154,7 +172,7 @@ def _settings_path(target: Path) -> Path:
 
 def configure_identity(project_id: str, video: str, cache_id: str,
                        *, mode: str = "amateur", threshold_percent: int = 88,
-                       auto_assign_threshold_percent: int = 97,
+                       auto_assign_threshold_percent: int = 90,
                        auto_assign_enabled: bool = True,
                        session_gap_sec: int = 120) -> dict:
     """Store per-inference settings; GPU cache contents remain immutable."""
@@ -375,7 +393,7 @@ def validate_threshold(value) -> int:
 
 
 DEFAULT_THRESHOLD = 85
-SIMILARITY_SCHEMA = 5
+SIMILARITY_SCHEMA = 6
 
 
 def build_groups(features: dict, tracks: dict, owners: dict | None = None,
@@ -562,7 +580,7 @@ def _run_safe(key, cache, source, target, project_id, video, cache_id, preserve=
         identity_mode = settings.get("mode", "standard")
         threshold = validate_threshold(previous.get(
             "threshold_percent", settings.get("threshold_percent", DEFAULT_THRESHOLD)))
-        auto_threshold = validate_threshold(settings.get("auto_assign_threshold_percent", 97))
+        auto_threshold = validate_threshold(settings.get("auto_assign_threshold_percent", 90))
         auto_enabled = settings.get("auto_assign_enabled", False) is True
         _update(key, threshold_percent=threshold, stage="Чтение ID из результатов RAVEL", progress=2)
         stats = tracks_for(video, project_id, cache_id)["tracks"]
@@ -751,8 +769,59 @@ def link_group(project_id, video, cache_id, group_id, player_id):
         group = next((g for g in doc["groups"] if g["id"] == group_id), None)
         if not group:
             raise ValueError("Группа не найдена")
-        ids = group["track_ids"]
+        excluded = data.excluded_track_ids(video, project_id, cache_id)
+        ids = [tid for tid in group["track_ids"] if str(tid) not in excluded]
+        if not ids:
+            raise ValueError("Все Track ID этой группы исключены")
         for index in range(0, len(ids), 200):
             data.assign(video, ids[index:index + 200], project_id=project_id,
                         player_id=player_id, cache_id=cache_id)
     return {"linked": len(ids), "ids": ids, "group_id": group_id}
+
+
+def effective_track_identities(project_id: str, video: str, cache_id: str | None) -> dict:
+    """Project-scoped interpretation of GPU IDs for every CPU replay.
+
+    ReID clusters alone are *candidates*. Explicit player links are authoritative.
+    A manually merged cluster may inherit its one unambiguous linked player;
+    algorithmically suggested clusters must never invent an identity.
+    """
+    if not cache_id:
+        return {"candidates": {}, "players": {}}
+    _cache, source, target = _context(project_id, video, cache_id)
+    document = _read(target, source) or {}
+    excluded = data.excluded_track_ids(video, project_id, cache_id)
+    candidates = {}
+    players = {}
+    for group in data.groups_for(video, project_id, cache_id):
+        metadata = group.get("link_meta") or {}
+        for tid in group.get("track_ids", []):
+            tid = str(tid)
+            if tid in excluded:
+                continue
+            meta = metadata.get(tid, {}) if isinstance(metadata, dict) else {}
+            unreviewed = (isinstance(meta, dict) and
+                          meta.get("source") == "reid_auto" and
+                          not meta.get("reviewed", False))
+            players[tid] = {"id": group["id"], "name": group["name"],
+                            "source": "reid_auto" if unreviewed else "assigned"}
+    for group in document.get("groups", []):
+        members = [str(tid) for tid in group.get("track_ids", [])
+                   if str(tid) not in excluded]
+        if len(members) < 2:
+            continue
+        gid = str(group["id"])
+        for tid in members:
+            candidates[tid] = gid
+        if group.get("source") == "manual":
+            owners = {players[tid]["id"]: players[tid] for tid in members
+                      if tid in players and players[tid]["source"] != "reid_auto"}
+            if len(owners) == 1:
+                owner = next(iter(owners.values()))
+                for tid in members:
+                    players.setdefault(tid, {**owner, "source": "manual_merge"})
+    # Confirmed player identities supersede tentative geometry/ReID clusters.
+    # Keep conflicting manual links distinct even if an appearance group merged them.
+    for tid, owner in players.items():
+        candidates[tid] = "player-" + str(owner["id"])
+    return {"candidates": candidates, "players": players}

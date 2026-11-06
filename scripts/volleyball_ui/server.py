@@ -29,16 +29,21 @@ from .projects import (all_projects, create_project, update_project, get_project
                        project_logs_root, archive_project, project_dir)
 from .photos import photo_path, photos_metadata
 from .player_library import (photo_counts, sync_photos, album_dir, collect_existing_player_photos,
-                             album_photos, album_photo_path, remove_album_photo)
+                             album_photos, album_photo_path, remove_album_photo,
+                             save_player_photos)
 from .projects import assert_project_video
 from .data import read_json
 
 PUBLIC = Path(__file__).with_name("static")
 # The launcher can distinguish a stale Python process from freshly served JS.
-_API_VERSION = 27
+_API_VERSION = 28
+_INSTANCE_ID = uuid.uuid4().hex
+_RESTART_PENDING = threading.Event()
 _SOURCE_FILES = [Path(__file__).with_name(name) for name in
-                 ("server.py", "analysis_runs.py", "data.py", "projects.py", "player_identity_groups.py", "player_retracking.py", "player_library.py", "montage_runner.py", "montage_library.py", "analysis_profiles.py", "prepared_videos.py", "video_uploads.py", "local_sources.py", "montage_audio.py", "project_lifecycle.py", "montage_source.py", "montage_encoding.py", "trajectory.py", "player_overlay.py", "quick_reel_audio.py", "quick_reel_runner.py", "quick_reel_jobs.py", "quick_reel_prepare.py", "quick_reel_analyze.py", "quick_reel_render.py", "quick_reel_selection.py", "file_selection.py", "video_compat.py")]
+                 ("server.py", "analysis_runs.py", "data.py", "projects.py", "player_identity_groups.py", "player_retracking.py", "player_library.py", "montage_runner.py", "montage_library.py", "analysis_profiles.py", "prepared_videos.py", "video_uploads.py", "local_sources.py", "montage_audio.py", "project_lifecycle.py", "montage_source.py", "montage_encoding.py", "trajectory.py", "player_overlay.py", "player_actions.py", "quick_reel_audio.py", "quick_reel_runner.py", "quick_reel_jobs.py", "quick_reel_prepare.py", "quick_reel_analyze.py", "quick_reel_render.py", "quick_reel_selection.py", "file_selection.py", "video_compat.py")]
 _SOURCE_FILES.append(Path(__file__).parents[1] / "volleyball_studio" / "advanced.py")
+_SOURCE_FILES.append(Path(__file__).with_name("report_statistics.py"))
+_SOURCE_FILES.append(Path(__file__).with_name("timeline.py"))
 _SOURCE_STAMPS = {str(p): p.stat().st_mtime_ns for p in _SOURCE_FILES if p.is_file()}
 RUN_DIR = RESULTS / "ui_runs"
 JOB_LOCK = threading.RLock()
@@ -46,7 +51,8 @@ JOB = {"process": None, "id": None, "kind": None, "log": None, "started_at": Non
        "command": [], "started_epoch": None, "finished_epoch": None,
        "progress_event": None, "progress_offset": 0, "progress_buffer": b"",
        "montage_mode": None, "stage_durations": {},
-       "project_id": None, "profile_name": None, "quick_request_id": None}
+       "project_id": None, "profile_name": None, "quick_request_id": None,
+       "run_id": None}
 
 
 from functools import lru_cache
@@ -204,6 +210,8 @@ def start_job(kind: str, options: dict) -> dict:
                              ", ".join(pending[:4]) +
                              ". Прогресс показан во вкладке «Анализ».")
     with JOB_LOCK:
+        if _RESTART_PENDING.is_set():
+            raise ValueError("Интерфейс перезапускается — дождитесь его загрузки")
         if JOB["process"] and JOB["process"].poll() is None:
             raise ValueError("Уже запущена обработка — дождитесь завершения или остановите её")
         quick_request_id = None
@@ -275,15 +283,20 @@ def start_job(kind: str, options: dict) -> dict:
                        "--profile-name", name] + cmd[cmd.index("--backend"):]
         elif kind == "reprocess":
             from scripts.volleyball_studio.reprocess import MODES
-            mode = str(options.get("mode") or "baseline")
+            from .cpu_defaults import golden_cpu_settings
+            golden = golden_cpu_settings()
+            # No explicit mode: worker chooses combined Touch peaks for RAVEL-013,
+            # or baseline geometry when the source model lacks Touch.
+            mode = options.get("mode") or None
             run_id = options.get("run_id")
-            touch_threshold = float(options.get("touch_threshold", .5))
+            touch_threshold = float(options.get("touch_threshold", golden["touch_threshold"]))
             if (not project_id or not isinstance(run_id, str) or not run_id or
-                    mode not in MODES or not math.isfinite(touch_threshold) or
+                    mode is not None and mode not in MODES or
+                    not math.isfinite(touch_threshold) or
                     not 0 <= touch_threshold <= 1):
                 raise ValueError("Выберите анализ и корректный режим постобработки")
-            touch_gap = float(options.get("touch_min_interval_sec", .35))
-            touch_reach = float(options.get("touch_max_reach_ratio", .35))
+            touch_gap = float(options.get("touch_min_interval_sec", golden["touch_min_interval_sec"]))
+            touch_reach = float(options.get("touch_max_reach_ratio", golden["touch_max_reach_ratio"]))
             if (not math.isfinite(touch_gap) or not .10 <= touch_gap <= 1.5 or
                     not math.isfinite(touch_reach) or not .10 <= touch_reach <= 1.0):
                 raise ValueError("Touch: интервал 0.1–1.5 с, допуск 0.1–1 высоты игрока")
@@ -294,23 +307,32 @@ def start_job(kind: str, options: dict) -> dict:
                 ("track_player_threshold", 0., 1.),
                 ("track_ball_threshold", 0., 1.),
             ):
-                value = float(options.get(key, {
-                    "track_min_duration": .5, "track_max_distance": 200.,
-                    "track_player_threshold": .35, "track_ball_threshold": .35,
-                }[key]))
+                value = float(options.get(key, golden[key]))
                 if not math.isfinite(value) or not lo <= value <= hi:
                     raise ValueError(f"{key}: недопустимое значение {lo}..{hi}")
                 tracking[key] = value
+            hold_frames = options.get("player_hold_frames", golden["player_hold_frames"])
+            if (isinstance(hold_frames, bool) or
+                    not isinstance(hold_frames, int) or
+                    not 0 <= hold_frames <= 180):
+                raise ValueError("Удержание ID на CPU: целое число от 0 до 180 кадров")
+            match_distance = float(options.get("player_match_distance", golden["player_match_distance"]))
+            if not math.isfinite(match_distance) or not .02 <= match_distance <= .30:
+                raise ValueError("Расстояние сопоставления игрока: 0.02–0.30")
             cmd = [sys.executable, "-m", "scripts.run_project_reprocess",
                    "--project-id", project_id, "--run-id", run_id,
-                   "--mode", mode, "--touch-threshold", str(touch_threshold),
+                   "--touch-threshold", str(touch_threshold),
                    "--touch-min-interval-sec", str(touch_gap),
                    "--touch-max-reach-ratio", str(touch_reach)]
+            if mode is not None:
+                cmd.extend(("--mode", mode))
             for name,value in tracking.items():
                 cmd.extend(("--"+name.replace("_","-"),str(value)))
+            cmd.extend(("--player-hold-frames", str(hold_frames),
+                        "--player-match-distance", str(match_distance)))
             if options.get("track_no_ball_fill") is True:
                 cmd.append("--track-no-ball-fill")
-            if options.get("beach") is True:
+            if options.get("beach", golden["beach"]) is True:
                 cmd.append("--beach")
             for key, flag in (("ball_threshold", "--ball-threshold"),
                               ("player_threshold", "--player-threshold")):
@@ -447,6 +469,8 @@ def start_job(kind: str, options: dict) -> dict:
                    progress_event=None, progress_offset=0, progress_buffer=b"",
                    stage_durations={}, project_id=project_id,
                    quick_request_id=quick_request_id,
+                   run_id=(options.get("run_id") if kind in
+                           ("reprocess", "highlights") else None),
                    profile_name=(options.get("profile_name") if kind in
                                  ("analyze", "experiment") else None))
     return job_state()
@@ -547,6 +571,8 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if route == "/api/health":
                 return self._json({"ok": True, "api_version": _API_VERSION,
+                                   "instance_id": _INSTANCE_ID, "pid": os.getpid(),
+                                   "restarting": _RESTART_PENDING.is_set(),
                                    "reload_required": any(
                                        not Path(path).is_file() or
                                        Path(path).stat().st_mtime_ns != stamp
@@ -673,6 +699,12 @@ class Handler(BaseHTTPRequestHandler):
                     query.get("filename", [""])[0]), "image/jpeg")
             if route == "/api/report":
                 return self._json(report(query.get("video", [""])[0], query.get("project_id", [None])[0], query.get("cache_id", [None])[0]))
+            if route == "/api/players/actions":
+                from .player_actions import get_actions
+                return self._json(get_actions(
+                    query.get("project_id", [""])[0], query.get("run_id", [""])[0],
+                    player_id=query.get("player_id", [None])[0],
+                    action=query.get("action", [None])[0]))
             if route == "/api/video-info":
                 return self._json(video_info(query.get("video", [""])[0]))
             if route == "/api/video-view":
@@ -973,6 +1005,8 @@ class Handler(BaseHTTPRequestHandler):
             static_files = {
                 "/": ("index.html", "text/html; charset=utf-8"),
                 "/app.js": ("app.js", "text/javascript; charset=utf-8"),
+                "/data-cache.js": ("data-cache.js", "text/javascript; charset=utf-8"),
+                "/cpu-defaults.json": ("cpu-defaults.json", "application/json; charset=utf-8"),
                 "/player-photo-hover.js": ("player-photo-hover.js", "text/javascript; charset=utf-8"),
                 "/header-chain.js": ("header-chain.js", "text/javascript; charset=utf-8"),
                 "/header-chain-menu.js": ("header-chain-menu.js", "text/javascript; charset=utf-8"),
@@ -1047,6 +1081,19 @@ class Handler(BaseHTTPRequestHandler):
             return self._error("Запрос с другого сайта запрещён", 403)
         try:
             body = self._read_body()
+            if route == "/api/system/restart":
+                with JOB_LOCK:
+                    if JOB["process"] is not None and JOB["process"].poll() is None:
+                        return self._error("Идёт анализ, монтаж или пересчёт. Дождитесь завершения.", 409)
+                    if _RESTART_PENDING.is_set():
+                        return self._json({"accepted": True, "instance_id": _INSTANCE_ID})
+                    _RESTART_PENDING.set()
+                    self.server.reload_requested.set()
+                self._json({"accepted": True, "instance_id": _INSTANCE_ID})
+                # Shutdown runs outside the request thread, after the response.
+                threading.Thread(target=self.server.shutdown, daemon=True,
+                                 name="volleyball-manual-restart").start()
+                return
             if route == "/api/quick-reel/audio/start":
                 from .quick_reel_audio import start
                 return self._json(start(body.get("filename"),body.get("size")))
@@ -1119,14 +1166,19 @@ class Handler(BaseHTTPRequestHandler):
                 kind = body.get("kind")
                 if kind not in ("inference", "postprocess"):
                     raise ValueError("Укажите тип записи: первичный анализ или CPU-версия")
-                # Do not change the hierarchy while a related CPU/GPU job
-                # is writing references into the same project.
+                # Editing an entry is metadata-only. A GPU run or a CPU replay
+                # of ANOTHER entry must not block deletion from this list.
+                # Protect only the run currently consumed by an active task;
+                # deleting a parent also hides every child of that parent.
                 with JOB_LOCK:
                     active = (JOB["process"] is not None and
                               JOB["process"].poll() is None and
                               JOB.get("project_id") == project_id)
-                if active:
-                    raise ValueError("Дождитесь завершения задачи проекта перед изменением анализов")
+                    used_run = JOB.get("run_id") if active else None
+                if (used_run and (run_id == used_run or
+                        kind == "inference" and
+                        used_run.startswith(str(run_id) + "_pp_"))):
+                    raise ValueError("Этот анализ используется текущей задачей. Выберите другую запись")
                 if route.endswith("/rename"):
                     return self._json(rename_run(project_id, run_id, body.get("name"),
                                                  kind=kind))
@@ -1182,6 +1234,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(start_job("benchmark", body))
             if route == "/api/cancel":
                 return self._json(cancel_job())
+            if route == "/api/players/recalculate":
+                from .player_actions import recalculate
+                return self._json(recalculate(body.get("project_id"), body.get("run_id")))
             if route == "/api/players/create":
                 return self._json({"players": create_player(body.get("name"), body.get("project_id"))})
             if route == "/api/players/attach":
@@ -1189,6 +1244,11 @@ class Handler(BaseHTTPRequestHandler):
             if route == "/api/players/photos/remove":
                 return self._json(remove_album_photo(
                     body.get("player_id"), body.get("filename")))
+            if route == "/api/players/photos/save":
+                project_id, video = body.get("project_id"), body.get("video")
+                assert_project_video(project_id, video)
+                return self._json(save_player_photos(
+                    project_id, video, body.get("player_id"), body.get("cache_id")))
             if route == "/api/players/photos/collect":
                 player_id = body.get("player_id")
                 album_dir(player_id)  # Reject unknown athlete IDs before starting a worker.
@@ -1233,6 +1293,11 @@ class Handler(BaseHTTPRequestHandler):
                                      args=(body["project_id"], body["video"], body["ids"], body.get("cache_id")),
                                      daemon=True, name="player-photo-enrollment").start()
                 return self._json({"groups": groups, "photo_collection": "started"})
+            if route == "/api/players/exclude-tracks":
+                from .data import exclude_tracks
+                ids = exclude_tracks(body.get("video"), body.get("ids"),
+                                     body.get("project_id"), body.get("cache_id"))
+                return self._json({"excluded_track_ids": ids})
             if route == "/api/unassign":
                 groups = unassign(body.get("video"), body.get("ids"), body.get("project_id"), body.get("cache_id"))
                 if body.get("project_id"):
@@ -1276,8 +1341,17 @@ def main():
     if args.host not in ("127.0.0.1", "localhost"):
         parser.error("Для безопасности UI доступен только локально")
     RESULTS.mkdir(parents=True, exist_ok=True)
-    server = ThreadingHTTPServer((args.host, args.port), Handler)
+    try:
+        server = ThreadingHTTPServer((args.host, args.port), Handler)
+    except OSError as error:
+        # Binding the listening port is the single-instance guarantee.
+        if error.errno in (98, 10048):
+            print(f"Volleyball UI already listens on {args.host}:{args.port}; "
+                  "not starting another instance.", flush=True)
+            return
+        raise
     reload_requested = threading.Event()
+    server.reload_requested = reload_requested
 
     def reload_when_idle():
         """Adopt backend updates without leaving new controls on an old API."""
@@ -1292,7 +1366,13 @@ def main():
                 active = JOB["process"] is not None and JOB["process"].poll() is None
             if active:
                 continue
-            reload_requested.set()
+            with JOB_LOCK:
+                if _RESTART_PENDING.is_set():
+                    return
+                if JOB["process"] is not None and JOB["process"].poll() is None:
+                    continue
+                _RESTART_PENDING.set()
+                reload_requested.set()
             server.shutdown()
 
     threading.Thread(target=reload_when_idle, daemon=True,

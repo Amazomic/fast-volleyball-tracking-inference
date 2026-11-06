@@ -1,0 +1,20 @@
+const assert=require('node:assert/strict');
+const fs=require('node:fs');
+const vm=require('node:vm');
+const ctx=vm.createContext({document:{addEventListener(){},querySelector(){return null},querySelectorAll(){return []}},window:{},console,setTimeout,clearTimeout});
+vm.runInContext(fs.readFileSync('scripts/volleyball_ui/static/app.js','utf8'),ctx);
+const calls=[];
+ctx.setPlayerMode=mode=>calls.push(mode);
+ctx.setPlayerTable=mode=>calls.push(mode);
+ctx.renderPlayers=()=>calls.push('render');
+vm.runInContext('setPlayerGallery("unassigned")',ctx);
+assert.equal(vm.runInContext('state.playerFilter',ctx),'unassigned');
+assert.deepEqual(calls.splice(0),['manual','render']);
+vm.runInContext('setPlayerGallery("tracks")',ctx);
+assert.deepEqual(calls.splice(0),['view','tracks']);
+vm.runInContext('setPlayerGallery("photos")',ctx);
+assert.deepEqual(calls.splice(0),['view','photos']);
+vm.runInContext('setPlayerGallery("auto")',ctx);
+assert.deepEqual(calls.splice(0),['auto']);
+console.log('Player gallery navigation passed');
+

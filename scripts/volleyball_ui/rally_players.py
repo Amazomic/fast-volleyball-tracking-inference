@@ -88,9 +88,12 @@ def player_info(cache: Path, ranges: list[tuple[int, int]], *, fps: float = 30) 
     # its ball-tracking intervals to 30 FPS as well.
     snapshots = [(int(frame), set(ids)) for frame, ids in indexed["frames"].items()]
     mapping = {}
-    sidecar_cache = cache.parent.parent if cache.parent.name == "postprocessing" else cache
-    continuity = read_json(sidecar_cache / "player-continuity.json", {})
-    if isinstance(continuity, dict) and continuity.get("schema") == 2:
+    continuity_path = cache / "player-continuity.json"
+    if not continuity_path.is_file() and cache.parent.name == "postprocessing":
+        continuity_path = cache.parent.parent / "player-continuity.json"
+    continuity = read_json(continuity_path, {})
+    if isinstance(continuity, dict) and continuity.get("schema") in (
+            2, "volley-player-continuity/1"):
         mapping = continuity.get("track_to_candidate", {})
         if not isinstance(mapping, dict):
             mapping = {}

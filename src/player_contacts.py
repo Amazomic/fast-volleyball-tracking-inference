@@ -35,7 +35,7 @@ BALL_CLASS_IDS = (1,)
 BALL_CLASS_NAMES = ("ball",)
 
 DEFAULT_PLAYER_SCORE_THRESHOLD = 0.30
-DEFAULT_BALL_SCORE_THRESHOLD = 0.35
+DEFAULT_BALL_SCORE_THRESHOLD = 0.5
 MIN_PLAYER_BOX_HEIGHT_PX = 14.0
 MIN_PLAYER_BOX_WIDTH_PX = 6.0
 
@@ -861,7 +861,7 @@ class PlayerStore:
             return None
 
         score = self._as_float(item.get("score", item.get("confidence", 1.0))) or 0.0
-        if score < self._ball_score_threshold:
+        if not score > 0.5 or score < self._ball_score_threshold:
             return None
 
         bbox = item.get("bbox_xyxy") or item.get("bbox") or item.get("box")

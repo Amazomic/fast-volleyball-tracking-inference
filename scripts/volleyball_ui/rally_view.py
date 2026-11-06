@@ -58,28 +58,59 @@ def from_tracks(cache: Path, offset: float, fps: float, duration: float,
     occupancy=player_info(cache,[(g["detected_start_frame"],g["detected_end_frame"])
                                  for g in groups],fps=fps)
     identity_by_track={}
+    project_candidates={}
+    player_matches={}
     if project_id and source_video:
-        from .data import groups_for, neural_cache_id
+        from .data import groups_for
         # Source and replay versions share one stable manual identity map.
         base=cache.parent.parent if cache.parent.name=="postprocessing" else cache
         for group in groups_for(source_video,project_id,base.name):
             for track_id in group.get("track_ids",[]):
                 identity_by_track[str(track_id)]={
                     "id":group["id"],"name":group["name"]}
+        # Carry manually merged IDs into CPU rally summaries without changing
+        # raw detections or forcing a rerun of the expensive tracker.
+        from .player_identity_groups import effective_track_identities
+        try:
+            effective=effective_track_identities(project_id,source_video,base.name)
+        except (FileNotFoundError,ValueError):
+            effective={"players":{},"candidates":{}}
+        identity_by_track.update(effective["players"])
+        project_candidates=effective["candidates"]
+        from .player_identity_groups import overview
+        try:
+            player_matches=overview(project_id,source_video,base.name,
+                                    auto_start=True).get("player_matches",{})
+        except (FileNotFoundError,ValueError):
+            player_matches={}
     continuity=read_json(cache / "player-continuity.json", {})
     candidates=continuity.get("track_to_candidate",{}) if isinstance(continuity,dict) else {}
     if not isinstance(candidates,dict):
         candidates={}
+    candidates={**candidates,**project_candidates}
     output=[]
     for row, players in zip(groups,occupancy):
         verified={}
+        player_rows=[]
         for tid in players.get("player_track_ids",[]):
             person=identity_by_track.get(str(tid))
+            guess=player_matches.get(str(tid),{})
+            automatic=bool(person and person.get("source")=="reid_auto")
+            player_rows.append({
+                "track_id":str(tid),
+                "player_id":person["id"] if person else guess.get("player_id"),
+                "name":person["name"] if person else guess.get("name"),
+                "similarity":guess.get("similarity") if not person or
+                    guess.get("player_id")==person["id"] else None,
+                "status":("automatic" if automatic else "confirmed") if person
+                    else "suggested" if guess.get("player_id") else "unknown",
+            })
             if person:
                 verified.setdefault(person["id"], {
                     "id":person["id"],"name":person["name"],"track_ids":[]})
                 verified[person["id"]]["track_ids"].append(str(tid))
         players={**players,
+                 "player_rows":player_rows,
                  "linked_player_ids":sorted(verified),
                  "linked_players":list(verified.values()),
                  "candidate_group_ids":sorted({candidates.get(str(t),

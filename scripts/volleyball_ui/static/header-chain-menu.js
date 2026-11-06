@@ -29,6 +29,12 @@
       const {native,trigger,popup}=item;
       const entries=Array.from(native.options||[]).filter(option=>option.value);
       const selected=entries.find(option=>option.value===native.value);
+      const oldScroll=popup.scrollTop;
+      const focusedRow=document.activeElement?.closest?.(".header-chain-option-row");
+      const focusedIndex=focusedRow?.parentElement===popup
+        ?Array.from(popup.children).indexOf(focusedRow):-1;
+      const focusedAction=document.activeElement?.classList?.contains("delete")
+        ?"delete":document.activeElement?.classList?.contains("rename")?"rename":null;
       trigger.textContent=selected?.text||native.options?.[0]?.text||"Нет записей";
       trigger.title=selected?.title||selected?.text||"";
       trigger.disabled=native.disabled||!entries.length;
@@ -57,7 +63,9 @@
         if(option.title)choose.title=option.title;
         choose.setAttribute("aria-selected",String(option.value===native.value));
         if(remove)remove.addEventListener("click",()=>{
-          close();handlers.onAction(kind,"delete",option.value,text);
+          // Keep the CPU list open for sequential one-click deletions.
+          if(kind!=="postprocess")close();
+          handlers.onAction(kind,"delete",option.value,text);
         });
         if(rename)rename.addEventListener("click",()=>{
           close();handlers.onAction(kind,"rename",option.value,text);
@@ -71,6 +79,12 @@
         if(rename)row.append(rename);
         if(remove)row.append(remove);
         popup.append(row);
+      }
+      popup.scrollTop=oldScroll;
+      // Replacing rows must not throw keyboard focus away after deletion.
+      if(focusedIndex>=0&&focusedAction&&!popup.hidden){
+        const target=popup.children[Math.min(focusedIndex,popup.children.length-1)];
+        target?.querySelector("."+focusedAction)?.focus({preventScroll:true});
       }
     }
   }

@@ -1,7 +1,6 @@
 """Project-independent preparation using only the shared results/prepared cache."""
 from __future__ import annotations
 
-import fcntl
 import hashlib
 import json
 import os
@@ -12,6 +11,32 @@ from pathlib import Path
 from . import data
 from .preview import _read_info
 from .video_compat import is_analysis_ready
+
+
+def _exclusive_lock(handle):
+    """Cross-platform one-byte advisory lock on the same shared cache file."""
+    handle.seek(0)
+    if os.name == "nt":
+        import msvcrt
+        if not handle.read(1):
+            handle.seek(0)
+            handle.write(bytes([0]))
+            handle.flush()
+        handle.seek(0)
+        msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+    else:
+        import fcntl
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+
+
+def _release_lock(handle):
+    if os.name == "nt":
+        import msvcrt
+        handle.seek(0)
+        msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+    else:
+        import fcntl
+        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
 def prepared_entry(value: str | Path):
@@ -60,7 +85,7 @@ def prepare_source(video: str, progress=None) -> tuple[Path, bool]:
     # Same lock used by ordinary project preparation, but not its queue.
     handle = output.with_suffix(".prepare.lock").open("a+b")
     try:
-        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        _exclusive_lock(handle)
         if _valid(output, marker, identity):
             if progress:
                 progress(100, True)
@@ -126,5 +151,5 @@ def prepare_source(video: str, progress=None) -> tuple[Path, bool]:
         finally:
             temp.unlink(missing_ok=True)
     finally:
-        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        _release_lock(handle)
         handle.close()

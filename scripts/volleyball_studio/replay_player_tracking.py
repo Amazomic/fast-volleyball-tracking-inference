@@ -12,7 +12,9 @@ from pathlib import Path
 
 
 def reconstruct_players(cache: Path, width: int, height: int,
-                        threshold: float, original: list[dict]) -> list[dict]:
+                        threshold: float, original: list[dict],
+                        *, hold_frames: int = 90,
+                        max_center_distance: float = .14) -> list[dict]:
     from src.inference_player_ball_openvino import PlayerHysteresis
 
     # Original GPU IDs anchor the identity space across CPU replay versions.
@@ -48,7 +50,8 @@ def reconstruct_players(cache: Path, width: int, height: int,
     # but do not start a new ID until they cross the user's open threshold.
     tracker = PlayerHysteresis(
         open_threshold=threshold, close_threshold=min(threshold,.05),
-        hold_frames=90, match_iou=.05, max_center_distance=.14)
+        hold_frames=hold_frames, match_iou=.05,
+        max_center_distance=max_center_distance)
     frames = []
     votes = Counter()
     observed = Counter()

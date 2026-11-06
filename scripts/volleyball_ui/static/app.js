@@ -5,7 +5,10 @@ const $$ = (selector) => Array.from(document.querySelectorAll(selector));
 const state = {videos: [], video: "", projects: [], project: "", aggregate: null, report: null, renders: [],
   selected: new Set(), playerAssignBusy: false, limit: 30, previewId: null, photoToken: 0, jobStatus: "idle", latestTask: null,
   players: [], libraryPlayers: [], photoCounts: {}, activePlayerId: null, playerFilter: "unassigned", suggestionsToken: 0,
-  playerGroups: null, playerGroupsKey: "", playerMode: "view", albumToken: 0, reportDirty: false,
+  playerGroups: null, playerGroupsKey: "", playerMode: "view", playerTable: "tracks",
+  playerPhotoSaveBusy: false, albumToken: 0, reportDirty: false,
+  playerActions: null, playerActionsRunId: "", playerActionsProject: "",
+  playerRecalculateBusy: false, playerRecalculateError: "",
   playerReidThresholdPending: null,
   dialogEdit: false, dialogBusy: false, dialogRequestId: 0, analysisContext: null,
   preparationProject: "", preparationPending: false, preparationActive: false,
@@ -64,6 +67,8 @@ function esc(value) {
   return String(value ?? "").replace(/[&<>"']/g, ch => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[ch]));
 }
 async function api(url, payload) {
+  if(payload===undefined&&window.VolleyDataCache?.supports(url))
+    return window.VolleyDataCache.get(url);
   const opts = payload === undefined ? {cache:"no-store"} : {
     method:"POST", headers:{"Content-Type":"application/json"},
     body:JSON.stringify(payload), cache:"no-store"
@@ -80,18 +85,76 @@ async function api(url, payload) {
     }
     throw new Error(error);
   }
-  if(payload!==undefined && (/^\/api\/(players\/|assign$|unassign$|player-groups\/link$)/).test(url))
-    playerCatalogCache=null;
+  if(payload!==undefined){
+    // Only data-changing writes invalidate snapshots; picker, cancel, folder
+    // opening and job polling must not discard reusable analysis results.
+    if((/^\/api\/(?:assign$|unassign$|players\/|player-groups\/(?:link|modify|auto-assign|threshold)$|project-(?:delete|update)$|project\/resolve-files$|reprocess$)/).test(url))
+      window.VolleyDataCache?.invalidate();
+    if((/^\/api\/(players\/|assign$|unassign$|player-groups\/)/).test(url)){
+      if((/^\/api\/(?:assign$|unassign$|players\/(?:create|attach|rename|delete|exclude-tracks)$|player-groups\/(?:link|modify|auto-assign|threshold)$)/).test(url)
+         &&state.playerActions?.status==="ready"
+         &&(payload.project_id||state.project)===state.playerActionsProject){
+        state.playerActions={status:"stale",players:[]};
+        renderPlayerActionStats();
+      }
+      playerCatalogCache=null;
+      window.dispatchEvent(new CustomEvent("volley:player-identities-change",{
+        detail:{project_id:payload.project_id||state.project,
+          video:payload.video||state.video}
+      }));
+    }
+  }
   return data;
 }
 function alertBox(message) {
   $("#alerts").textContent = message || "";
   if (message) window.scrollTo({top:0,behavior:"smooth"});
 }
+// The one-click restart uses the same in-place server restart as ensure-fresh.ps1.
+let serverRestartPending=false;
+function updateServerRestartButton(){
+  const button=$("#server-restart");
+  if(button)button.disabled=serverRestartPending||
+    ["running","queued","starting","cancelling"].includes(state.latestTask?.status);
+}
+async function restartStudio(){
+  if(serverRestartPending)return;
+  serverRestartPending=true;
+  updateServerRestartButton();
+  const status=$("#server-restart-status");
+  status.textContent="Перезапускаем сервер и проверяем подключение…";
+  try{
+    const reply=await api("/api/system/restart",{});
+    if(!reply.accepted||!reply.instance_id)
+      throw Error("Сервер не подтвердил перезапуск");
+    for(let attempt=0;attempt<60;attempt++){
+      await new Promise(resolve=>setTimeout(resolve,350));
+      try{
+        const response=await fetch("/api/health",{cache:"no-store"});
+        if(!response.ok)continue;
+        const ready=await response.json();
+        if(ready.ok&&ready.api_version>=28&&
+           ready.instance_id!==reply.instance_id&&
+           !ready.restarting&&!ready.reload_required){
+          status.textContent="Сервер перезапущен. Обновляем интерфейс…";
+          window.location.reload();
+          return;
+        }
+      }catch{} // Brief connection failures are expected during re-exec.
+    }
+    throw Error("Перезапуск не подтверждён. Проверьте сервер перед повтором.");
+  }catch(error){
+    status.textContent=error.message;
+  }finally{
+    serverRestartPending=false;
+    updateServerRestartButton();
+  }
+}
 const WORKSPACE_VIEWS=new Set(["analysis","analysis-results","players","report","benchmark","results"]);
 const SELECTED_PROJECT_KEY="volley-selected-project";
 let projectLoadEpoch=0;
 let analysisRunsRequest=0;
+const pendingHeaderEntryDeletes=new Set();
 function go(view) {
   if(!WORKSPACE_VIEWS.has(view))view="analysis";
   if(!state.project&&view!=="analysis")view="analysis";
@@ -110,7 +173,9 @@ function go(view) {
 
   if(view==="players"&&state.project){
     setPlayerMode(state.playerMode);
-    if(state.playerMetaProject!==state.project){
+    if(state.playerMetaProject!==state.project||
+       state.playerActionsRunId!==state.analysisRunId||
+       state.playerActionsProject!==state.project){
       const finish=beginWorkspaceLoading("Загрузка игроков…");
       loadReport({playersOnly:true})
         .catch(error=>alertBox(error.message)).finally(finish);
@@ -127,6 +192,7 @@ function go(view) {
     loadReport().catch(error=>{
       state.reportDirty=true;
       $("#report-notice").textContent="Не удалось обновить статистику: "+error.message;
+      $("#report-notice").hidden=false;
     });
   }
   if(view==="benchmark"&&state.project)
@@ -161,21 +227,45 @@ function renderFiles(files) {
   return files.map(f=>'<button type="button" class="file-row render-file" data-file="'+esc(f.name)+'" data-url="'+esc(f.url||"")+'"><span class="file-icon">▣</span><span class="file-info"><strong>'+esc(f.name)+'</strong><small>MP4 · '+esc(f.size_mb)+' МБ</small></span><span class="file-arrow">↗</span></button>').join("");
 }
 function renderReport() {
-  const r=state.aggregate||state.report||{};
+  const r=state.aggregate||{};
   const c=r.counts||{};
+  const kinds=[["attack","Атаки"],["block","Блоки"],["serve","Подачи"],
+    ["dig","Приёмы"],["overhead_pass","Верхние передачи"]];
+  const players=r.groups||[];
+  $("#report-notice").hidden=Boolean(r.analyzed);
   $("#report-notice").textContent=r.analyzed
-    ? "Статистика суммируется по всем обработанным видео проекта. Track ID относятся к конкретной записи; отсутствие метки не доказывает отсутствие действия. Без разметки площадки подачи и блоки могут не распознаваться."
-    : "Нет обработанных записей проекта. Перейдите во вкладку «Анализ».";
+    ? ""
+    : "Пока нет обработанных розыгрышей. Состав проекта показан ниже; статистика появится после CPU-обработки.";
   $("#report-metrics").innerHTML=[
-    metric("Фрагменты игры",r.rallies??"—","Не подтверждённые очки"),
-    metric("Атаки",c.attack??"—","Распознанные"),
-    metric("Приёмы",c.dig??"—","Распознанные"),
-    metric("Передачи",c.overhead_pass??"—","Распознанные")
+    metric("Игроки",players.length,"Состав проекта"),
+    metric("Всего касаний",r.analyzed?r.total_touches: "—","Все типы, без повторов"),
+    metric("Распознано по типу",r.analyzed?r.recognized_touches:"—","Из общего числа касаний"),
+    metric("Розыгрыши",r.analyzed?r.rallies:"—","По всем видео проекта")
   ].join("");
-  $("#report-bars").innerHTML=barRows(c);
-  $("#report-people").innerHTML=r.groups?.length ? r.groups.map(g=>
-    '<div class="person-card"><div class="person-line"><strong>'+esc(g.name)+'</strong><span class="person-count">'+g.total_actions+' действий</span></div><small>Track ID: '+esc(g.track_ids.join(", "))+'</small><small>Атаки '+(g.actions.attack||0)+' · Приёмы '+(g.actions.dig||0)+' · Передачи '+(g.actions.overhead_pass||0)+'</small></div>'
-  ).join("") : '<div class="empty">Пока нет подписанных игроков. Перейдите во вкладку «Игроки и ID».</div>';
+  $("#report-bars").innerHTML=kinds.map(([key,name])=>
+    '<div class="report-action-total" data-action="'+key+'"><span>'+name+'</span><strong>'+
+    (r.analyzed?(c[key]||0):"—")+'</strong></div>').join("");
+  $("#report-people").innerHTML=players.length?players.map(player=>{
+    const activity=Number.isFinite(player.activity)?player.activity.toLocaleString("ru-RU",{
+      minimumFractionDigits:2,maximumFractionDigits:2}):"—";
+    const hint=Number.isFinite(player.activity)
+      ?"Активность: "+player.touches+" касаний ÷ медиана "+r.median_touches+
+        ". 1,00 — на уровне медианы игроков проекта."
+      :r.analyzed?"Активность не определена: медиана касаний игроков равна нулю.":
+        "Активность появится после обработки розыгрышей.";
+    const photo=player.photo?"/api/players/album-photo?player_id="+encodeURIComponent(player.id)+
+      "&filename="+encodeURIComponent(player.photo):"";
+    return '<article class="report-player-card"><div class="report-player-heading">'+
+      '<div class="report-player-avatar"><span>'+esc((player.name||"?").trim().slice(0,1).toUpperCase())+
+      '</span>'+(photo?'<img loading="lazy" src="'+esc(photo)+'" alt="'+esc(player.name)+'">':"")+"</div>"+
+      '<h3>'+esc(player.name)+'</h3><span class="report-activity" tabindex="0" title="'+esc(hint)+
+      '" aria-label="'+esc(hint)+'"><small>Активность</small><strong>'+activity+'</strong></span></div>'+
+      '<div class="report-player-touches"><strong>'+(player.touches||0)+
+      '</strong><span>Всего касаний<small>Распознано по типу: '+(player.recognized_touches||0)+
+      '</small></span></div><dl class="report-player-actions">'+kinds.map(([key,name])=>
+        '<div data-action="'+key+'"><dt>'+name+'</dt><dd>'+((player.actions||{})[key]||0)+
+        '</dd></div>').join("")+'</dl></article>';
+  }).join(""):'<div class="empty">Добавьте игроков в состав проекта.</div>';
 }
 function playerPhotoUrl(id,sample=0) {
   return "/api/player-photo?video="+encodeURIComponent(state.video)+"&id="+encodeURIComponent(id)+
@@ -196,6 +286,7 @@ function updateChosen() {
   const hasAssigned=Array.from(state.selected).some(id=>assignedIds.has(id));
   $("#unassign-ids").hidden=!hasAssigned;
   $("#unassign-ids").disabled=!size||!hasAssigned||state.playerAssignBusy;
+  $("#delete-selected-ids").disabled=!size||state.playerAssignBusy;
   $("#named-list").classList.toggle("has-pending-selection",size>0);
   $("#named-list").querySelectorAll("[data-player-id]").forEach(button=>{
     button.disabled=state.playerAssignBusy;
@@ -365,6 +456,29 @@ function rememberPlayerPickerChange(select){
   if(!select?.dataset.playerPickKey)return;
   playerPickerOverrides.set(playerGroupsContext()+"\\0"+select.dataset.playerPickKey,select.value);
 }
+function setPlayerGallery(mode){
+  if(mode==="auto"){
+    setPlayerMode("auto");
+  }else if(mode==="unassigned"){
+    state.playerFilter="unassigned";
+    const filter=$("#players-filter");
+    if(filter)filter.value="unassigned";
+    setPlayerMode("manual");
+    renderPlayers();
+  }else{
+    setPlayerMode("view");
+    setPlayerTable(mode);
+  }
+  syncPlayerGallery();
+}
+function syncPlayerGallery(){
+  const mode=state.playerMode==="manual"?"unassigned":state.playerMode==="auto"?"auto":state.playerTable;
+  $$("[data-player-gallery]").forEach(button=>{
+    const active=button.dataset.playerGallery===mode;
+    button.classList.toggle("is-active",active);
+    button.setAttribute("aria-pressed",String(active));
+  });
+}
 function setPlayerMode(mode){
   state.playerMode=["view","auto","manual"].includes(mode)?mode:"view";
   $$("[data-player-mode]").forEach(button=>{
@@ -375,11 +489,81 @@ function setPlayerMode(mode){
   $$("[data-player-pane]").forEach(section=>{
     section.hidden=section.dataset.playerPane!==state.playerMode;
   });
-  if(state.playerMode==="view")renderPlayerAlbum().catch(console.warn);
+  syncPlayerGallery();
+  if(state.playerMode==="view")setPlayerTable(state.playerTable);
   if(state.playerMode!=="view"&&state.project&&
       (!state.playerGroups||state.playerGroups.status==="running"))
     loadPlayerGroups().catch(console.warn);
   else if(state.playerMode==="auto")renderPlayerGroups();
+}
+function setPlayerTable(mode){
+  state.playerTable=mode==="photos"?"photos":"tracks";
+  syncPlayerGallery();
+  $$("[data-player-table]").forEach(button=>{
+    const active=button.dataset.playerTable===state.playerTable;
+    button.classList.toggle("is-active",active);
+    button.setAttribute("aria-pressed",String(active));
+  });
+  $$("[data-player-table-pane]").forEach(pane=>{
+    pane.hidden=pane.dataset.playerTablePane!==state.playerTable;
+  });
+  renderPlayerDetails();
+  if(state.playerTable==="photos")renderPlayerAlbum().catch(console.warn);
+}
+function renderPlayerDetails(){
+  const player=state.players.find(p=>p.id===state.activePlayerId);
+  const group=(state.report?.groups||[]).find(g=>g.id===player?.id);
+  const ids=(group?.track_ids||[]).map(String);
+  const confirmed=ids.filter(id=>group?.link_meta?.[id]?.reviewed!==false);
+  const save=$("#backfill-player-photos");
+  if(save)save.disabled=state.playerPhotoSaveBusy||!player||!state.project||!state.video||!confirmed.length;
+  const table=$("#player-linked-tracks");
+  if(!table)return;
+  if(!player){
+    table.innerHTML='<tr><td colspan="4" class="empty">Выберите игрока проекта.</td></tr>';
+    return;
+  }
+  const rows=new Map((state.report?.raw||[]).map(row=>[String(row.player_track_id),row]));
+  table.innerHTML=ids.map(id=>{
+    const row=rows.get(id),reviewed=group?.link_meta?.[id]?.reviewed!==false;
+    return '<tr><td><button type="button" class="photo-peek" data-id="'+esc(id)+'">'+
+      '<img loading="lazy" src="'+esc(playerPhotoUrl(id))+'" alt="Кадр Track #'+esc(id)+'"></button></td>'+
+      '<td><strong>#'+esc(id)+'</strong></td><td>'+(row?Number(row.duration_sec||0).toFixed(1)+' с':'Нет в текущей CPU-версии')+
+      '</td><td>'+(reviewed?'Подтверждено':'Авто ReID · не проверено')+'</td></tr>';
+  }).join("")||'<tr><td colspan="4" class="empty">У этого игрока пока нет привязанных ID на текущем видео.</td></tr>';
+}
+async function savePlayerLinkedPhotos(){
+  const playerId=state.activePlayerId,project=state.project,video=state.video,cacheId=analysisCacheId();
+  if(state.playerPhotoSaveBusy||!playerId||!project||!video)return;
+  const button=$("#backfill-player-photos"),text=button.textContent;
+  state.playerPhotoSaveBusy=true;
+  button.disabled=true;
+  button.textContent="Сохраняем фото…";
+  try{
+    const result=await api("/api/players/photos/save",{
+      project_id:project,video,cache_id:cacheId,player_id:playerId});
+    state.photoCounts[playerId]=result.count;
+    playerCatalogCache=null;
+    const gallery=$("#player-album-gallery");
+    if(gallery.dataset.playerId===String(playerId))gallery.dataset.loaded="false";
+    if(project!==state.project||video!==state.video||cacheId!==analysisCacheId()||playerId!==state.activePlayerId)return;
+    clearTimeout(playerGroupsPoll);
+    state.playerGroups=null;
+    state.playerGroupsKey="";
+    $("#players-action-feedback").textContent="Сохранено новых фото: "+Number(result.copied||0)+
+      ". Всего в базе: "+Number(result.count||0)+
+      (result.errors?.length?". Не удалось сохранить: "+result.errors.join("; "):".");
+    renderPlayers();
+    $("#player-album-gallery").dataset.loaded="false";
+    if(state.playerMode==="view"&&state.playerTable==="photos")await renderPlayerAlbum(true);
+  }catch(error){
+    if(project===state.project&&video===state.video&&cacheId===analysisCacheId()&&playerId===state.activePlayerId)
+      $("#players-action-feedback").textContent="Ошибка сохранения фото: "+error.message;
+  }finally{
+    state.playerPhotoSaveBusy=false;
+    button.textContent=text;
+    renderPlayerDetails();
+  }
 }
 function renderPlayerGroups(){
   if(state.playerGroupsKey!==playerGroupsContext())state.playerGroups=null;
@@ -392,7 +576,7 @@ function renderPlayerGroups(){
   if(autoEnable&&document.activeElement!==autoEnable)
     autoEnable.checked=!!result?.auto_assign_enabled;
   if(autoThreshold&&document.activeElement!==autoThreshold)
-    autoThreshold.value=String(result?.auto_assign_threshold_percent??97);
+    autoThreshold.value=String(result?.auto_assign_threshold_percent??90);
   if(autoEnable)autoEnable.disabled=!state.project||!analysisCacheId()||result?.status==="running";
   if(autoThreshold)autoThreshold.disabled=!state.project||!analysisCacheId()||result?.status==="running";
   const thresholdNumber=$("#player-reid-threshold-number");
@@ -444,7 +628,7 @@ function renderPlayerGroups(){
     ?"Порог "+threshold+"% ожидает завершения текущего пересчёта. ":"";
   const autoLinked=Object.values(result.auto_links||{}).reduce((n,ids)=>n+ids.length,0);
   const autoLabel=result.auto_assign_enabled
-    ?" · Автопривязка ≥"+result.auto_assign_threshold_percent+"%: "+autoLinked+" новых ID"
+    ?" · Автопривязка >"+result.auto_assign_threshold_percent+"%: "+autoLinked+" новых ID"
     :" · Автопривязка отключена";
   status.textContent=queued+progress+"Групп, прошедших порог "+threshold+"%: "+cards.length+
     " · ID вне групп: "+manualOnly+" (доступны в «Ручной привязке»)."+
@@ -482,6 +666,12 @@ function associatedMap() {
 function playerFilterSet(raw,association){
   const filter=state.playerFilter;
   const search=$("#track-search").value.trim().toLowerCase();
+  const matches=state.playerGroups?.status==="ready"
+    ?state.playerGroups.player_matches||{}:{};
+  const similarity=id=>{
+    const value=matches[String(id)]?.similarity;
+    return value==null||!Number.isFinite(Number(value))?-1:Number(value);
+  };
   return raw.filter(item=>{
     const id=String(item.player_track_id),assigned=association.has(id);
     const seconds=Number(item.duration_sec||0);
@@ -493,7 +683,8 @@ function playerFilterSet(raw,association){
     if(filter==="unassigned")return !assigned;
     if(filter==="short")return seconds<3;
     return true;
-  }).sort((a,b)=>(Number(b.detected_frames||0)-Number(a.detected_frames||0))||
+  }).sort((a,b)=>similarity(b.player_track_id)-similarity(a.player_track_id)||
+    (Number(b.detected_frames||0)-Number(a.detected_frames||0))||
     (Number(b.total_actions||0)-Number(a.total_actions||0)));
 }
 // Selecting a checkbox only updates existing rows and selection controls,
@@ -506,6 +697,37 @@ function playerFilterSet(raw,association){
   }
   updateChosen();
   renderPlayerGroups();
+}
+function renderPlayerActionStats(){
+  const node=$("#player-action-statistics"),button=$("#players-recalculate");
+  if(!node||!button)return;
+  const available=!!state.project&&!!state.analysisRunId&&
+    Object.keys(analysisCacheMap()).length>0;
+  button.disabled=!available||state.playerRecalculateBusy;
+  const stats=state.playerActions||{};
+  const status=$("#players-recalculate-status");
+  if(!state.playerRecalculateBusy){
+    status.textContent=state.playerRecalculateError||(!available?"Сначала рассчитайте CPU-результаты проекта."
+      :stats.status==="ready"
+        ?"Учтено "+Number(stats.assigned_touches||0)+" из "+Number(stats.total_touches||0)+
+          " касаний · обновлено "+new Date(stats.calculated_at).toLocaleString("ru-RU")
+        :stats.status==="stale"
+          ?"Изменены игроки или результаты CPU. Пересчитайте касания."
+          :"Статистика касаний ещё не рассчитана для этих результатов.");
+  }
+  if(stats.status!=="ready"){
+    node.innerHTML="";return;
+  }
+  node.innerHTML='<div class="player-action-overview"><strong>Касания по игрокам · '+
+    Number(stats.assigned_touches||0)+'</strong><span>Не назначено: '+
+    Number(stats.unassigned_touches||0)+' · видео: '+
+    Object.keys(stats.by_video||{}).length+'</span></div>'+
+    '<div class="player-action-rows">'+(stats.players||[]).map(player=>
+      '<div class="player-action-row"><strong>'+esc(player.name)+'</strong>'+
+      '<span>'+Number(player.touches||0)+' касаний</span><small>'+
+      eventOrder.map(action=>esc(label[action])+': '+
+        Number(player.actions?.[action]||0)).join(' · ')+'</small></div>'
+    ).join("")+'</div>';
 }
 function renderPlayers(){
   window.VolleyballPlayerPhotoHover?.dismiss?.();
@@ -600,7 +822,9 @@ function renderPlayers(){
         suggestedPlayerHint([id])+
         '<button type="button" class="primary small" data-track-link="'+esc(id)+'" '+
         (state.players.length?'':'disabled')+'>Привязать ID</button></div>')+'</td>'+
-      '<td class="player-guess-cell">'+guessCell+'</td></tr>';
+      '<td class="player-guess-cell">'+guessCell+
+        '<button type="button" class="secondary small" data-track-delete="'+esc(id)+
+        '" title="Исключить неудачный Track ID из CPU-обработки">Удалить ID</button></td></tr>';
   }).join("")||'<tr><td colspan="7" class="empty">По этому фильтру ничего не найдено.</td></tr>';
   $("#table-hint").textContent="Показано "+shown.length+" из "+matched.length+" · всего "+raw.length+" ID";
   $("#show-more").disabled=shown.length>=matched.length;
@@ -627,9 +851,9 @@ function renderPlayers(){
     return '<div class="player-roster-item"><button type="button" class="player-identity-slot'+(active?' is-active':'')+(state.selected.size&&active?' is-assign-target':'')+'" data-player-id="'+esc(p.id)+
       '" aria-pressed="'+active+'"><span class="player-slot-avatar">'+esc((p.name.trim()[0]||"?").toUpperCase())+
       '</span><span class="player-slot-text"><strong>'+esc(p.name)+'</strong><small>'+
-      (current.length?current.length+' ID на этом видео · '+preview+(current.length>5?'…':''):'Пока нет ID на этом видео')+
+      current.length+' ID · текущее видео'+
       '</small><small>'+Number(state.photoCounts[p.id]||0)+' фото в личной базе</small></span><span class="player-slot-actions">'+
-      (state.selected.size?(active?'Цель привязки':'Выбрать как цель'):current.length+' ID')+'</span></button>'+
+      (state.selected.size?(active?'Цель привязки':'Выбрать как цель'):'')+'</span></button>'+
       '<button type="button" class="player-roster-remove" data-remove-project-player="'+esc(p.id)+
         '" title="Убрать '+esc(p.name)+' из проекта (общая база сохранится)" aria-label="Убрать '+esc(p.name)+
         ' из проекта">×</button></div>';
@@ -639,6 +863,8 @@ function renderPlayers(){
   if(active&&document.activeElement!==$("#rename-player-name"))$("#rename-player-name").value=active.name;
   updateChosen();
   if(state.playerMode==="auto")renderPlayerGroups();
+  renderPlayerActionStats();
+  renderPlayerDetails();
 }
 async function renderPlayerAlbum(force=false){
   const gallery=$("#player-album-gallery"),playerId=state.activePlayerId;
@@ -650,10 +876,10 @@ async function renderPlayerAlbum(force=false){
   const token=++state.albumToken,project=state.project;
   const player=state.players.find(p=>p.id===playerId);
   if(!player){
-    gallery.innerHTML='<div class="empty">Выберите карточку игрока сверху, чтобы посмотреть его сохранённые фотографии.</div>';
+    gallery.innerHTML='<tr><td colspan="3" class="empty">Выберите карточку игрока сверху, чтобы посмотреть его сохранённые фотографии.</td></tr>';
     return;
   }
-  gallery.innerHTML='<div class="muted">Загружаем личную фотобазу '+esc(player.name)+'…</div>';
+  gallery.innerHTML='<tr><td colspan="3" class="muted">Загружаем личную фотобазу '+esc(player.name)+'…</td></tr>';
   try{
     const album=await api("/api/players/album?player_id="+encodeURIComponent(playerId));
     if(token!==state.albumToken||project!==state.project||playerId!==state.activePlayerId)return;
@@ -661,15 +887,15 @@ async function renderPlayerAlbum(force=false){
     gallery.innerHTML=album.photos?.length?album.photos.map(photo=>{
       const url="/api/players/album-photo?player_id="+encodeURIComponent(playerId)+
         "&filename="+encodeURIComponent(photo.filename);
-      return '<figure class="player-album-card"><a href="'+esc(url)+'" target="_blank" rel="noopener">'+
-        '<img loading="lazy" src="'+esc(url)+'" alt="Сохранённое фото игрока '+esc(player.name)+'"></a>'+
-        '<figcaption>Track #'+esc(photo.track_id)+' · '+esc(photo.video||"Видео")+
-        ' · кадр '+esc(photo.frame??"—")+'</figcaption>'+
-        '<div class="player-album-actions"><button type="button" class="secondary small" data-remove-album-photo="'+
-        esc(photo.filename)+'">Удалить фото</button></div></figure>';
-    }).join(""):'<div class="empty">В общей базе у этого игрока пока нет фото. После подтверждения Track ID образцы появятся здесь.</div>';
+      return '<tr class="player-album-card"><td><a href="'+esc(url)+'" target="_blank" rel="noopener">'+
+        '<img loading="lazy" src="'+esc(url)+'" alt="Сохранённое фото игрока '+esc(player.name)+'"></a></td>'+
+        '<td>Track #'+esc(photo.track_id)+' · '+esc(photo.video||"Видео")+
+        ' · кадр '+esc(photo.frame??"—")+'</td>'+
+        '<td><div class="player-album-actions"><button type="button" class="secondary small" data-remove-album-photo="'+
+        esc(photo.filename)+'">Удалить фото</button></div></td></tr>';
+    }).join(""):'<tr><td colspan="3" class="empty">В общей базе у этого игрока пока нет фото. Сохраните фото подтверждённых ID кнопкой выше.</td></tr>';
   }catch(error){
-    if(token===state.albumToken)gallery.innerHTML='<div class="empty">'+esc(error.message)+'</div>';
+    if(token===state.albumToken)gallery.innerHTML='<tr><td colspan="3" class="empty">'+esc(error.message)+'</td></tr>';
   }
 }
 // The second click confirms deletion within the same photo card; no browser modal.
@@ -737,7 +963,7 @@ async function removePlayerAlbumPhoto(button){
         Math.max(height,parseFloat(gallery.style.minHeight)||0)+"px";
       card.remove();
       if(!gallery.querySelector(".player-album-card")){
-        gallery.innerHTML='<div class="empty">В базе этого игрока больше нет фотографий.</div>';
+        gallery.innerHTML='<tr><td colspan="3" class="empty">В базе этого игрока больше нет фотографий.</td></tr>';
       }
     }
     const roster=Array.from($("#named-list").querySelectorAll("[data-player-id]"))
@@ -787,11 +1013,9 @@ function updateAssignmentIndicators(playerId){
     const player=(state.report?.groups||[]).find(group=>group.id===playerId);
     const ids=player?.track_ids||[];
     const description=roster.querySelector?.(".player-slot-text small:first-child");
-    if(description)description.textContent=ids.length
-      ?ids.length+" ID на этом видео · "+ids.slice(0,5).map(x=>"#"+x).join(", ")+(ids.length>5?"…":"")
-      :"Пока нет ID на этом видео";
+    if(description)description.textContent=ids.length+" ID · текущее видео";
     const label=roster.querySelector?.(".player-slot-actions");
-    if(label)label.textContent=ids.length+" ID";
+    if(label)label.textContent=state.selected.size?"Цель привязки":"";
   }
   const stat=$("#players-health")?.querySelectorAll?.(".player-health-metric strong");
   const linked=raw.filter(row=>assigned.has(String(row.player_track_id))).length;
@@ -2030,8 +2254,9 @@ async function loadAnalysisHistory(){
       target.textContent="Не удалось прочитать историю: "+error.message;
   }
 }
-async function loadAll(preferredId=null,epoch=++projectLoadEpoch) {
-  const finish=beginWorkspaceLoading("Загрузка данных проекта…");
+async function loadAll(preferredId=null,epoch=++projectLoadEpoch,{initial=false}={}) {
+  // On F5, individual panels handle cold loads; do not cover the whole UI.
+  const finish=initial?()=>{}:beginWorkspaceLoading("Загрузка данных проекта…");
   try{return await loadAllCore(preferredId,epoch);}
   finally{finish();}
 }
@@ -2106,15 +2331,17 @@ async function loadReport({playersOnly=false}={}) {
   const needPlayers=$("#view-players").classList.contains("active");
   // Project/video/CPU switches do not need the complete photo library.
   // Fetch it only in Players; cache identical global catalog calls briefly.
-  const [report,aggregate,roster,catalog]=await Promise.all([
+  const [report,aggregate,roster,catalog,actionStats]=await Promise.all([
     reuse?Promise.resolve(state.report):
       cacheId?api("/api/report?video="+encodeURIComponent(video)+"&project_id="+projectId+
         "&cache_id="+encodeURIComponent(cacheId)):Promise.resolve({
           analyzed:false,source:video,raw:[],groups:[],counts:{},rallies:0}),
-    reuse?Promise.resolve(state.aggregate):api("/api/project-report?id="+projectId+
+    reuse?Promise.resolve(state.aggregate):api("/api/project-report?report_version=2&id="+projectId+
       (runId?"&run_id="+encodeURIComponent(runId):"")),
     needPlayers?api("/api/players?project_id="+projectId):Promise.resolve(null),
-    needPlayers?sharedPlayerCatalogs():Promise.resolve(null)
+    needPlayers?sharedPlayerCatalogs():Promise.resolve(null),
+    needPlayers&&runId?api("/api/players/actions?project_id="+projectId+
+      "&run_id="+encodeURIComponent(runId)):Promise.resolve(null)
   ]);
   if(epoch!==state.reportEpoch||project!==state.project||
      video!==state.video||runId!==state.analysisRunId)return;
@@ -2124,6 +2351,10 @@ async function loadReport({playersOnly=false}={}) {
   state.reportDirty=false;
   if(needPlayers){
     state.players=roster.players||[];
+    state.playerActions=actionStats;
+    state.playerActionsRunId=runId;
+    state.playerActionsProject=project;
+    state.playerRecalculateError="";
     state.libraryPlayers=catalog.libraryPlayers;
     state.photoCounts=catalog.photoCounts;
     state.playerMetaProject=project;
@@ -2511,6 +2742,7 @@ function pollJob(){
 async function pollJobCore() {
   const info=await api("/api/job");
   state.latestTask=info;
+  updateServerRestartButton();
   renderSidebarActivity(info);
   // An already-running job may predate the new stage timing API.
   // Read only the latest in-progress project's stored stage measurements;
@@ -2851,6 +3083,42 @@ async function assignSelected(remove=false,playerId=state.activePlayerId) {
     renderPlayers();
   }
 }
+async function deleteBadTracks(ids){
+  if(state.playerAssignBusy||pendingPlayerAssignments>0)return;
+  const selected=[...new Set(ids.map(String))];
+  if(!selected.length)return;
+  if(!window.confirm("Исключить "+selected.length+" Track ID из этого анализа? "+
+     "Они исчезнут из привязки и будут пропущены при следующем CPU-пересчёте. "+
+     "Исходные GPU-детекции сохранятся."))return;
+  const projectId=state.project,video=state.video,cacheId=analysisCacheId();
+  state.playerAssignBusy=true;
+  updateChosen();
+  try{
+    await api("/api/players/exclude-tracks",{
+      project_id:projectId,video,cache_id:cacheId,ids:selected});
+    if(projectId!==state.project||video!==state.video||
+       cacheId!==analysisCacheId())return;
+    for(const id of selected)state.selected.delete(id);
+    if(selected.includes(String(state.previewId)))state.previewId=null;
+    clearTimeout(playerGroupsPoll);
+    ++playerGroupsSequence;
+    state.playerGroups=null;
+    state.playerGroupsKey="";
+    state.reportDirty=true;
+    await loadReport();
+    $("#players-action-feedback").textContent=selected.length+
+      " Track ID исключено. Повторите CPU-пересчёт для обновления событий и розыгрышей.";
+    alertBox("");
+  }catch(error){
+    $("#players-action-feedback").textContent="Не удалось удалить ID: "+error.message;
+  }finally{
+    state.playerAssignBusy=false;
+    if(projectId===state.project&&video===state.video){
+      renderPlayers();
+      updateChosen();
+    }
+  }
+}
 function closeProjectActionDialogs(){
   for(const name of ["#project-rename-dialog","#project-delete-dialog"]){
     const dlg=$(name);
@@ -2909,7 +3177,8 @@ async function deleteProject(){
   }finally{button.disabled=false;button.textContent=originalLabel;}
 }
 function openHeaderEntryAction(kind,operation,entryId,label){
-  window.VolleyballHeaderMenu?.close();
+  if(kind!=="postprocess"||operation!=="delete")
+    window.VolleyballHeaderMenu?.close();
   if(kind==="project"){
     if(operation==="rename")beginRenameProject(entryId);
     else beginDeleteProject(entryId);
@@ -2926,6 +3195,13 @@ function openHeaderEntryAction(kind,operation,entryId,label){
   }
   if(kind==="inference"&&run.parent_run_id){
     alertBox("CPU-версия не относится к первичному анализу.");
+    return;
+  }
+  if(kind==="postprocess"&&operation==="delete"){
+    // One cross = one delete. Leave the picker visible for the next cross.
+    void submitHeaderEntryAction(null,{
+      projectId:state.project,runId,kind,operation
+    });
     return;
   }
   const dialog=$("#header-entry-action-dialog");
@@ -2954,35 +3230,74 @@ function openHeaderEntryAction(kind,operation,entryId,label){
   dialog.showModal();
   if(!deleting){input.focus();input.select();}else confirm.focus();
 }
-async function submitHeaderEntryAction(event){
-  event.preventDefault();
+async function submitHeaderEntryAction(event,action=null){
+  event?.preventDefault();
   const dialog=$("#header-entry-action-dialog");
-  const {projectId,runId,operation,kind}=dialog.dataset;
-  const button=$("#header-entry-action-confirm");
+  const {projectId,runId,operation,kind}=action||dialog.dataset;
+  const button=action?null:$("#header-entry-action-confirm");
   const error=$("#header-entry-action-error");
+  const deleteKey=projectId+"\u0000"+runId;
+  if(action&&pendingHeaderEntryDeletes.has(deleteKey))return;
   if(projectId!==state.project){
-    error.textContent="Выбран другой проект. Повторите действие.";
-    error.hidden=false;return;
-  }
-  button.disabled=true;error.hidden=true;
-  try{
-    await api(operation==="delete"?"/api/analysis-run/delete":"/api/analysis-run/rename",{
-      project_id:projectId,run_id:runId,kind,
-      ...(operation==="rename"?{name:$("#header-entry-name").value.trim()}:{})
-    });
-    dialog.close();
-    const previous=state.analysisRunId;
-    if(operation==="delete"&&previous===runId){
-      // The CPU result was selected: retain its original neural run in this
-      // project/video rather than jumping to a different latest GPU analysis.
-      state.analysisRunId=kind==="postprocess"
-        ?state.analysisRuns.find(row=>row.id===runId)?.parent_run_id||""
-        :"";
+    if(action)alertBox("Выбран другой проект. Повторите действие.");
+    else{
+      error.textContent="Выбран другой проект. Повторите действие.";
+      error.hidden=false;
     }
-    await loadAnalysisRuns();
+    return;
+  }
+  if(action)pendingHeaderEntryDeletes.add(deleteKey);
+  if(button)button.disabled=true;
+  error.hidden=true;
+  const deleting=operation==="delete";
+  const previous=state.analysisRunId;
+  const previousRuns=state.analysisRuns;
+  let optimisticRuns=null;
+  let deletionConfirmed=false;
+  if(deleting){
+    // The server writes only a project-scoped tombstone; hide the selected
+    // branch immediately without resynchronizing every analysis cache.
+    ++analysisRunsRequest; // Ignore previously started list responses.
+    state.analysisRuns=previousRuns.filter(row=>
+      row.id!==runId&&row.parent_run_id!==runId);
+    optimisticRuns=state.analysisRuns;
+    if(!state.analysisRuns.some(row=>row.id===state.analysisRunId)){
+      const parent=previousRuns.find(row=>row.id===previous)?.parent_run_id;
+      state.analysisRunId=(parent&&state.analysisRuns.some(row=>row.id===parent)
+        ?parent:preferredContextRun());
+    }
+    if(!action)dialog.close();
+    renderAnalysisRunChoices();
     if(state.analysisRunId!==previous){
+      renderRenders();
+      scheduleMontagePlan();
+    }
+  }
+  const optimisticSelectedRun=state.analysisRunId;
+  try{
+    await api(deleting?"/api/analysis-run/delete":"/api/analysis-run/rename",{
+      project_id:projectId,run_id:runId,kind,
+      ...(deleting?{}:{name:$("#header-entry-name").value.trim()})
+    });
+    deletionConfirmed=deleting;
+    if(!deleting){
+      dialog.close();
+      await loadAnalysisRuns();
+    }else if(state.project===projectId&&state.analysisRunId===optimisticSelectedRun){
+      try{
+        if(state.analysisRunId){
+          localStorage.setItem("volley-analysis-run:"+projectId,state.analysisRunId);
+          localStorage.setItem(headerRunKey(),state.analysisRunId);
+        }else{
+          localStorage.removeItem("volley-analysis-run:"+projectId);
+          localStorage.removeItem(headerRunKey());
+        }
+      }catch{}
+    }
+    if(state.project===projectId&&state.analysisRunId!==previous&&
+        (!deleting||state.analysisRunId===optimisticSelectedRun)){
       await loadReport();
-      if($("#view-analysis-results").classList.contains("active")){
+      if(state.project===projectId&&$("#view-analysis-results").classList.contains("active")){
         window.VolleyballResultsUI.setCacheSelection(
           analysisCacheMap(),state.analysisRunId,
           selectedAnalysisRun()?.postprocess_settings||null);
@@ -2991,8 +3306,38 @@ async function submitHeaderEntryAction(event){
       }
     }
   }catch(exc){
-    error.textContent=exc.message;error.hidden=false;
-  }finally{button.disabled=false;}
+    if(deleting){
+      if(!deletionConfirmed&&state.project===projectId){
+        if(state.analysisRuns===optimisticRuns){
+          state.analysisRuns=previousRuns;
+          state.analysisRunId=previous;
+        }else{
+          // Other crosses may have been clicked while this request was running.
+          // Restore only this entry, not subsequently deleted entries.
+          const restore=previousRuns.filter(row=>
+            row.id===runId||row.parent_run_id===runId);
+          const present=new Set(state.analysisRuns.map(row=>row.id));
+          const merged=[...state.analysisRuns];
+          for(const row of restore){
+            if(!present.has(row.id))merged.push(row);
+          }
+          merged.sort((a,b)=>
+            (Date.parse(b.started_at)||0)-(Date.parse(a.started_at)||0));
+          state.analysisRuns=merged;
+        }
+        renderAnalysisRunChoices();
+        renderRenders();
+        scheduleMontagePlan();
+      }
+      alertBox((deletionConfirmed?"Результат удалён, но не удалось обновить данные: ":
+        "Не удалось удалить результат: ")+exc.message);
+    }else{
+      error.textContent=exc.message;error.hidden=false;
+    }
+  }finally{
+    if(button)button.disabled=false;
+    if(action)pendingHeaderEntryDeletes.delete(deleteKey);
+  }
 }
 function updateAnalysisCpuThreads(){
   const backend=$("#analysis-form [name='backend']").value;
@@ -3014,6 +3359,8 @@ function updateRavelBackendSettings(){
   $("#analysis-form [name='player_device']").value=player==="onnx-cuda"?"GPU":"CPU";
 }
 function bind() {
+  $("#server-restart")?.addEventListener("click",restartStudio);
+  updateServerRestartButton();
   window.VolleyballPlayerPhotoHover?.init($("#view-players"),()=>({
     project:state.project,video:state.video,cache:analysisCacheId()
   }));
@@ -3063,6 +3410,8 @@ function bind() {
         track_player_threshold:settings.track_player_threshold??.35,
         track_ball_threshold:settings.track_ball_threshold??.35,
         track_no_ball_fill:settings.track_no_ball_fill===true,
+        player_hold_frames:settings.player_hold_frames??90,
+        player_match_distance:settings.player_match_distance??.14,
         beach:settings.beach===true,
         ball_threshold:settings.ball_threshold??null,
         player_threshold:settings.player_threshold??null
@@ -3361,12 +3710,14 @@ function bind() {
   });
   $("#cancel-job").addEventListener("click",()=>api("/api/cancel",{}).then(pollJob).catch(e=>alertBox(e.message)));
   $("#montage-cancel").addEventListener("click",()=>api("/api/cancel",{}).then(pollJob).catch(e=>alertBox(e.message)));
+  $$("[data-player-gallery]").forEach(button=>button.addEventListener("click",()=>setPlayerGallery(button.dataset.playerGallery)));
   $$("[data-player-mode]").forEach(button=>button.addEventListener("click",()=>{
     setPlayerMode(button.dataset.playerMode);
   }));
   $("#bulk-player-target").addEventListener("change",updateChosen);
   $("#save-selected-ids").addEventListener("click",()=>assignSpecificTracks(
     Array.from(state.selected),$("#bulk-player-target").value));
+  $$("[data-player-table]").forEach(button=>button.addEventListener("click",()=>setPlayerTable(button.dataset.playerTable)));
   $("#refresh-player-album").addEventListener("click",()=>renderPlayerAlbum(true).catch(console.warn));
   $("#player-album-gallery").addEventListener("click",event=>{
     const cancel=event.target.closest("[data-cancel-album-delete]");
@@ -3473,6 +3824,33 @@ function bind() {
   }
   autoEnable.addEventListener("change",saveAutoPolicy);
   autoThreshold.addEventListener("change",saveAutoPolicy);
+  $("#players-recalculate").addEventListener("click",async()=>{
+    if(state.playerRecalculateBusy||!state.project||!state.analysisRunId)return;
+    const project=state.project,runId=state.analysisRunId;
+    state.playerRecalculateBusy=true;
+    state.playerRecalculateError="";
+    $("#players-recalculate-status").textContent="Пересчитываем касания и действия игроков…";
+    renderPlayerActionStats();
+    try{
+      const result=await api("/api/players/recalculate",{project_id:project,run_id:runId});
+      if(project!==state.project||runId!==state.analysisRunId)return;
+      state.playerActions=result;
+      state.reportDirty=true;
+      await loadReport();
+      if(project!==state.project||runId!==state.analysisRunId)return;
+      window.dispatchEvent(new CustomEvent("volley:player-identities-change",{
+        detail:{project_id:project,video:state.video}
+      }));
+      $("#players-action-feedback").textContent=
+        "Пересчёт завершён. Касания и статистика игроков обновлены.";
+    }catch(error){
+      if(project===state.project)state.playerRecalculateError=
+        "Не удалось пересчитать касания: "+error.message;
+    }finally{
+      state.playerRecalculateBusy=false;
+      renderPlayerActionStats();
+    }
+  });
   $("#player-groups-rebuild").addEventListener("click",async()=>{
     if(!state.project||!state.video||!analysisCacheId())return;
     if(state.playerGroups?.groups?.length&&!window.confirm(
@@ -3566,27 +3944,7 @@ function bind() {
       alertBox("");
     }catch(error){alertBox(error.message)}
   });
-  $("#backfill-player-photos").addEventListener("click",async()=>{
-    const player_id=state.activePlayerId;
-    if(!player_id)return;
-    const button=$("#backfill-player-photos");
-    button.disabled=true;
-    try{
-      await api("/api/players/photos/collect",{player_id});
-      $("#players-action-feedback").textContent="Сбор фотографий запущен. Они появятся в просмотре после сохранения.";
-      setTimeout(async()=>{
-        if(player_id!==state.activePlayerId)return;
-        try{
-          const counts=await api("/api/players/photos");
-          state.photoCounts=counts.counts||state.photoCounts;
-          renderPlayers();
-          if(state.playerMode==="view")await renderPlayerAlbum(true);
-        }catch(error){console.warn("album refresh",error)}
-      },2500);
-      alertBox("");
-    }catch(error){alertBox(error.message)}
-    finally{button.disabled=false}
-  });
+  $("#backfill-player-photos").addEventListener("click",savePlayerLinkedPhotos);
   $("#delete-player").addEventListener("click",async()=>{
     const player=state.players.find(p=>p.id===state.activePlayerId);
     if(!player||!window.confirm("Убрать «"+player.name+"» из этого проекта? В общей базе игрок и его фото останутся."))return;
@@ -3624,6 +3982,11 @@ function bind() {
     schedulePlayerPhotos();
   });
   $("#raw-players").addEventListener("click",e=>{
+    const del=e.target.closest("[data-track-delete]");
+    if(del){
+      deleteBadTracks([del.dataset.trackDelete]).catch(console.warn);
+      return;
+    }
     const attach=e.target.closest("[data-track-link]");
     if(attach){
       const picker=attach.closest("tr")?.querySelector(".track-player-picker");
@@ -3676,6 +4039,8 @@ function bind() {
     schedulePlayerPhotos();
   });
   $("#unassign-ids").addEventListener("click",()=>assignSelected(true));
+  $("#delete-selected-ids").addEventListener("click",()=>
+    deleteBadTracks(Array.from(state.selected)).catch(console.warn));
   $("#all-renders").addEventListener("click",async e=>{
     const button=e.target.closest("button");
     if(!button)return;
@@ -3715,7 +4080,7 @@ document.addEventListener("DOMContentLoaded",async()=>{
   bind();
   const requestedView=new URLSearchParams(window.location.search).get("view");
   try{
-    await loadAll();
+    await loadAll(null,undefined,{initial:true});
     if(["analysis","analysis-results","players","report","benchmark","results"].includes(requestedView))go(requestedView);
     await pollJob();
   }catch(e){alertBox(e.message)}

@@ -58,6 +58,23 @@ class RawReplayTests(unittest.TestCase):
             self.assertTrue(all("interpolated" not in r for r in result))
             # Source query IDs 80..83 never become real athlete identities.
 
+    def test_cpu_hold_duration_is_configurable_without_gpu(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cache=Path(tmp)
+            samples=[]
+            for frame in (0,10):
+                samples.append({"frame":frame,"predictions":[{
+                    "class_name":"player","score":.85,"track_id":frame+23,
+                    "bbox_xyxy_norm":[.2,.2,.4,.7]}]})
+            (cache/"players.raw.v2.jsonl").write_text(
+                "".join(json.dumps(x)+"\n" for x in samples),encoding="utf8")
+            short=reconstruct_players(cache,1000,1000,.30,[],
+                hold_frames=2,max_center_distance=.14)
+            long=reconstruct_players(cache,1000,1000,.30,[],
+                hold_frames=15,max_center_distance=.14)
+            self.assertEqual(len({p["track_id"] for p in short}),2)
+            self.assertEqual(len({p["track_id"] for p in long}),1)
+
     def test_new_identity_gets_unique_cpu_id_not_original_track(self):
         with tempfile.TemporaryDirectory() as tmp:
             cache=Path(tmp)

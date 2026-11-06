@@ -203,6 +203,12 @@
 .player-mode-switch button:hover{color:#fff;border-color:#75a887}
 .player-mode-pane[hidden]{display:none!important}
 .player-mode-pane{min-width:0}
+[data-player-table-pane][hidden]{display:none!important}
+.player-detail-switch{flex:1 1 360px}
+.player-detail-switch button{flex-basis:140px}
+.player-album-table .player-album-card{background:#152b22}
+.player-album-table .player-album-card img{width:110px;height:150px}
+.player-album-table .player-album-actions{min-width:130px}
 .player-mode-pane .panel-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
 .player-album-gallery{display:grid;grid-template-columns:repeat(auto-fill,minmax(158px,1fr));gap:12px}
 .player-album-card{margin:0;border:1px solid #395b46;background:#152b22;border-radius:10px;padding:8px;min-width:0}
@@ -236,3 +242,60 @@
   .players-unified .player-roster-item{flex-basis:225px}
   .player-bulk-target{flex-basis:100%}
 }
+.players-manager .players-unified{padding:24px;display:flex;flex-direction:column;gap:20px}
+.players-manager .players-identity-panel{border:0;padding:0;margin:0;display:flex;flex-wrap:wrap;align-items:start;gap:12px}
+.players-manager .players-identity-panel>.panel-heading{flex-basis:100%;margin:0}
+.players-manager .named-list{order:1;flex:1 1 100%;min-height:0;padding:2px 0 10px;gap:10px}
+.players-manager .player-roster-item{flex:0 0 190px;min-width:0;position:relative}
+.players-manager .player-identity-slot{width:100%;min-width:0;max-width:none;min-height:82px;padding:12px;gap:10px;border-color:#2d443d;background:#14221f;border-radius:10px}
+.players-manager .player-identity-slot.is-active{background:#22382c;border-color:#9aca75;box-shadow:inset 0 -2px #9aca75}
+.players-manager .player-slot-avatar{width:32px;height:32px;flex-basis:32px;font-size:14px}
+.players-manager .player-slot-text{gap:4px}
+.players-manager .player-slot-text strong{font-size:14px;padding-right:12px}
+.players-manager .player-slot-text small{font-size:11px;line-height:1.4}
+.players-manager .player-slot-actions:empty{display:none}
+.players-manager .player-roster-remove{display:none}
+.players-manager .player-add-disclosure,.players-manager .player-manage{border:0;margin:0;padding:0;font-size:12px;color:#afc3b8}
+.players-manager summary{cursor:pointer;padding:6px 0}
+.players-manager .player-add-disclosure[open]{flex-basis:100%}
+.players-manager .player-library-add{max-width:620px;margin:10px 0;padding:0;border:0}
+.players-manager .player-create-disclosure{border:0;padding:0;margin:8px 0}
+.players-manager .player-gallery-toolbar{display:flex;align-items:start;justify-content:space-between;gap:16px;border-bottom:1px solid #2a3c35;padding-bottom:12px}
+.player-gallery-tabs{display:flex;flex-wrap:wrap;gap:6px}
+.player-gallery-tabs button{background:transparent;border:1px solid transparent;color:#a7bbb1;border-radius:7px;padding:10px 16px;font-size:13px;cursor:pointer}
+.player-gallery-tabs button.is-active{background:#293d31;color:#e6f3e2;border-color:#516c52}
+.player-gallery-tabs button:focus-visible,.players-manager summary:focus-visible{outline:2px solid #a6e874;outline-offset:3px}
+.player-workspace-settings{max-width:700px;font-size:12px;min-width:100px}
+.player-workspace-settings[open]{flex:1}
+.players-manager .player-overview-main{margin:12px 0;flex-wrap:wrap}
+.players-manager .players-health{gap:6px}
+.players-manager .player-health-metric{background:transparent;border:0;padding:6px}
+.players-manager .player-health-metric strong{font-size:17px}
+.players-manager .player-recalculate-bar{margin:12px 0;flex-wrap:wrap}
+.players-manager .player-mode-pane{padding:0;margin:0;border:0}
+.players-manager .player-detail-switch[hidden]{display:none}
+.players-manager [data-player-pane=view]>.panel-heading{justify-content:flex-end;margin:0 0 12px}
+.players-manager [data-player-table-pane]>h3,.players-manager [data-player-table-pane]>.player-panel-hint,.players-manager [data-player-table-pane=photos]>.panel-heading h3{display:none}
+.players-manager [data-player-pane=manual]>.player-panel-hint,.players-manager #players-filter-note,.players-manager .player-select-tools small{display:none}
+.players-manager .player-filter-bar{grid-template-columns:minmax(140px,220px) minmax(180px,320px)}
+.players-manager .table-scroll{max-height:none;overflow:visible;border:0;background:transparent}
+.players-manager .table-scroll table{display:block;min-width:0;width:100%;background:transparent}
+.players-manager .table-scroll thead{display:none}
+.players-manager #raw-players,.players-manager #player-linked-tracks,.players-manager #player-album-gallery{display:grid;grid-template-columns:repeat(auto-fill,minmax(172px,1fr));gap:14px}
+.players-manager .table-scroll tbody>tr{display:flex;flex-direction:column;position:relative;min-width:0;border:1px solid #2c4037;border-radius:10px;padding:10px;background:#14211e;overflow:hidden;gap:6px}
+.players-manager .table-scroll tbody>tr:hover{border-color:#5f8067;background:#192a23}
+.players-manager .table-scroll tbody>tr.is-selected{border-color:#a2df76;background:#263b2c}
+.players-manager .table-scroll td{display:block;width:auto!important;border:0;padding:0;text-align:left!important;white-space:normal;font-size:12px;overflow-wrap:anywhere}
+.players-manager .table-scroll .photo-peek{display:block;width:100%;height:180px;border:0;padding:0;border-radius:6px;overflow:hidden;background:#0c1713;cursor:pointer}
+.players-manager .table-scroll .photo-peek img,.players-manager .player-album-card img{display:block;width:100%;height:180px;object-fit:contain;background:#0c1713;border-radius:6px}
+.players-manager #raw-players td:first-child{position:absolute;top:16px;left:16px;z-index:1;background:#14211ecc;border-radius:5px;padding:3px}
+.players-manager #raw-players td:nth-child(3) .track-subline,.players-manager #raw-players td:nth-child(3)>button,.players-manager #raw-players td:nth-child(4) .track-subline,.players-manager #raw-players td:nth-child(5),.players-manager #raw-players td:nth-child(6),.players-manager #raw-players td:nth-child(7){display:none}
+.players-manager #raw-players td:nth-child(4){color:#98afa2;font-size:11px}
+.players-manager #player-linked-tracks td:last-child{color:#9bb4a3;font-size:11px}
+.players-manager .player-album-card td:nth-child(2){font-size:10px;color:#9bb4a3;line-height:1.5;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.players-manager .player-album-actions{margin:4px 0 0}
+.players-manager .player-bulk-bar{margin:14px 0 0;background:#20362a;border-color:#47664b;padding:12px;box-shadow:0 -4px 16px #08110c66}
+.players-manager .players-unified:not(:has(.row-select:checked)) .player-bulk-bar{display:none}
+.players-manager .players-review-columns{display:none}
+.players-manager .table-scroll td.empty,.players-manager .table-scroll td.muted{padding:16px;line-height:1.6}
+@media(max-width:700px){.players-manager .players-unified{padding:14px;gap:14px}.players-manager .player-gallery-toolbar{flex-wrap:wrap}.player-workspace-settings[open]{min-width:100%;max-width:100%}.players-manager .player-filter-bar{grid-template-columns:1fr}.players-manager #raw-players,.players-manager #player-linked-tracks,.players-manager #player-album-gallery{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.player-gallery-tabs button{padding:9px 10px}.players-manager .table-scroll .photo-peek,.players-manager .table-scroll .photo-peek img,.players-manager .player-album-card img{height:155px}}

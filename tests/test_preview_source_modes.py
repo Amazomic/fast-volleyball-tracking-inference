@@ -155,7 +155,6 @@ class PreviewSourceModesTests(unittest.TestCase):
         for element in ("result-raw-vball-threshold",
                         "result-raw-ravel-threshold",
                         "result-raw-player-threshold",
-                        "result-raw-trail",
                         "result-raw-trail-seconds",
                         "result-raw-ball-trail"):
             self.assertIn('id="'+element+'"',html)
@@ -164,6 +163,16 @@ class PreviewSourceModesTests(unittest.TestCase):
         self.assertIn('if(inRawMode()&&score<rawThresholds.players)continue',js)
         self.assertIn('drawRawBallTrail(kind,win,time,geometry,points)',js)
         self.assertIn('result-raw-ball-trail[data-source="ravelBall"]',css)
+        # GPU overlay controls must not inherit the CPU-only hidden selector.
+        style=(ROOT/"scripts/volleyball_ui/static/style.css").read_text("utf8")
+        self.assertNotIn(".raw-touch-mode .result-overlay-controls,",style)
+        self.assertIn(".raw-touch-mode .result-cpu-overlays,",style)
+        self.assertIn('id="result-raw-source-switch"',html)
+        self.assertIn('.result-raw-source-switch[hidden]',css)
+        self.assertIn('E("result-raw-source-switch").hidden=!raw',js)
+        self.assertNotIn('id="result-raw-trail"',html)
+        self.assertIn('const rawTrail={seconds:2}',js)
+        self.assertIn('if(!rawEnabled(kind)||!win?.available||!geometry)return',js)
         self.assertIn("cache_id:rawCacheId()",js)
         self.assertIn('const endpoint=kind==="ravelBall"',js)
         self.assertIn("CPU · ",js)

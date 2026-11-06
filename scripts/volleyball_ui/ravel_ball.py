@@ -40,7 +40,7 @@ def _ball_index(path: str, mtime_ns: int, file_size: int):
             continue
         if (frame < 0 or not all(math.isfinite(v) for v in
                                  (score, x1, y1, x2, y2))
-                or not 0 <= score <= 1 or x2 <= x1 or y2 <= y1):
+                or not 0.5 < score <= 1 or x2 <= x1 or y2 <= y1):
             continue
         x = (x1 + x2) / 2
         y = (y1 + y2) / 2
@@ -76,7 +76,7 @@ def ravel_ball_window(project_id: str, video: str, start, length=8,
     stat = path.stat()
     fps, width, height, floor, indices, frames = _ball_index(
         str(path), stat.st_mtime_ns, stat.st_size)
-    threshold = max(floor, threshold if threshold is not None else floor)
+    threshold = max(0.5, floor, threshold if threshold is not None else floor)
     left = bisect_left(indices, math.floor(start * fps))
     right = bisect_right(indices, math.ceil((start + length) * fps))
     rows = [

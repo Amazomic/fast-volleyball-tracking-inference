@@ -56,9 +56,10 @@ async function main(){
   assert(!element("#named-list").innerHTML.includes("is-assign-target"), "selection target is not implied");
   assert(element("#named-list").innerHTML.includes("Выбрать как цель"));
   assert(element("#raw-players").innerHTML.includes('data-track-link="101"'));
-  assert(html.includes('data-player-mode="view"'));
-  assert(html.includes('data-player-mode="auto"'));
-  assert(html.includes('data-player-mode="manual"'));
+  assert(html.includes('data-player-gallery="tracks"'));
+  assert(html.includes('data-player-gallery="photos"'));
+  assert(html.includes('data-player-gallery="auto"'));
+  assert(html.includes('data-player-gallery="unassigned"'));
   assert(html.includes('id="player-album-gallery"'));
   assert(html.includes('id="save-selected-ids"'));
   vm.runInContext([

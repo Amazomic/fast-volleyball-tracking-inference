@@ -73,15 +73,90 @@ def _validate_mode(manifest: dict, mode: str, touch_threshold: float,
                 "new RAVEL GPU inference is required")
 
 
+def _ball_motion_change(observations: list[tuple[int, float, float]],
+                        frame: int, window_frames: int = 4) -> dict | None:
+    """Validate an action peak using an actual change in ball flight.
+
+    The velocity fits and gravity correction intentionally match the
+    geometry detector in src/player_contacts.py. Merely passing through
+    a player box must not qualify as a Touch.
+    """
+    from src.player_contacts import (
+        VELOCITY_WINDOW, MIN_VELOCITY_SAMPLES, MAX_SEGMENT_GAP_FRAMES,
+        MIN_SPEED_PX_PER_FRAME, MIN_VELOCITY_RESIDUAL_PX_FRAME,
+        RELATIVE_VELOCITY_RESIDUAL, DEFAULT_GRAVITY_PX_PER_FRAME2,
+    )
+
+    def fit(index: int, step: int):
+        segment = []
+        last_frame = observations[index][0]
+        while 0 <= index < len(observations) and len(segment) < VELOCITY_WINDOW:
+            item = observations[index]
+            if abs(item[0] - last_frame) > MAX_SEGMENT_GAP_FRAMES:
+                break
+            segment.append(item)
+            last_frame = item[0]
+            index += step
+        if (len(segment) < MIN_VELOCITY_SAMPLES
+                or max(p[0] for p in segment) - min(p[0] for p in segment) < 1):
+            return None
+        center_t = sum(p[0] for p in segment) / len(segment)
+        variance = sum((p[0] - center_t) ** 2 for p in segment)
+        vx = sum((p[0] - center_t) * p[1] for p in segment) / variance
+        vy = sum((p[0] - center_t) * p[2] for p in segment) / variance
+        return vx, vy, center_t
+
+    from bisect import bisect_left
+    strongest = None
+    start = bisect_left(observations, (frame - window_frames, -math.inf, -math.inf))
+    for index in range(start, len(observations)):
+        observed_frame = observations[index][0]
+        if observed_frame > frame + window_frames:
+            break
+        before, after = fit(index, -1), fit(index, +1)
+        if before is None or after is None:
+            continue
+        bx, by, bt = before
+        ax, ay, at = after
+        speed_before, speed_after = math.hypot(bx, by), math.hypot(ax, ay)
+        top_speed = max(speed_before, speed_after)
+        if top_speed < MIN_SPEED_PX_PER_FRAME:
+            continue
+        residual = math.hypot(
+            ax - bx, ay - by - DEFAULT_GRAVITY_PX_PER_FRAME2 * max(at - bt, 0))
+        residual_threshold = max(
+            MIN_VELOCITY_RESIDUAL_PX_FRAME, RELATIVE_VELOCITY_RESIDUAL * top_speed)
+        if residual < residual_threshold:
+            continue
+        cosine = (bx * ax + by * ay) / max(speed_before * speed_after, 1e-9)
+        angle = math.degrees(math.acos(max(-1., min(1., cosine))))
+        speed_delta = abs(speed_after - speed_before)
+        # Gravity alone can rotate a trajectory near its apex. The corrected
+        # residual must be strong AND either heading or speed must jump.
+        if angle < 25. and speed_delta < max(4., .30 * top_speed):
+            continue
+        evidence = {
+            "motion_frame": observed_frame,
+            "speed_before_px_frame": round(speed_before, 3),
+            "speed_after_px_frame": round(speed_after, 3),
+            "direction_change_deg": round(angle, 2),
+            "velocity_residual_px_frame": round(residual, 3),
+        }
+        if strongest is None or residual > strongest[0]:
+            strongest = residual, evidence
+    return strongest[1] if strongest else None
+
+
 def _ravel_contacts(track: dict, predictions: list[dict], threshold: float,
                     min_interval_sec: float = .35,
                     max_reach_ratio: float = .35, *,
                     selected_peaks: list[dict] | None = None,
                     smooth: int = 5, min_gap: int = 10) -> list[dict]:
-    """Spatially validate RAVEL-013 temporal Touch peaks against the ball.
+    """Require player reach AND a gravity-corrected velocity change for Touch.
 
-    The upstream smoothing/peak selection runs before ball/player validation;
-    original per-frame scores are kept independently for CPU replay.
+    RAVEL probabilities propose event times; the ball trajectory confirms the
+    event. A straight flight crossing a player box is not a contact.
+    Original model probabilities are retained for raw preview/CPU replay.
     """
     from bisect import bisect_left
 
@@ -129,11 +204,14 @@ def _ravel_contacts(track: dict, predictions: list[dict], threshold: float,
         outside_y = max(y1-y, y-y2, 0.)
         if max(outside_x,outside_y) > max_reach_ratio * height:
             continue
+        motion = _ball_motion_change(observations, frame)
+        if motion is None:
+            continue
         candidates.append({
             "frame": frame, "ball_x": x, "ball_y": y,
             "contact_type": "unknown_touch", "confidence": float(p["action_score"]),
             "player_track_id": p.get("track_id"),
-            "speed_after_px_frame": 0., "direction_change_deg": 0.,
+            **motion,
             "side": "unknown", "origin": "ravel_touch",
         })
     candidates.sort(key=lambda item: item["frame"])
@@ -158,7 +236,10 @@ def _merge_contacts(geometry: list[dict], neural: list[dict],
     result = [dict(item, origin=item.get("origin", "geometry")) for item in geometry]
     gap_frames = max(3, round(30*min_interval_sec/2))
     for item in neural:
-        if not any(abs(int(old["frame"]) - int(item["frame"])) <= gap_frames
+        # The model peak can be a few frames later than the physical impact.
+        # Deduplicate against the actual trajectory break, not just peak time.
+        motion_frame = int(item.get("motion_frame", item["frame"]))
+        if not any(abs(int(old["frame"]) - motion_frame) <= gap_frames
                    for old in result):
             result.append(item)
     return sorted(result, key=lambda item: item["frame"])
@@ -200,7 +281,7 @@ def _proposal_records(cache: Path, manifest: dict, width: int, height: int,
                         })
                 elif include_balls and record.get("class_name") == "ball":
                     score = float(record["score"])
-                    if score < ball_threshold or score <= best_ball.get(frame, {}).get("score", -1):
+                    if not score > 0.5 or score < ball_threshold or score <= best_ball.get(frame, {}).get("score", -1):
                         continue
                     box = record["bbox_xyxy_norm"]
                     best_ball[frame] = {
@@ -303,9 +384,16 @@ def reprocess(cache: Path, *, mode: str | None = None,
               track_no_ball_fill: bool = False, beach: bool = False,
               touch_min_interval_sec: float = .35,
               touch_max_reach_ratio: float = .35,
+              player_hold_frames: int = 90,
+              player_match_distance: float = .14,
+              excluded_player_ids=(),
               on_progress=None) -> Path:
     """Create/reuse a CPU-only postprocessing version; return its directory."""
     cache = Path(cache).resolve()
+    excluded = {str(tid) for tid in excluded_player_ids}
+    if any(not tid.isascii() or not tid.isdecimal() or len(tid) > 12
+           for tid in excluded):
+        raise ValueError("Invalid excluded player Track ID")
     manifest = load(cache)
     # RAVEL-013 defaults to temporal model Touch + geometry; older models
     # lack an action head and keep the original geometry-only pipeline.
@@ -313,6 +401,13 @@ def reprocess(cache: Path, *, mode: str | None = None,
         mode = ("combined" if manifest.get("player_model") == "RAVEL-VB-013-9f"
                 else "baseline")
     _validate_mode(manifest, mode, touch_threshold, ball_threshold, player_threshold)
+    if (isinstance(player_hold_frames, bool) or
+            not isinstance(player_hold_frames, int) or
+            not 0 <= player_hold_frames <= 180):
+        raise ValueError("CPU player ID retention must be an integer from 0 to 180 frames")
+    if (not math.isfinite(player_match_distance) or
+            not .02 <= player_match_distance <= .30):
+        raise ValueError("CPU player match distance must be 0.02..0.30")
     for value in (track_min_duration, track_max_distance, track_player_threshold,
                   track_ball_threshold):
         if not math.isfinite(value) or value < 0:
@@ -340,13 +435,18 @@ def reprocess(cache: Path, *, mode: str | None = None,
             Path(__file__)]
     options = dict(
         mode=mode, touch_threshold=touch_threshold, ball_threshold=ball_threshold,
-        player_threshold=player_threshold, track_min_duration=track_min_duration,
+        player_threshold=player_threshold,
+        player_hold_frames=player_hold_frames,
+        player_match_distance=player_match_distance,
+        track_min_duration=track_min_duration,
         track_max_distance=track_max_distance,
         track_player_threshold=track_player_threshold,
         track_ball_threshold=track_ball_threshold,
         track_no_ball_fill=track_no_ball_fill, beach=beach,
         touch_min_interval_sec=touch_min_interval_sec,
         touch_max_reach_ratio=touch_max_reach_ratio)
+    if excluded:
+        options["excluded_player_ids"] = sorted(excluded, key=int)
     court = cache / "court.json"
     court_enabled = bool(manifest.get("court_present", court.is_file()))
     if court_enabled and not court.is_file():
@@ -405,7 +505,7 @@ def reprocess(cache: Path, *, mode: str | None = None,
             else float(manifest["player_ball_threshold"] or 0),
             include_touches=wants_touches, include_balls=wants_ravel_ball)
             if wants_touches or wants_ravel_ball else ([], []))
-        if player_threshold is not None or (
+        if excluded or player_threshold is not None or (
                 mode in ("ravel-touch", "ravel-geometry") and ball_proposals):
             replay_payload = dict(player_data)
             predictions = list(player_data["predictions"])
@@ -416,7 +516,9 @@ def reprocess(cache: Path, *, mode: str | None = None,
                         p for p in predictions if p.get("class_name") != "player"
                     ] + reconstruct_players(
                         cache, width, height, player_threshold,
-                        player_data["predictions"])
+                        player_data["predictions"],
+                        hold_frames=player_hold_frames,
+                        max_center_distance=player_match_distance)
                 else:
                     predictions = [
                         p for p in predictions if p.get("class_name") != "player"
@@ -426,6 +528,10 @@ def reprocess(cache: Path, *, mode: str | None = None,
                 predictions = [
                     p for p in predictions if p.get("class_name") != "ball"
                 ] + ball_proposals
+            if excluded:
+                predictions = [p for p in predictions
+                               if p.get("class_name") != "player"
+                               or str(p.get("track_id")) not in excluded]
             replay_payload["predictions"] = predictions
             player_path = folder / "players.replay.json"
             save(player_path, replay_payload)
@@ -485,6 +591,10 @@ def reprocess(cache: Path, *, mode: str | None = None,
         player_predictions = (json.loads(player_path.read_text(encoding="utf-8"))
                               ["predictions"] if player_path != cache / "players.json"
                               else player_data["predictions"])
+        if excluded:
+            player_predictions = [p for p in player_predictions
+                                  if p.get("class_name") != "player"
+                                  or str(p.get("track_id")) not in excluded]
         # CPU-only, independently versioned proposed continuity of player
         # tracklets. This is NOT an automatic player identity assignment.
         from .player_continuity import group_tracklets
@@ -492,6 +602,10 @@ def reprocess(cache: Path, *, mode: str | None = None,
             player_predictions, width, height, float(manifest["fps"])))
         touch_predictions = (touch_proposals if "players.raw.v2.jsonl" in manifest["outputs"]
                              else player_data["predictions"])
+        if excluded:
+            touch_predictions = [p for p in touch_predictions
+                                 if p.get("class_name") != "player"
+                                 or str(p.get("track_id")) not in excluded]
         if player_threshold is not None:
             touch_predictions = [p for p in touch_predictions
                                  if p.get("class_name") != "player"
@@ -507,6 +621,8 @@ def reprocess(cache: Path, *, mode: str | None = None,
         for p in player_predictions:
             frame = int(p["frame_index"])
             if p.get("class_name") == "ball":
+                if not float(p["score"]) > 0.5:
+                    continue
                 box = p["bbox_xyxy"]
                 ball = dict(x=(box[0]+box[2])/2, y=(box[1]+box[3])/2,
                             confidence=float(p["score"]))

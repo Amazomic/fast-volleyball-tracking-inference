@@ -22,8 +22,13 @@ class ReprocessProgressTests(unittest.TestCase):
         output = Path(tempfile.mkdtemp(prefix="volley-replay-test-")) / ("c" * 24)
         output.mkdir()
         self.addCleanup(shutil.rmtree, output.parent)
+        (output / "ranking.json").write_text("[]", encoding="utf-8")
+        (output / "analysis").mkdir()
+        (output / "analysis/events.json").write_text("{}", encoding="utf-8")
         (output / "postprocess.manifest.json").write_text(
-            json.dumps({"settings": {"mode": "combined"}}), encoding="utf-8")
+            json.dumps({"schema": "volley-postprocessing/1",
+                        "version_id": output.name,
+                        "settings": {"mode": "combined"}}), encoding="utf-8")
 
         def fake_replay(cache, **settings):
             progress = settings["on_progress"]
@@ -36,6 +41,8 @@ class ReprocessProgressTests(unittest.TestCase):
               patch("scripts.run_project_reprocess.cache_for", return_value=Path("cache")),
               patch("scripts.run_project_reprocess.reprocess", side_effect=fake_replay),
               patch("scripts.volleyball_ui.analysis_runs.restore_postprocessing_version"),
+              patch("scripts.volleyball_ui.analysis_runs.publish_postprocessing_snapshot",
+                    return_value={"id": "fake-snapshot"}),
               redirect_stdout(log)):
             outcome = process_project("test-project", "base-run", "combined")
         events = [json.loads(line) for line in log.getvalue().splitlines()]
@@ -91,7 +98,7 @@ class ReprocessProgressTests(unittest.TestCase):
     def test_preview_settings_are_not_mixed_with_display_filters(self):
         markup = (Path(__file__).resolve().parents[1] /
                   "scripts/volleyball_ui/static/index.html").read_text(encoding="utf-8")
-        filter_start = markup.index('<fieldset class="result-overlay-controls"')
+        filter_start = markup.index('<fieldset class="result-overlay-controls result-cpu-overlays"')
         filter_end = markup.index("</fieldset>", filter_start)
         player = markup.index('id="result-video-player"')
         cpu_start = markup.index('<section class="result-cpu-tools"')

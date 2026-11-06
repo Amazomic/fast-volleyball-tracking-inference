@@ -67,6 +67,9 @@ def timeline(video: str, project_id=None, *, duration_sec: float | None = None,
                     pass
             actions.append({
                 "id": str(e.get("id") or ""),
+                "contact_id": (str(e["contact_id"]) if e.get("contact_id") is not None else
+                               f"{e['track_id']}:{e['frame']}" if
+                               e.get("track_id") is not None and e.get("frame") is not None else None),
                 "type": kind, "time": when,
                 "confidence": round(float(e.get("confidence") or 0), 3),
                 "player_id": str(e["player_track_id"]) if e.get("player_track_id") is not None else None,

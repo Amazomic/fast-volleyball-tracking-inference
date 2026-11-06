@@ -30,10 +30,11 @@ class AnalysisGpuSettingsTests(unittest.TestCase):
         app=APP.read_text(encoding="utf-8")
         self.assertIn('$("#analysis-gpu-resources").hidden=',app)
 
-    def test_both_default_profiles_select_cuda(self):
+    def test_all_built_in_profiles_select_cuda(self):
         text=PRESETS.read_text(encoding="utf-8")
-        self.assertEqual(text.count('player_backend:"onnx-cuda"'),3)
-        self.assertEqual(text.count('backend:"onnx",'),3)
+        # Accuracy, speed, new and amateur ReID profiles all use explicit CUDA.
+        self.assertEqual(text.count('player_backend:"onnx-cuda"'),4)
+        self.assertEqual(text.count('backend:"onnx",'),4)
 
     def test_studio_accepts_documented_gpu_flags(self):
         args=parser().parse_args(["--gpu-device-id","0","--gpu-memory-limit-mb","4096"])

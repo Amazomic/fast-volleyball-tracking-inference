@@ -54,12 +54,20 @@ def analyze_one(reel_id: str, video_index: int) -> dict:
     from scripts.volleyball_studio.analysis import analyze
     from scripts.volleyball_studio.advanced import from_namespace
     from_namespace(args)
-    _, warnings, cache = analyze(source, work, args)
+    _, warnings, inference_cache = analyze(source, work, args)
+    # Keep quick-reel GPU inference fresh and independent; use the project's
+    # same golden CPU interpretation to select rallies for montage.
+    from .cpu_defaults import automatic_cpu_settings
+    from scripts.volleyball_studio.reprocess import reprocess
+    cpu_settings = automatic_cpu_settings(args.player_model)
+    cache = reprocess(inference_cache, **cpu_settings)
     if not (cache/"ranking.json").is_file() or not (cache/"analysis/events.json").is_file():
         raise RuntimeError("Анализ не сохранил полный рейтинг и события")
     result = {
         "video": row["video"], "source": str(source), "cache": str(cache),
         "prepared": str(prepared), "warnings": warnings,
+        "inference_cache": str(inference_cache),
+        "cpu_settings": cpu_settings,
         "analysis_settings": {
             "ball_model": args.ball_model, "ball_threshold": args.ball_threshold,
             "player_model": args.player_model, "player_backend": args.player_backend,

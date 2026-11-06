@@ -3,6 +3,7 @@ from pathlib import Path
 import json
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from scripts.volleyball_ui.rally_players import player_info
 from scripts.volleyball_ui.rally_view import from_tracks
@@ -63,9 +64,46 @@ class PlayerCountTests(unittest.TestCase):
         for a,b in zip(shown["rallies"],exported):
             self.assertEqual(a["player_track_ids"],b["player_track_ids"])
 
+    def test_manual_merge_is_visible_in_cpu_rally_metadata(self):
+        resolved = {"players": {
+            "101": {"id": "anna", "name": "Анна", "source": "assigned"},
+            "102": {"id": "anna", "name": "Анна", "source": "manual_merge"},
+        }, "candidates": {"101": "player-anna", "102": "player-anna"}}
+        with patch("scripts.volleyball_ui.data.groups_for", return_value=[]), \
+             patch("scripts.volleyball_ui.player_identity_groups.effective_track_identities",
+                   return_value=resolved):
+            result = from_tracks(self.cache, offset=0, fps=30, duration=10,
+                                 gap_sec=0, min_sec=1, context_sec=0,
+                                 source_video="video.mp4", project_id="project")
+        first = result["rallies"][0]
+        self.assertEqual(first["linked_player_ids"], ["anna"])
+        self.assertEqual(first["linked_players"][0]["track_ids"], ["101", "102"])
+        self.assertIn("player-anna", first["candidate_group_ids"])
+        self.assertEqual(first["unlinked_track_ids"], ["103"])
+
     def test_absent_detections_are_unknown_not_zero(self):
         (self.cache/"players.json").unlink()
         self.assertEqual(player_info(self.cache,[(0,90)])[0]["player_count"],None)
+
+    def test_rally_player_rows_include_best_suggestion_and_review_status(self):
+        resolved = {"players": {"101": {"id": "anna", "name": "Анна",
+                    "source": "assigned"}}, "candidates": {}}
+        matches = {"102": {"player_id": "boris", "name": "Борис",
+                             "similarity": .89, "confirmed": False}}
+        with patch("scripts.volleyball_ui.data.groups_for", return_value=[]), \
+             patch("scripts.volleyball_ui.player_identity_groups.effective_track_identities",
+                   return_value=resolved), \
+             patch("scripts.volleyball_ui.player_identity_groups.overview",
+                   return_value={"player_matches": matches}):
+            result = from_tracks(self.cache, offset=0, fps=30, duration=10,
+                                 gap_sec=0, min_sec=1, context_sec=0,
+                                 source_video="video.mp4", project_id="project")
+        rows = result["rallies"][0]["player_rows"]
+        self.assertEqual(rows[0]["status"], "confirmed")
+        self.assertEqual(rows[1]["name"], "Борис")
+        self.assertEqual(rows[1]["similarity"], .89)
+        self.assertEqual(rows[1]["status"], "suggested")
+        self.assertEqual(rows[2]["status"], "unknown")
 
 
 if __name__=="__main__":

@@ -1230,7 +1230,7 @@ def parse_args(
     parser.add_argument(
         "--ball-threshold",
         type=float,
-        default=0.35,
+        default=0.5,
         help=(
             "порог мяча, отдельный от --score-threshold: мяч -- своя голова со своей "
             "шкалой уверенности, и порог игроков ему не подходит"
@@ -1573,7 +1573,8 @@ def main(
                 complete_by_frame[item["frame_index"]].append(dict(item))
             if (
                 item["class_name"] == "ball"
-                and float(item["score"]) < args.ball_threshold
+                and (not float(item["score"]) > 0.5
+                     or float(item["score"]) < args.ball_threshold)
             ):
                 continue
             raw_by_frame[item["frame_index"]].append(item)

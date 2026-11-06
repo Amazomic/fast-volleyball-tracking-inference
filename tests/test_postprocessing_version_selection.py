@@ -41,6 +41,8 @@ class PostprocessingSelectionTests(unittest.TestCase):
             patch.object(analysis_runs, "assert_project_video"),
             patch.object(analysis_runs.data, "source_matches_video",
                          return_value=True),
+            patch.object(analysis_runs.data, "excluded_track_ids",
+                         return_value=set()),
         ]
         for item in self.patches:
             item.start()
@@ -103,12 +105,35 @@ class PostprocessingSelectionTests(unittest.TestCase):
         with (patch("scripts.run_project_reprocess.list_runs", return_value=[base_run]),
               patch("scripts.run_project_reprocess.cache_for", return_value=self.base),
               patch("scripts.run_project_reprocess.reprocess",
-                    side_effect=completed_replay) as replay):
+                    side_effect=completed_replay) as replay,
+              patch("scripts.volleyball_ui.data.excluded_track_ids",
+                    return_value={"6"})):
             answer = process_project("test-project", base_run["id"], "combined")
         self.assertEqual(replay.call_count, 1)
+        self.assertEqual(replay.call_args.kwargs["excluded_player_ids"], {"6"})
         self.assertEqual(answer["videos"]["match.mp4"],
                          self.base_id + "." + self.version_id)
         self.assertEqual(answer["status"], "complete")
+
+    def test_each_cpu_launch_creates_distinct_dated_snapshot_with_shared_cache(self):
+        from scripts.run_project_reprocess import process_project
+        original = analysis_runs.list_runs("test-project")[0]
+        output = self.add_replay()
+        with (patch("scripts.run_project_reprocess.reprocess", return_value=output),
+              patch("scripts.run_project_reprocess.cache_for", return_value=self.base)):
+            first = process_project("test-project", original["id"], "ravel-touch")
+            second = process_project("test-project", original["id"], "ravel-touch")
+        self.assertNotEqual(first["snapshot_id"], second["snapshot_id"])
+        snapshots = [row for row in analysis_runs.list_runs("test-project")
+                     if row.get("cpu_snapshot")]
+        self.assertEqual(len(snapshots), 2)
+        self.assertEqual({row["videos"]["match.mp4"] for row in snapshots},
+                         {self.base_id + "." + self.version_id})
+        self.assertEqual({row["id"] for row in snapshots},
+                         {first["snapshot_id"], second["snapshot_id"]})
+        self.assertTrue(all(row["postprocess_settings"] ==
+                            {"mode": "ravel-touch", "touch_threshold": .5}
+                            for row in snapshots))
 
     def test_incomplete_cpu_replay_is_not_published(self):
         from scripts.run_project_reprocess import process_project

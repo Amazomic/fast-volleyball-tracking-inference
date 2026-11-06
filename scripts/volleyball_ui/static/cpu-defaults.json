@@ -1,0 +1,22 @@
+{
+  "schema": "volley-cpu-golden-defaults/1",
+  "revision": 3,
+  "established_at": "2026-11-06",
+  "policy": "Change only after a measured improvement in final output quality; document comparable before/after evidence in docs/CPU_GOLDEN_DEFAULTS.md.",
+  "settings": {
+    "mode": "combined",
+    "touch_threshold": 0.45,
+    "ball_threshold": 0.35,
+    "player_threshold": 0.3,
+    "touch_min_interval_sec": 0.35,
+    "touch_max_reach_ratio": 0.35,
+    "track_min_duration": 0.5,
+    "track_max_distance": 300,
+    "player_hold_frames": 90,
+    "player_match_distance": 0.14,
+    "track_player_threshold": 0.3,
+    "track_ball_threshold": 0.35,
+    "track_no_ball_fill": false,
+    "beach": true
+  }
+}

@@ -48,6 +48,8 @@ window.VolleyballModelTouches=(()=>{
     return "/api/analysis-model-touches?"+args;
   };
   async function fetchJson(url,controller){
+    if(window.VolleyDataCache?.supports(url))
+      return window.VolleyDataCache.get(url,{signal:controller.signal});
     const response=await fetch(url,{cache:"no-store",signal:controller.signal});
     const json=await response.json();
     if(!response.ok)throw Error(json.error||"Ошибка запроса предсказаний Touch");
@@ -88,7 +90,10 @@ window.VolleyballModelTouches=(()=>{
     if(!active()||!touchVisible||!context)return;
     const token=++epoch;
     if(pending){pending.abort();pending=null}
-    windowData=null;summary=null;
+    windowData=null;summary=null;lastFrame=-1;
+    E("result-model-touch-boxes").replaceChildren();
+    E("result-model-touch-nearby").replaceChildren();
+    E("result-model-touch-current").textContent="";
     E("result-model-touch-summary").textContent="Загружаются предсказания RAVEL-013…";
     const ctl=new AbortController();pending=ctl;
     try{

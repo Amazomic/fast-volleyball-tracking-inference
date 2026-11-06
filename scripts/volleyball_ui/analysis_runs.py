@@ -63,7 +63,8 @@ def _modify_entry(project_id: str, run_id: str,
             raise ValueError("Название должно содержать от 1 до 100 символов")
         name = name.strip()
     with _ENTRY_LOCK, _registry_write_lock():
-        match = next((row for row in list_runs(project_id) if row["id"] == run_id), None)
+        match = next((row for row in list_runs(project_id, target_run_id=run_id)
+                      if row["id"] == run_id), None)
         if match is None:
             raise ValueError("Запись анализа не найдена или уже удалена")
         is_cpu_version = bool(match.get("parent_run_id"))
@@ -146,18 +147,95 @@ def cache_for(video: str, project_id: str, cache_id: str | None = None) -> Path 
     raise ValueError("Неполный результат анализа или неверная привязка к видео")
 
 
+def publish_postprocessing_snapshot(project_id: str, parent_id: str,
+                                    settings: dict, videos: dict, *,
+                                    started_at: str | None = None,
+                                    suppress_legacy: bool = False) -> dict:
+    """Every successful launch gets a snapshot; expensive caches remain shared."""
+    if not _RUN_ID.fullmatch(parent_id):
+        raise ValueError("Invalid original analysis ID")
+    if not isinstance(settings, dict) or not isinstance(videos, dict) or not videos:
+        raise ValueError("Incomplete CPU snapshot")
+    snapshot_id = parent_id + "_pp_" + uuid.uuid4().hex
+    snapshot = {
+        "schema": "volley-cpu-snapshot/1",
+        "id": snapshot_id,
+        "parent_run_id": parent_id,
+        "started_at": started_at or datetime.now().astimezone().isoformat(),
+        "postprocess_settings": dict(settings),
+        "videos": dict(videos),
+        "suppress_legacy": bool(suppress_legacy),
+    }
+    folder = project_run_root(project_id) / "cpu_snapshots" / parent_id
+    folder.mkdir(parents=True, exist_ok=True)
+    target = folder / (snapshot_id + ".json")
+    temporary = folder / (snapshot_id + ".tmp")
+    try:
+        temporary.write_text(json.dumps(snapshot, ensure_ascii=False, indent=2),
+                             encoding="utf-8")
+        os.replace(temporary, target)
+    finally:
+        temporary.unlink(missing_ok=True)
+    return snapshot
+
+
+def _cpu_snapshots(project_id: str, run: dict) -> tuple[list[dict], set[str]]:
+    """Read only valid snapshots with complete matching results for every video."""
+    root = project_run_root(project_id) / "cpu_snapshots" / run["id"]
+    if not root.is_dir():
+        return [], set()
+    snapshots, suppressed = [], set()
+    for file in root.glob("*.json"):
+        entry = data.read_json(file, {})
+        if (not isinstance(entry, dict) or
+                entry.get("schema") != "volley-cpu-snapshot/1" or
+                entry.get("parent_run_id") != run["id"] or
+                not isinstance(entry.get("id"), str) or
+                not entry["id"].startswith(run["id"] + "_pp_") or
+                not _RUN_ID.fullmatch(entry["id"]) or
+                not isinstance(entry.get("postprocess_settings"), dict) or
+                not isinstance(entry.get("videos"), dict) or
+                set(entry["videos"]) != set(run["videos"])):
+            continue
+        if any(not isinstance(entry["videos"][video], str) or
+               not entry["videos"][video].startswith(base_id + ".")
+               for video, base_id in run["videos"].items()):
+            continue
+        try:
+            for video, cache_id in entry["videos"].items():
+                cache_for(video, project_id, cache_id)
+        except (ValueError, OSError):
+            continue
+        config = entry["postprocess_settings"]
+        snapshots.append({
+            **run, "id": entry["id"],
+            "profile": run["profile"] + " / " + str(config.get("mode", "CPU")),
+            "videos": entry["videos"],
+            "parent_run_id": run["id"],
+            "postprocess_settings": config,
+            "started_at": entry.get("started_at"),
+            "cpu_snapshot": True,
+        })
+        if entry.get("suppress_legacy"):
+            settings_json = json.dumps(config, ensure_ascii=False, sort_keys=True)
+            suppressed.add(run["id"] + "_pp_" + hashlib.sha256(
+                settings_json.encode("utf-8")).hexdigest()[:12])
+    return snapshots, suppressed
+
+
 def _postprocessing_runs(project_id: str, run: dict) -> list[dict]:
     """Present only complete, matching configurations for EVERY run video.
 
     A replay gets a different run id and cache-id pair; saved montage edits
     remain bound to their original result version.
     """
+    snapshots, suppressed = _cpu_snapshots(project_id, run)
     available = {}
     for video, base_id in run["videos"].items():
         versions = {}
         root = project_cache_root(project_id) / base_id / "postprocessing"
         if not root.is_dir():
-            return []
+            return snapshots
         for folder in root.iterdir():
             if not folder.is_dir() or not CACHE_ID.fullmatch(folder.name):
                 continue
@@ -173,13 +251,15 @@ def _postprocessing_runs(project_id: str, run: dict) -> list[dict]:
             settings = json.dumps(meta["settings"], ensure_ascii=False, sort_keys=True)
             versions[settings] = (composite, manifest_path.stat().st_mtime)
         if not versions:
-            return []
+            return snapshots
         available[video] = versions
     common = set.intersection(*(set(x) for x in available.values())) if available else set()
     results = []
     for settings_json in sorted(common):
         mappings = {video: available[video][settings_json][0] for video in run["videos"]}
         setting_hash = hashlib.sha256(settings_json.encode("utf-8")).hexdigest()[:12]
+        if run["id"] + "_pp_" + setting_hash in suppressed:
+            continue
         config = json.loads(settings_json)
         results.append({
             **run,
@@ -192,15 +272,26 @@ def _postprocessing_runs(project_id: str, run: dict) -> list[dict]:
                 max(available[video][settings_json][1] for video in available)
             ).astimezone().isoformat(),
         })
-    return results
+    return snapshots + results
 
 
-def list_runs(project_id: str) -> list[dict]:
+def list_runs(project_id: str, *, target_run_id: str | None = None) -> list[dict]:
     project = get_project(project_id)
     history = project_run_root(project_id) / "analysis_timings"
     runs = []
     if history.is_dir():
-        for file in sorted(history.glob("*.json"), reverse=True):
+        # A single rename/delete must not rediscover all GPU runs and every
+        # postprocessing directory in the project. The ID encodes its timing
+        # file; CPU versions share the primary run's timing file.
+        if target_run_id is None:
+            timing_files = sorted(history.glob("*.json"), reverse=True)
+        else:
+            original_id = target_run_id.partition("_pp_")[0]
+            if not _RUN_ID.fullmatch(original_id):
+                raise ValueError("Некорректный идентификатор запуска")
+            timing_file = history / (original_id.removeprefix("run_") + ".json")
+            timing_files = (timing_file,) if timing_file.is_file() else ()
+        for file in timing_files:
             entry = data.read_json(file, {})
             if not isinstance(entry, dict) or entry.get("status") != "complete":
                 continue
@@ -287,7 +378,9 @@ def list_runs(project_id: str) -> list[dict]:
                         temporary.unlink(missing_ok=True)
     # Each CPU replay is selectable without replacing its parent GPU result.
     for original in tuple(runs):
-        runs.extend(_postprocessing_runs(project_id, original))
+        # Direct lookup of a primary result needs no CPU-version enumeration.
+        if target_run_id is None or "_pp_" in target_run_id:
+            runs.extend(_postprocessing_runs(project_id, original))
     # Unnamed historical caches are preserved, but not offered as profiles.
     def started(item):
         try:
@@ -302,6 +395,16 @@ def list_runs(project_id: str) -> list[dict]:
     runs = [run for run in runs
             if run["id"] not in deleted and run.get("parent_run_id") not in deleted]
     for run in runs:
+        if run.get("parent_run_id"):
+            # CPU names describe the original launch time, never the profile or
+            # mutable processing settings. Preserve the timestamp's timezone;
+            # browser-local Date formatting can shift the displayed hour.
+            try:
+                run["auto_name"] = datetime.fromisoformat(
+                    run["started_at"].replace("Z", "+00:00")
+                ).strftime("%d.%m.%y %H:%M")
+            except (TypeError, ValueError, KeyError, AttributeError):
+                pass
         label = entry_meta["names"].get(run["id"])
         if isinstance(label, str) and label.strip():
             run["display_name"] = label.strip()

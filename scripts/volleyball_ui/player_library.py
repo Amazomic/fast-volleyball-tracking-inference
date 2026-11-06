@@ -67,6 +67,15 @@ def collect_existing_player_photos(player_id: str) -> dict:
     return {"copied": total, "errors": errors}
 
 
+def save_player_photos(project_id: str, video: str, player_id: str, cache_id=None) -> dict:
+    album_dir(player_id)
+    ids = [str(tid) for group in data.groups_for(video, project_id, cache_id)
+           if group["id"] == player_id for tid in group.get("track_ids", [])
+           if group.get("link_meta", {}).get(str(tid), {}).get("reviewed", True)]
+    result = sync_photos(project_id, video, ids, cache_id)
+    return {**result, "count": album_photos(player_id)["count"]}
+
+
 def sync_photos(project_id: str, video: str, track_ids: list[str], cache_id=None) -> dict:
     """Refresh photos for selected IDs based on their *current* manual labels.
 
@@ -84,6 +93,7 @@ def sync_photos(project_id: str, video: str, track_ids: list[str], cache_id=None
             str(tid): group["id"]
             for group in data.groups_for(video, project_id, cache_id)
             for tid in group.get("track_ids", [])
+            if group.get("link_meta", {}).get(str(tid), {}).get("reviewed", True)
         }
         for person in data.global_players():
             folder = album_dir(person["id"])
@@ -100,7 +110,7 @@ def sync_photos(project_id: str, video: str, track_ids: list[str], cache_id=None
                 else:
                     kept.append(row)
             if len(kept) != len(rows):
-                data.save_json(manifest, {"schema": 1, "photos": kept})
+                data.save_json(manifest, {**index, "schema": 1, "photos": kept})
         for tid in track_ids:
             player_id = current.get(tid)
             if player_id is None:
@@ -139,7 +149,7 @@ def sync_photos(project_id: str, video: str, track_ids: list[str], cache_id=None
                     copied += 1
                 except (RuntimeError, FileNotFoundError, OSError) as error:
                     errors.append(f"Track #{tid}, frame {frame}: {error}")
-            data.save_json(manifest, {"schema": 1, "photos": rows})
+            data.save_json(manifest, {**index, "schema": 1, "photos": rows})
     return {"copied": copied, "errors": errors}
 
 

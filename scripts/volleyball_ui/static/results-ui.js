@@ -9,17 +9,58 @@ window.VolleyballResultsUI=(()=>{
   };
   const v=()=>E("result-video-player");
   const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+  async function readResultJson(url,fallback="Не удалось загрузить результаты"){
+    if(window.VolleyDataCache?.supports(url))return window.VolleyDataCache.get(url);
+    const response=await fetch(url,{cache:"no-store"});
+    const body=await response.json();
+    if(!response.ok)throw Error(body.error||fallback);
+    return body;
+  }
   const clock=t=>{
-    t=Math.max(0,Math.round(t));
+    t=Math.max(0,Math.floor(t));
     return [Math.floor(t/3600),Math.floor(t%3600/60),t%60].map(x=>String(x).padStart(2,"0")).join(":");
   };
   const actionText={attack:"Атака",block:"Блок",serve:"Подача",dig:"Приём",overhead_pass:"Верхняя передача",low_touch:"Касание",unknown_touch:"Касание"};
   const typeToControl={attack:"attacks",block:"blocks",serve:"serves",dig:"digs",overhead_pass:"passes",low_touch:"touches",unknown_touch:"touches"};
-  const overlayDefaults={touches:true,attacks:true,blocks:true,serves:true,digs:true,passes:true,trajectory:false,players:false};
+  const overlayDefaults={touches:true,attacks:true,blocks:true,serves:true,digs:true,passes:true,trajectory:false,players:true};
   const overlays={...overlayDefaults};
   const rawOverlays={vballnet:true,ravelBall:true,players:true,touch:true};
-  const rawThresholds={vballnet:.5,ravelBall:.35,players:.2};
-  const rawTrail={enabled:true,seconds:2};
+  const rawThresholds={vballnet:.35,ravelBall:.35,players:.3};
+  // Golden CPU values are version-controlled and shared with automatic GPU/quick-reel replay.
+  let goldenCpuPromise=null;
+  let loadedGoldenCpu=null;
+  let forcedCpuThresholds=null;
+  function goldenCpuDefaults(){
+    if(!goldenCpuPromise)goldenCpuPromise=fetch("/cpu-defaults.json",{cache:"no-store"})
+      .then(async response=>{
+        if(!response.ok)throw Error("Не удалось получить эталон CPU");
+        const payload=await response.json();
+        if(payload.schema!=="volley-cpu-golden-defaults/1"||!payload.settings)
+          throw Error("Неизвестный формат эталона CPU");
+        loadedGoldenCpu=payload.settings;
+        return payload.settings;
+      }).catch(error=>{goldenCpuPromise=null;throw error;});
+    return goldenCpuPromise;
+  }
+  function applyCpuSettings(settings){
+    for(const [id,key] of [
+      ["result-reprocess-mode","mode"],
+      ["result-reprocess-touch-threshold","touch_threshold"],
+      ["result-touch-min-interval","touch_min_interval_sec"],
+      ["result-touch-max-reach","touch_max_reach_ratio"],
+      ["result-track-min-duration","track_min_duration"],
+      ["result-track-max-distance","track_max_distance"],
+      ["result-player-hold-frames","player_hold_frames"],
+      ["result-player-match-distance","player_match_distance"],
+      ["result-track-player-threshold","track_player_threshold"],
+      ["result-track-ball-threshold","track_ball_threshold"]]){
+      if(settings[key]!=null)E(id).value=String(settings[key]);
+    }
+    E("result-track-no-ball-fill").checked=settings.track_no_ball_fill===true;
+    E("result-track-beach").checked=settings.beach===true;
+    syncReprocessControls();
+  }
+  const rawTrail={seconds:2};
   let rawFilterTimer=null;
   // Raw GPU predictions are mutually exclusive by model; never combine sources.
   let rawSource="vballnet";
@@ -59,6 +100,7 @@ window.VolleyballResultsUI=(()=>{
     const raw=inRawMode();
     const rawControls=E("result-raw-controls");
     if(rawControls)rawControls.hidden=!raw;
+    E("result-raw-source-switch").hidden=!raw;
     for(const input of document.querySelectorAll('[name="result-raw-source"]'))
       input.checked=input.value===rawSource;
     for(const group of document.querySelectorAll("[data-result-raw-group]"))
@@ -77,6 +119,7 @@ window.VolleyballResultsUI=(()=>{
       const box=document.querySelector('[data-result-raw="'+key+'"]');
       if(box)box.checked=rawOverlays[key];
     }
+    E("result-raw-trail-seconds").disabled=!rawOverlays[rawSource==="vballnet"?"vballnet":"ravelBall"];
     modelTouches.setTouchVisible?.(raw&&rawEnabled("touch"));
     resetRawWindows();
     syncRawFilterStatus();
@@ -128,7 +171,8 @@ window.VolleyballResultsUI=(()=>{
     if(!showingPlayers()||playerUnavailable||!project||!source||!data)return;
     if(playerWindow&&seconds>=playerWindow.start&&seconds<playerWindow.end-1)return;
     const start=Math.max(0,Math.floor(seconds/5)*5);
-    const key=project+"|"+source+"|"+start+"|"+playerThreshold+"|"+inRawMode();
+    const key=project+"|"+source+"|"+start+"|"+
+      (inRawMode()?rawThresholds.players:playerThreshold)+"|"+inRawMode();
     if(playerRequesting&&playerRequestKey===key)return;
     if(playerRequesting)return;
     playerRequesting=true;playerRequestKey=key;
@@ -136,20 +180,19 @@ window.VolleyballResultsUI=(()=>{
     const q=new URLSearchParams({project_id:project,video:source,
       cache_id:inRawMode()?rawCacheId():(selectedCaches[source]||""),
       start:String(start),length:"6"});
-    if(!inRawMode()&&playerThreshold!==null)
+    if(inRawMode())q.set("threshold",String(rawThresholds.players));
+    else if(playerThreshold!==null)
       q.set("threshold",String(playerThreshold));
     try{
-      const result=await fetch("/api/analysis-player-boxes?"+q,
-        {cache:"no-store"}).then(async r=>{
-          const body=await r.json();
-          if(!r.ok)throw Error(body.error||"Не удалось загрузить рамки");
-          return body;
-        });
+      const result=await readResultJson("/api/analysis-player-boxes?"+q,
+        "Не удалось загрузить рамки");
       if(epoch!==playerEpoch||!showingPlayers()||!data)return;
       if(!result.available){playerUnavailable=true;return;}
       playerWindow={start,end:start+6,fps:Number(result.fps)||30,
         width:Number(result.width),height:Number(result.height),
-        frames:new Map(result.frames||[])};
+        frames:new Map(result.frames||[]),
+        labels:result.player_labels||{},
+        groups:result.candidate_groups||{}};
       lastPlayerFrame=-1;
       updateOverlay();
     }catch(e){
@@ -197,10 +240,20 @@ window.VolleyballResultsUI=(()=>{
       box.style.height=(100*(y2-y1)/height)+"%";
       const tag=document.createElement("span");
       tag.className="result-player-box-tag";
-      tag.textContent=id<0?"Кандидат · "+Math.round(score*100)+"%":"ID "+Math.floor(id)+" · "+Math.round(score*100)+"%";
+      const identity=id>=0?win.labels[String(Math.floor(id))]:null;
+      const candidate=id>=0?win.groups[String(Math.floor(id))]:null;
+      tag.textContent=identity
+        ?identity.name+(identity.source==="reid_auto"?" (авто)":"")+" · #"+Math.floor(id)
+        :id<0?"Кандидат · "+Math.round(score*100)+"%"
+          :"ID "+Math.floor(id)+" · "+Math.round(score*100)+"%";
       tag.title=id<0
         ?"RAVEL · сырая рамка без подтверждённого Track ID"
-        :"RAVEL · исходный track ID "+Math.floor(id)+" · "+Math.round(score*100)+"%";
+        :"RAVEL · Track ID "+Math.floor(id)+
+          (identity?" · игрок: "+identity.name+
+            (identity.source==="manual_merge"?" (ручное объединение)":
+              identity.source==="reid_auto"?" (автопривязка не проверена)":""):"")+
+          (candidate&&!identity?" · группа: "+candidate:"")+
+          " · "+Math.round(score*100)+"%";
       box.append(tag);children.push(box);
     }
     panel.replaceChildren(...children);
@@ -246,7 +299,7 @@ window.VolleyballResultsUI=(()=>{
   function drawRawBallTrail(kind,win,time,geometry,points){
     const svg=E("result-raw-ball-trail");
     svg.setAttribute("hidden","");
-    if(!rawTrail.enabled||!rawEnabled(kind)||!win?.available||!geometry)return;
+    if(!rawEnabled(kind)||!win?.available||!geometry)return;
     const fps=Number(win.fps)||30,currentFrame=Math.round(time*fps);
     const first=currentFrame-Math.round(rawTrail.seconds*fps);
     const width=Number(win.width)||geometry.sourceW;
@@ -290,17 +343,15 @@ window.VolleyballResultsUI=(()=>{
       query.set("scores","1");
     }
     try{
-      let response=await fetch(endpoint+"?"+query,{cache:"no-store"});
-      let result=await response.json();
-      if(!response.ok)throw Error(result.error||"Не удалось прочитать обнаружения мяча");
+      let result=await readResultJson(endpoint+"?"+query,
+        "Не удалось прочитать обнаружения мяча");
       if(kind==="vballnet"&&!result.available&&result.reason==="no_raw_candidates"){
         // Legacy runs still show the original saved points, but cannot
         // claim that a confidence filter was applied.
         query.delete("threshold");
         query.delete("scores");
-        response=await fetch(endpoint+"?"+query,{cache:"no-store"});
-        result=await response.json();
-        if(!response.ok)throw Error(result.error||"Не удалось прочитать обнаружения мяча");
+        result=await readResultJson(endpoint+"?"+query,
+          "Не удалось прочитать обнаружения мяча");
         result.supports_threshold=false;
       }
       if(epoch!==rawEpoch||!inRawMode()||!rawEnabled(kind))return;
@@ -480,6 +531,14 @@ window.VolleyballResultsUI=(()=>{
     }catch{}
     playerThreshold=available&&saved!==null&&Number.isFinite(saved)
       &&saved>=floor&&saved<=.95?saved:null;
+    const rawField=E("result-raw-player-threshold");
+    if(rawField){
+      rawField.min=String(floor);
+      if(rawThresholds.players<floor)rawThresholds.players=floor;
+      rawField.value=String(rawThresholds.players);
+      E("result-raw-player-value").textContent=
+        Math.round(rawThresholds.players*100)+"%";
+    }
     const field=E("result-player-threshold");
     field.min=String(floor);
     field.disabled=!available;
@@ -604,9 +663,8 @@ window.VolleyballResultsUI=(()=>{
       cache_id:selectedCaches[source]||"",start:String(start),length:"10"});
     if(ballThreshold!==null)params.set("threshold",String(ballThreshold));
     try{
-      const response=await fetch("/api/analysis-trajectory?"+params,{cache:"no-store"});
-      if(!response.ok)throw Error("Trajectory HTTP "+response.status);
-      const result=await response.json();
+      const result=await readResultJson("/api/analysis-trajectory?"+params,
+        "Не удалось прочитать траекторию");
       if(epoch!==trailEpoch||!overlays.trajectory||!data)return;
       if(!result.available){
         trailUnavailable=true;trailWindow=null;
@@ -804,10 +862,8 @@ window.VolleyballResultsUI=(()=>{
     rallyStatus("Перестраиваем границы розыгрышей по сохранённым трекам CPU…");
     const query=new URLSearchParams({project_id:pid,video,cache_id:cache,...cfg});
     try{
-      const response=await fetch("/api/analysis-rallies?"+query,
-        {cache:"no-store"});
-      const result=await response.json();
-      if(!response.ok)throw Error(result.error||"Не удалось пересчитать границы");
+      const result=await readResultJson("/api/analysis-rallies?"+query,
+        "Не удалось пересчитать границы");
       if(epoch!==rallyRefreshEpoch||loaded!==loadId||pid!==project||
          video!==source||cache!==selectedCaches[source])return;
       if(!result.analyzed)throw Error("Для выбранной версии нет событий CPU");
@@ -966,6 +1022,7 @@ window.VolleyballResultsUI=(()=>{
     E("result-timeline-ticks").innerHTML="";
     E("result-rally-count").textContent="0";
     E("result-current-time").textContent="00:00:00";
+    syncPlayerControls();
     E("result-rally-summary").textContent="";
     E("result-overlay-ball").hidden=true;
     E("result-overlay-event").hidden=true;
@@ -986,6 +1043,17 @@ window.VolleyballResultsUI=(()=>{
     E("result-rally-list").innerHTML='<div class="empty" role="status">Данные загружаются…</div>';
     E("result-rally-count").textContent="…";
     E("result-rally-summary").textContent="Данные загружаются…";
+  }
+  function rallyPlayersHtml(r){
+    return (r.player_rows||[]).map(player=>{
+      const params=new URLSearchParams({video:source,id:String(player.track_id),project_id:project});
+      if(rawCacheId())params.set("cache_id",rawCacheId());
+      const similarity=Number.isFinite(player.similarity)?" · "+(100*player.similarity).toFixed(1)+"%":"";
+      const status={automatic:"авто",confirmed:"подтверждён",suggested:"подтвердить",unknown:"выбрать вручную"}[player.status]||"";
+      return '<span class="result-rally-person"><img loading="lazy" src="/api/player-photo?'+esc(params.toString())+
+        '" alt="Игрок ID '+esc(player.track_id)+'"><span><b>ID '+esc(player.track_id)+
+        '</b><small>'+esc((player.name||"Не привязан")+similarity+" · "+status)+'</small></span></span>';
+    }).join("");
   }
   function renderList(){
     if(!data)return;
@@ -1024,7 +1092,7 @@ window.VolleyballResultsUI=(()=>{
         ' · игроков в кадре '+(r.player_count==null?'—':Number(r.player_count))+
         ((r.linked_players||[]).length?' · привязаны: '+
           esc(r.linked_players.map(p=>p.name).join(', ')):'')+evidence+joined+
-        '</small></span>'+
+        '</small>'+rallyPlayersHtml(r)+'</span>'+
         '<span class="result-rally-play">▶</span></button>'+
         (r.rally_id?'<label class="result-rally-montage" title="Добавить этот розыгрыш в ручной монтаж">'+
         '<input type="checkbox" data-montage-rally="'+esc(r.rally_id)+'"'+
@@ -1082,6 +1150,12 @@ window.VolleyballResultsUI=(()=>{
     selectedCaches={...(map||{})};
     montageRunId=runId;
     selectedPostprocessSettings=settings&&typeof settings==="object"?settings:null;
+    forcedCpuThresholds=null;
+    const context=selectionFingerprint;
+    goldenCpuDefaults().then(defaults=>{
+      if(selectionFingerprint===context)
+        applyCpuSettings({...defaults,...(selectedPostprocessSettings||{})});
+    }).catch(error=>console.warn("Эталон CPU:",error));
     const replayMode=E("result-reprocess-mode");
     if(replayMode)replayMode.value=selectedPostprocessSettings?.mode||"combined";
     const replayTouch=E("result-reprocess-touch-threshold");
@@ -1093,6 +1167,8 @@ window.VolleyballResultsUI=(()=>{
     for(const [id,key,value] of [
       ["result-track-min-duration","track_min_duration",.5],
       ["result-track-max-distance","track_max_distance",200],
+      ["result-player-hold-frames","player_hold_frames",90],
+      ["result-player-match-distance","player_match_distance",.14],
       ["result-track-player-threshold","track_player_threshold",.30],
       ["result-track-ball-threshold","track_ball_threshold",.35],
     ]){
@@ -1100,7 +1176,7 @@ window.VolleyballResultsUI=(()=>{
     }
     E("result-track-no-ball-fill").checked=Boolean(
       selectedPostprocessSettings?.track_no_ball_fill);
-    E("result-track-beach").checked=Boolean(selectedPostprocessSettings?.beach);
+    E("result-track-beach").checked=Boolean(selectedPostprocessSettings?.beach??true);
     syncReprocessControls();
     invalidateTrail();
     resetPlayerBoxes();
@@ -1153,9 +1229,8 @@ window.VolleyballResultsUI=(()=>{
       const params=new URLSearchParams({project_id:project,video:name,
         cache_id:selectedCaches[name],...rallyConfig()});
       const query="?"+params.toString();
-      const resp=await fetch("/api/analysis-view"+query,{cache:"no-store"});
-      const result=await resp.json();
-      if(!resp.ok)throw Error(result.error||"Не удалось загрузить анализ");
+      const result=await readResultJson("/api/analysis-view"+query,
+        "Не удалось загрузить анализ");
       if(seq!==loadId)return;
       // Read the selected profile's immutable cache. A different profile
       // may be running at the same time; global job status must never hide it.
@@ -1313,7 +1388,27 @@ window.VolleyballResultsUI=(()=>{
     }
     return closest;
   }
+  function syncPlayerControls(){
+    const player=v(),time=sourceTime(player.currentTime||0);
+    const seek=E("result-player-seek");
+    if(!seek)return;
+    seek.min=String(offset);
+    seek.max=String(offset+totalDuration);
+    seek.value=String(time);
+    seek.disabled=!data||totalDuration<=0;
+    seek.setAttribute("aria-valuetext",clock(time));
+    E("result-player-time").textContent=clock(time);
+    E("result-current-time").textContent=clock(time);
+    E("result-player-end").textContent=clock(offset+totalDuration);
+    const toggle=E("result-player-toggle");
+    toggle.textContent=player.paused?"▶":"Ⅱ";
+    toggle.disabled=!data;
+    toggle.setAttribute("aria-label",player.paused?"Воспроизвести":"Пауза");
+    E("result-player-mute").textContent=player.muted?"Без звука":"Звук";
+    E("result-player-mute").setAttribute("aria-label",player.muted?"Включить звук":"Выключить звук");
+  }
   function updateOverlay(){
+    syncPlayerControls();
     if(!data||!E("view-analysis-results").classList.contains("active"))return;
     const player=v(),elapsed=player.currentTime||0,t=sourceTime(elapsed);
     const marker=E("result-track-playhead");
@@ -1373,6 +1468,35 @@ window.VolleyballResultsUI=(()=>{
     }
   }
   function init(){
+    E("result-player-toggle")?.addEventListener("click",()=>{
+      const player=v();
+      if(player.paused){const promise=player.play();if(promise?.catch)promise.catch(()=>{});}
+      else player.pause();
+      syncPlayerControls();
+    });
+    E("result-player-seek")?.addEventListener("input",event=>{
+      if(!data)return;
+      const time=Number(event.target.value);
+      if(!Number.isFinite(time))return;
+      segment=null;
+      syncRallySelection();
+      E("result-overlay-rally").hidden=true;
+      v().currentTime=Math.min(totalDuration,mediaTime(time));
+      updateOverlay();
+    });
+    E("result-player-mute")?.addEventListener("click",()=>{
+      v().muted=!v().muted;syncPlayerControls();
+    });
+    E("result-player-speed")?.addEventListener("change",event=>{
+      v().playbackRate=Number(event.target.value);
+    });
+    E("result-player-fullscreen")?.addEventListener("click",()=>{
+      const promise=document.fullscreenElement?document.exitFullscreen():
+        v().closest(".result-player-wrap")?.requestFullscreen?.();
+      if(promise?.catch)promise.catch(()=>{});
+    });
+    for(const event of ["play","pause","ended","volumechange","loadedmetadata"])
+      v().addEventListener(event,syncPlayerControls);
     restoreRallySort();
     restorePlaybackMode();
     E("result-playback-mode").addEventListener("click",cyclePlaybackMode);
@@ -1392,7 +1516,7 @@ window.VolleyballResultsUI=(()=>{
         rawThresholds[kind]=Number(input.value);
         output.textContent=Math.round(rawThresholds[kind]*100)+"%";
         if(kind==="players"){
-          lastPlayerFrame=-1;
+          resetPlayerBoxes(); // Different raw threshold needs a fresh server window.
           updateOverlay();
         }else{
           resetRawWindows();
@@ -1410,10 +1534,6 @@ window.VolleyballResultsUI=(()=>{
         change();
       });
     }
-    E("result-raw-trail").addEventListener("change",e=>{
-      rawTrail.enabled=e.target.checked;
-      updateOverlay();
-    });
     E("result-raw-trail-seconds").addEventListener("change",e=>{
       rawTrail.seconds=Number(e.target.value)||2;
       updateOverlay();
@@ -1435,7 +1555,10 @@ window.VolleyballResultsUI=(()=>{
         rawOverlays[key]=input.checked;
         if(key==="touch")modelTouches.setTouchVisible?.(rawEnabled("touch")&&inRawMode());
         if(key==="players")resetPlayerBoxes();
-        if(key==="vballnet"||key==="ravelBall")resetRawWindows();
+        if(key==="vballnet"||key==="ravelBall"){
+          resetRawWindows();
+          E("result-raw-trail-seconds").disabled=!rawOverlays[key];
+        }
         updateOverlay();
       });
     }
@@ -1452,21 +1575,46 @@ window.VolleyballResultsUI=(()=>{
     });
     restoreOverlays();
     E("result-ball-threshold").addEventListener("input",e=>{
+      forcedCpuThresholds=null;
       const value=e.target.value;
       E("result-ball-threshold-value").textContent=Math.round(Number(value)*100)+"%";
       if(ballThresholdTimer!==null)clearTimeout(ballThresholdTimer);
       ballThresholdTimer=setTimeout(()=>setBallThreshold(value),180);
     });
     E("result-ball-threshold").addEventListener("change",e=>setBallThreshold(e.target.value));
-    E("result-ball-threshold-reset").addEventListener("click",()=>setBallThreshold(null));
+    E("result-ball-threshold-reset").addEventListener("click",()=>{
+      forcedCpuThresholds=null;setBallThreshold(null);
+    });
     E("result-player-threshold").addEventListener("input",e=>{
+      forcedCpuThresholds=null;
       const value=e.target.value;
       E("result-player-threshold-value").textContent=Math.round(Number(value)*100)+"%";
       if(playerThresholdTimer!==null)clearTimeout(playerThresholdTimer);
       playerThresholdTimer=setTimeout(()=>setPlayerThreshold(value),180);
     });
     E("result-player-threshold").addEventListener("change",e=>setPlayerThreshold(e.target.value));
-    E("result-player-threshold-reset").addEventListener("click",()=>setPlayerThreshold(null));
+    E("result-player-threshold-reset").addEventListener("click",()=>{
+      forcedCpuThresholds=null;setPlayerThreshold(null);
+    });
+    E("result-reprocess-reset").addEventListener("click",async()=>{
+      const button=E("result-reprocess-reset");
+      button.disabled=true;
+      try{
+        const defaults=await goldenCpuDefaults();
+        applyCpuSettings(defaults);
+        if(data?.ball_detection?.available)setBallThreshold(defaults.ball_threshold);
+        if(data?.player_detection?.available)setPlayerThreshold(defaults.player_threshold);
+        // An explicit reset must ignore the selected CPU version's old thresholds.
+        forcedCpuThresholds={
+          ball_threshold:defaults.ball_threshold,
+          player_threshold:defaults.player_threshold
+        };
+        E("result-reprocess-status").textContent=
+          "Золотые настройки восстановлены. Для новой CPU-версии нажмите «Пересчитать проект».";
+      }catch(error){
+        E("result-reprocess-status").textContent=error.message;
+      }finally{button.disabled=false;}
+    });
     E("result-reprocess-mode").addEventListener("change",syncReprocessControls);
     E("result-reprocess-touch-threshold").addEventListener("input",syncReprocessControls);
     E("result-touch-min-interval").addEventListener("change",syncReprocessControls);
@@ -1481,6 +1629,8 @@ window.VolleyballResultsUI=(()=>{
       const track={
         track_min_duration:Number(E("result-track-min-duration").value),
         track_max_distance:Number(E("result-track-max-distance").value),
+        player_hold_frames:Number(E("result-player-hold-frames").value),
+        player_match_distance:Number(E("result-player-match-distance").value),
         track_player_threshold:Number(E("result-track-player-threshold").value),
         track_ball_threshold:Number(E("result-track-ball-threshold").value),
         track_no_ball_fill:E("result-track-no-ball-fill").checked,
@@ -1489,10 +1639,13 @@ window.VolleyballResultsUI=(()=>{
       const bounds=[
         [track.track_min_duration,.05,30],
         [track.track_max_distance,1,2000],
+        [track.player_hold_frames,0,180],
+        [track.player_match_distance,.02,.30],
         [track.track_player_threshold,0,1],
         [track.track_ball_threshold,0,1],
       ];
-      if(bounds.some(([value,lo,hi])=>!Number.isFinite(value)||value<lo||value>hi)){
+      if(!Number.isInteger(track.player_hold_frames)||
+         bounds.some(([value,lo,hi])=>!Number.isFinite(value)||value<lo||value>hi)){
         E("result-reprocess-status").textContent="Проверьте диапазоны параметров трекинга CPU.";
         E("result-cpu-tracking").open=true;
         return;
@@ -1510,10 +1663,15 @@ window.VolleyballResultsUI=(()=>{
         project_id:project,run_id:montageRunId,mode,touch_threshold:touch,
         touch_min_interval_sec:touchGap,touch_max_reach_ratio:touchReach,
         ...track,
-        ball_threshold:["baseline","combined"].includes(mode)
-          ?(ballThreshold??(["baseline","combined"].includes(selectedPostprocessSettings?.mode)
-             ?selectedPostprocessSettings?.ball_threshold:null)??null):null,
-        player_threshold:playerThreshold??selectedPostprocessSettings?.player_threshold??null
+        ball_threshold:forcedCpuThresholds
+          ?forcedCpuThresholds.ball_threshold
+          :(["baseline","combined"].includes(mode)
+            ?(ballThreshold??(["baseline","combined"].includes(selectedPostprocessSettings?.mode)
+               ?selectedPostprocessSettings?.ball_threshold:null)??null):null),
+        player_threshold:forcedCpuThresholds
+          ?forcedCpuThresholds.player_threshold
+          :playerThreshold??selectedPostprocessSettings?.player_threshold
+            ??(data?.player_detection?.available?loadedGoldenCpu?.player_threshold:null)??null
       }}));
     });
     for(const control of document.querySelectorAll("[data-result-overlay]")){
@@ -1562,6 +1720,12 @@ window.VolleyballResultsUI=(()=>{
       if(data)E("result-video-placeholder").hidden=true;
     });
     window.addEventListener("resize",fitResultVideo);
+    window.addEventListener("volley:player-identities-change",event=>{
+      const detail=event.detail||{};
+      if(detail.project_id!==project||detail.video!==source)return;
+      resetPlayerBoxes();
+      if(showingPlayers()&&data)requestPlayerBoxes(v()?.currentTime||0);
+    });
     if(typeof ResizeObserver!=="undefined"){
       const observer=new ResizeObserver(()=>{if(data)updateOverlay()});
       observer.observe(v());

@@ -47,13 +47,13 @@ window.VolleyballAnalysisPresets=(()=>{
         player_identity_mode:"amateur",
         player_reid_threshold_percent:88,
         player_auto_assign:true,
-        player_auto_assign_threshold_percent:97,
+        player_auto_assign_threshold_percent:90,
         player_session_gap_sec:120
       }
     },
     amateur:{
       name:"Любительский матч · ReID",
-      description:"RAVEL-013 + VballNetV4c, сохранение игроков между розыгрышами и ReID с автоматической привязкой при сходстве от 97%.",
+      description:"RAVEL-013 + VballNetV4c, сохранение игроков между розыгрышами и ReID с автоматической привязкой при сходстве выше 90%.",
       tradeoff:"Более чувствительная детекция может добавить ложные рамки; CPU ReID дополнительно обрабатывает снимки игроков. Привязки без уверенного совпадения остаются ручными.",
       values:{
         ball_model:"VballNetV4c_seq9_grayscale_20260908_213829.onnx",
@@ -71,7 +71,7 @@ window.VolleyballAnalysisPresets=(()=>{
         player_identity_mode:"amateur",
         player_reid_threshold_percent:88,
         player_auto_assign:true,
-        player_auto_assign_threshold_percent:97,
+        player_auto_assign_threshold_percent:90,
         player_session_gap_sec:120
       }
     }

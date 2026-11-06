@@ -35,10 +35,16 @@ assert(model.initialLabel(a2,"match.mp4").includes("00:01:35"));
 assert(!model.initialLabel(a1,"match.mp4").includes("00:01:35"));
 assert(model.initialLabel(a1,"match.mp4").includes("кэш aa"));
 assert(model.initialLabel(a1,"other.mp4").includes("кэш bb"));
-assert(model.versionLabel(v1).includes("мяч 60%"));
-assert(model.versionLabel(v1).includes("игроки 40%"));
-assert(model.versionLabel(v1).includes("Touch 75%"));
-assert(!model.versionLabel(v2).includes("Touch"));
+assert.match(model.versionLabel(v1),/^\d{2}\.\d{2}\.\d{2} \d{2}:\d{2}$/);
+assert(!model.versionLabel(v1).includes("Touch"));
+assert.equal(model.versionLabel({...v1,started_at:"2026-12-24T22:14:00"}),
+  "24.12.26 22:14");
+assert.equal(model.versionLabel({...v1,started_at:"2026-12-24T22:14:00+03:00"}),
+  "24.12.26 22:14");
+assert.equal(model.versionLabel({...v1,auto_name:"24.12.26 22:14"}),
+  "24.12.26 22:14");
+assert.equal(model.versionLabel({...v1,started_at:null}),"Время обработки не записано");
+assert.equal(model.versionLabel({...v1,display_name:"Manual label"}),"Manual label");
 assert.equal(model.versionLabel(a1),"Старый полный анализ · треки, касания и розыгрыши");
 assert.equal(model.versionLabel({...a1,inference_only:true}),
   "Первичный инференс нейросетей · CPU ещё не выполнен");
@@ -50,8 +56,8 @@ for(const id of ["chain-project","chain-inference","chain-postprocess"]){
   assert(app.includes('"#'+id+'"'),"header change handler for "+id);
 }
 assert(!html.includes('id="chain-video"'));
-assert(html.includes('src="/header-chain.js?v=5"'));
-assert(html.includes('src="/header-chain-menu.js?v=3"'));
+assert(html.includes('src="/header-chain.js?v=7"'));
+assert(html.includes('src="/header-chain-menu.js?v=4"'));
 assert(!html.includes('id="project-settings-trigger"'));
 assert(html.includes('id="header-entry-action-dialog"'));
 assert.equal(model.parseChoiceId(model.choiceId("video | clip.mp4","run3")).video,"video | clip.mp4");

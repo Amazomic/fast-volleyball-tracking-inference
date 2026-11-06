@@ -360,6 +360,53 @@ def _legacy_cpu_links(stored: dict, base_key: str) -> list:
             for person,ids in by_person.items() if ids]
 
 
+def excluded_track_ids(name: str, project_id=None, cache_id=None) -> set[str]:
+    """Project/inference-scoped exclusions; raw GPU predictions stay immutable."""
+    if not project_id or not cache_id:
+        return set()
+    stored = _identities(project_id)
+    ids = stored.get("excluded_ids", {}).get(_identity_storage_key(name, cache_id), [])
+    return {str(tid) for tid in ids if str(tid).isascii() and str(tid).isdecimal()}
+
+
+def exclude_tracks(name: str, ids: list, project_id: str, cache_id: str) -> list:
+    from .analysis_runs import cache_for
+    from .projects import assert_project_video
+    from .player_tracks import tracks_for
+    assert_project_video(project_id, name)
+    cache_for(name, project_id, cache_id)
+    if not isinstance(ids, list) or not 1 <= len(ids) <= 200:
+        raise ValueError("Выберите от 1 до 200 Track ID")
+    ids = list(dict.fromkeys(map(str, ids)))
+    if any(not tid.isascii() or not tid.isdecimal() or len(tid) > 12 for tid in ids):
+        raise ValueError("Некорректный Track ID")
+    known = set(tracks_for(name, project_id, cache_id, selected_version=True)["tracks"])
+    known.update(tracks_for(name, project_id, cache_id)["tracks"])
+    if not set(ids) <= known:
+        raise ValueError("Track ID отсутствует в выбранном анализе")
+    with _LOCK:
+        record = _identities(project_id)
+        key = _identity_storage_key(name, cache_id)
+        if key not in record["videos"]:
+            record["videos"][key] = [
+                {**g, "track_ids": list(g["track_ids"]),
+                 "link_meta": dict(g.get("link_meta") or {})}
+                for g in groups_for(name, project_id, cache_id)]
+        excluded = record.setdefault("excluded_ids", {})
+        excluded[key] = sorted(set(excluded.get(key, [])) | set(ids), key=int)
+        rejected = record.setdefault("auto_rejected", {})
+        rejected[key] = sorted(set(rejected.get(key, [])) | set(ids), key=int)
+        for group in record["videos"][key]:
+            group["track_ids"] = [tid for tid in group["track_ids"] if str(tid) not in ids]
+            if isinstance(group.get("link_meta"), dict):
+                for tid in ids:
+                    group["link_meta"].pop(tid, None)
+        record["videos"][key] = [g for g in record["videos"][key] if g["track_ids"]]
+        record["schema"] = 2
+        save_json(identity_file(project_id), record)
+        return excluded[key]
+
+
 def groups_for(name: str, project_id=None, cache_id=None) -> list:
     stored = _identities(project_id)["videos"]
     canonical = _identity_storage_key(name, cache_id)
@@ -405,6 +452,8 @@ def assign(name: str, track_ids: list, display_name: str | None = None,
     if any(not x.isdigit() or len(x) > 12 for x in ids):
         raise ValueError("ID игрока должен быть числом")
     with _LOCK:
+        if set(ids) & excluded_track_ids(name, project_id, cache_id):
+            raise ValueError("Исключённые Track ID нельзя привязать повторно")
         catalog = global_players()
         if player_id:
             player = next((p for p in catalog if p["id"] == player_id), None)
@@ -527,13 +576,17 @@ def report(name: str, project_id=None, cache_id: str | None = None) -> dict:
     events = info.get("events", [])
     if not isinstance(events, list):
         events = []
-    counts = Counter(e.get("type") for e in events if isinstance(e, dict))
+    excluded = excluded_track_ids(name, project_id, cache_id or cache.name)
+    events = [event for event in events if isinstance(event, dict)
+              and str(event.get("player_track_id")) not in excluded]
+    counts = Counter(e.get("type") for e in events)
     raw = _raw_stats(name, cache, events, project_id)
     # The action-only table omitted most real tracklets. Include EVERY
     # RAVEL track with an observed duration so UI can prioritize stable IDs.
     from .player_tracks import tracks_for
     track_data = tracks_for(name, project_id, cache_id, selected_version=True)
     replay_filtered = (cache / "players.replay.json").is_file()
+    raw = [row for row in raw if str(row["player_track_id"]) not in excluded]
     # Results use the chosen CPU version's player detections; reference links
     # and GPU Track IDs remain intact in the inference cache.
     if replay_filtered:
@@ -543,30 +596,55 @@ def report(name: str, project_id=None, cache_id: str | None = None) -> dict:
                           if replay_filtered else len(track_data["tracks"]))
     counted = {str(t["player_track_id"]):dict(t) for t in raw}
     for tid, stats in track_data["tracks"].items():
+        if str(tid) in excluded:
+            continue
         existing = counted.setdefault(tid, {"player_track_id":tid,"total_actions":0})
         existing.update(stats)
     continuity = read_json(cache / "player-continuity.json", {})
     candidates = continuity.get("track_to_candidate", {}) if isinstance(continuity,dict) else {}
     if not isinstance(candidates,dict):
         candidates = {}
+    # Project identity edits are cheap interpretations of immutable inference.
+    # Apply confirmed assignments and user merges to every selected CPU version.
+    resolved = {"candidates": {}, "players": {}}
+    if project_id:
+        from .player_identity_groups import effective_track_identities
+        try:
+            resolved = effective_track_identities(project_id, name, cache_id or cache.name)
+        except (FileNotFoundError, ValueError):
+            # Old or detached analyses may have no project-scoped ReID file.
+            pass
+    owners = {tid: person for tid, person in resolved["players"].items()
+              if tid not in excluded}
     for tid, item in counted.items():
-        item["candidate_group_id"] = candidates.get(tid, "candidate-"+tid)
-        item["candidate_confirmed"] = False
+        item["candidate_group_id"] = resolved["candidates"].get(
+            tid, candidates.get(tid, "candidate-"+tid))
+        item["candidate_confirmed"] = (tid in owners and
+                                      owners[tid]["source"] != "reid_auto")
+        if tid in owners:
+            item["player_name"] = owners[tid]["name"]
+            item["player_id"] = owners[tid]["id"]
     raw = sorted(counted.values(), key=lambda x:(
         -int(x.get("detected_frames") or 0),
         -int(x.get("total_actions") or 0),int(x["player_track_id"])))
-    identities = groups_for(name, project_id, neural_cache_id(cache_id))
+    identities = groups_for(name, project_id, neural_cache_id(cache_id or cache.name))
     ids_to_stat = {str(x["player_track_id"]): x for x in raw}
     named = []
     assigned = set()
     for g in identities:
+        # A manually merged ID inherits a confirmed owner only when no
+        # conflicting owner exists in that explicitly merged cluster.
+        track_ids = sorted((set(map(str, g["track_ids"])) | {
+            tid for tid, owner in owners.items() if owner["id"] == g["id"]
+        }) - excluded, key=int)
         sums = Counter()
-        for tid in g["track_ids"]:
+        for tid in track_ids:
             assigned.add(tid)
             item = ids_to_stat.get(tid, {})
             for action in ACTIONS:
                 sums[action] += int(item.get(action) or 0)
-        named.append({"id": g["id"], "name": g["name"], "track_ids": g["track_ids"],
+        named.append({"id": g["id"], "name": g["name"], "track_ids": track_ids,
+                      "link_meta": g.get("link_meta", {}),
                       "actions": dict(sums), "total_actions": sum(sums.values())})
     named.sort(key=lambda p: (-p["total_actions"], p["name"]))
     return {
@@ -578,6 +656,7 @@ def report(name: str, project_id=None, cache_id: str | None = None) -> dict:
         "rallies": counts.get("rally_start", 0),  # heuristic track fragments
         "track_count": len(raw), "source_track_count": source_track_count,
         "replay_filtered_tracks": replay_filtered, "groups": named, "raw": raw,
+        "excluded_track_ids": sorted(excluded, key=int),
         "candidate_groups_count": len({row["candidate_group_id"] for row in raw}),
         "candidate_links_count": len(continuity.get("proposed_links", []))
             if isinstance(continuity,dict) else 0,

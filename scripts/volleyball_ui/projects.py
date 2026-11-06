@@ -329,17 +329,20 @@ def project_summary(identifier: str) -> dict:
 
 
 def project_report(identifier: str, run_id: str | None = None) -> dict:
-    """Aggregate event counts across the included source videos.
-
-    Track IDs are video-scoped and are never treated as shared identities.
-    Named players are merged only by user-supplied display name.
-    """
     from collections import Counter
+    from .report_statistics import apply_activity, video_statistics, RECOGNIZED_ACTIONS
+    from .player_library import album_photos
     p = get_project(identifier)
     totals = Counter()
     rallies = 0
     ids = 0
-    participants = {}
+    total_touches = unassigned_touches = 0
+    participants = {
+        player["id"]: {"id": player["id"], "name": player["name"],
+                       "touches": 0, "recognized_touches": 0, "total_actions": 0,
+                       "track_ids": [], "actions": Counter()}
+        for player in data.players_for(identifier)
+    }
     analyzed = 0
     sources = []
     session = None
@@ -347,42 +350,60 @@ def project_report(identifier: str, run_id: str | None = None) -> dict:
         from .analysis_runs import list_runs
         session = next((r for r in list_runs(identifier) if r["id"] == run_id), None)
         if session is None:
-            raise ValueError("?????? ??????? ?? ??????")
+            raise ValueError("Запуск анализа не найден")
     for name in p["videos"]:
         if session and name not in session["videos"]:
             continue
         try:
+            cache_id = session["videos"][name] if session else None
             report = data.report(name, identifier,
-                                 session["videos"][name] if session else None)
+                                 cache_id)
+            stats = video_statistics(name, identifier, cache_id, report)
         except (ValueError, OSError):
-            # A disconnected original must not make the whole project report
-            # (or subsequent project switching) fail with HTTP 400.
             report = {"analyzed": False, "rallies": 0, "counts": {}, "groups": []}
-        sources.append({"name": name, "analyzed": report["analyzed"],
-                        "rallies": report["rallies"], "counts": report["counts"]})
-        if not report["analyzed"]:
+            stats = {"analyzed": False, "rallies": 0, "counts": {},
+                     "total_touches": 0, "unassigned_touches": 0, "players": {}}
+        sources.append({"name": name, "analyzed": stats["analyzed"],
+                        "rallies": stats["rallies"], "counts": stats["counts"],
+                        "total_touches": stats["total_touches"]})
+        if not stats["analyzed"]:
             continue
         analyzed += 1
-        totals.update(report["counts"])
-        rallies += report["rallies"]
+        totals.update(stats["counts"])
+        rallies += stats["rallies"]
+        total_touches += stats["total_touches"]
+        unassigned_touches += stats["unassigned_touches"]
         ids += report.get("track_count", 0)
         for item in report.get("groups", []):
-            key=item["name"].casefold()
-            group=participants.setdefault(key,{
-                "name": item["name"], "total_actions": 0,
-                "track_ids": [], "actions": Counter()
-            })
-            group["total_actions"]+=item["total_actions"]
-            group["actions"].update(item["actions"])
-            group["track_ids"].extend(name+" #"+str(i) for i in item["track_ids"])
+            if item["id"] in participants:
+                participants[item["id"]]["track_ids"].extend(
+                    name+" #"+str(i) for i in item["track_ids"])
+        for player_id, row in stats["players"].items():
+            group = participants.get(player_id)
+            if group is None:
+                unassigned_touches += row["touches"]
+                continue
+            group["touches"] += row["touches"]
+            group["total_actions"] += row["touches"]
+            group["recognized_touches"] += row["recognized_touches"]
+            group["actions"].update(row["actions"])
+    players = list(participants.values())
+    baseline = apply_activity(players)
+    for player in players:
+        player["actions"] = dict(player["actions"])
+        photos = album_photos(player["id"])["photos"]
+        player["photo"] = photos[0]["filename"] if photos else None
+        if not analyzed:
+            player["activity"] = None
     result = {
         "source": p["name"], "project_id": identifier,
         "analyzed": analyzed>0, "analyzed_videos": analyzed,
         "total_videos": len(p["videos"]), "counts": dict(totals),
+        "total_touches": total_touches, "unassigned_touches": unassigned_touches,
+        "recognized_touches": sum(totals[k] for k in RECOGNIZED_ACTIONS),
+        "median_touches": baseline, "player_count": len(players),
         "rallies": rallies, "track_count": ids,
-        "groups": sorted(({
-            **item, "actions": dict(item["actions"])
-        } for item in participants.values()),key=lambda x:-x["total_actions"]),
+        "groups": players,
         "sources": sources
     }
     if run_id:

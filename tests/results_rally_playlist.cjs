@@ -78,6 +78,11 @@ const fixture={
     {time:45,type:"block",confidence:.7}
   ]
 };
+fixture.rallies[0].player_rows=[
+  {track_id:"1",name:"Анна",similarity:.955,status:"automatic"},
+  {track_id:"2",name:"Борис",similarity:.85,status:"suggested"},
+  {track_id:"3",status:"unknown"}
+];
 const confidenceButtons=["0","0.5","0.65","0.8"].map(value=>{
   const button=new Element("confidence-"+value);button.dataset.resultConfidence=value;
   return button;
@@ -130,6 +135,8 @@ const previewRebuild={
   rally_summary:{raw_tracks:5,classified_tracks:3},
 };
 const fetch=async url=>{
+  if(url==="/cpu-defaults.json")
+    return {ok:true,json:async()=>JSON.parse(fs.readFileSync(path.join(__dirname,"../scripts/volleyball_ui/static/cpu-defaults.json"),"utf8"))};
   if(url.startsWith("/api/analysis-rallies?")){
     rallyRefreshRequests++;
     assert.ok(url.includes("context_sec=2"),url);
@@ -158,6 +165,10 @@ function nearEnd(t){video.currentTime=t;video.fire("timeupdate");}
 (async()=>{
   ui.init();ui.setCacheSelection({"match.mp4":"cache-1"});
   await ui.setProject("project-1",["match.mp4"]);
+  video.fire("timeupdate");
+  assert.equal(get("result-player-time").textContent,"00:00:00");
+  assert.equal(Number(get("result-player-seek").min),0);
+  assert.equal(get("result-player-end").textContent,"00:01:00");
   const initialVideoLoads=video.loadCalls;
   const initialRallyHTMLWrites=get("result-rally-list").htmlWrites;
   video.currentTime=13.5;
@@ -170,6 +181,9 @@ function nearEnd(t){video.currentTime=t;video.fire("timeupdate");}
     "cached preview must not rebuild the rally list");
   assert.deepEqual(order(),[0,1,2],"chronological list is default");
   assert.ok(get("result-rally-list").innerHTML.includes("игроков в кадре 3"),"preview displays player count");
+  assert.ok(get("result-rally-list").innerHTML.includes("Анна · 95.5% · авто"));
+  assert.ok(get("result-rally-list").innerHTML.includes("Борис · 85.0% · подтвердить"));
+  assert.ok(get("result-rally-list").innerHTML.includes("Не привязан"));
   // Low-confidence events are retained: Preview displays already-saved
   // postprocessed events, not a second confidence-filtered event stream.
   assert.ok(get("result-rally-track").innerHTML.includes("Атака · 10%"),
@@ -430,6 +444,36 @@ function nearEnd(t){video.currentTime=t;video.fire("timeupdate");}
   get("rally-context-sec").fire("change");
   await new Promise(resolve=>setTimeout(resolve,20));
   assert.equal(rallyRefreshRequests,1,"unchanged values do not fetch again");
+
+  fixture.analysis_offset_sec=254.62;
+  fixture.rallies=[{start:282.053,end:288.92,rally_id:rallyA}];
+  await ui.setVideo("match.mp4");
+  ui.selectRally(0);
+  video.fire("timeupdate");
+  assert.ok(Math.abs(video.currentTime-27.433)<.001);
+  assert.equal(get("result-player-time").textContent,"00:04:42");
+  assert.equal(Number(get("result-player-seek").min),254.62);
+  assert.equal(Number(get("result-player-seek").max),314.62);
+  assert.equal(get("result-player-end").textContent,"00:05:14");
+  get("result-player-seek").value="290.12";
+  get("result-player-seek").fire("input");
+  assert.ok(Math.abs(video.currentTime-35.5)<.001);
+  assert.equal(current(),null);
+  assert.equal(get("result-player-time").textContent,"00:04:50");
+  assert.equal(get("result-current-time").textContent,"00:04:50");
+  assert.equal(get("result-player-seek").attributes["aria-valuetext"],"00:04:50");
+  get("result-player-toggle").fire("click");
+  assert.equal(video.paused,true);
+  get("result-player-toggle").fire("click");
+  assert.equal(video.paused,false);
+  get("result-player-speed").value="1.5";
+  get("result-player-speed").fire("change");
+  assert.equal(video.playbackRate,1.5);
+  get("result-player-mute").fire("click");
+  assert.equal(video.muted,true);
+  assert.ok(!/<video id="result-video-player"[^>]*\bcontrols\b/.test(previewHtml));
+  assert.ok(previewHtml.slice(previewHtml.indexOf('class="result-player-buttons"'),
+    previewHtml.indexOf('id="result-player-mute"')).includes('id="result-playback-mode"'));
 
   ui.setCacheSelection({},"unfinished-run");
   await ui.setProject("project-1",["match.mp4","second.mp4"],"match.mp4");

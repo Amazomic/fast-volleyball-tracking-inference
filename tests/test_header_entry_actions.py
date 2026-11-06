@@ -52,6 +52,17 @@ class HeaderEntryTests(unittest.TestCase):
                          ["profile"], "Original GPU profile")
         self.assertTrue((self.history / "20261104_001800_833293.json").is_file())
 
+    def test_cpu_default_name_uses_saved_launch_timezone(self):
+        with patch.object(runs, "_postprocessing_runs", side_effect=lambda project_id, original: [
+            {**original, "id": self.child_id, "parent_run_id": original["id"],
+             "started_at": "2026-12-24T22:14:00+03:00",
+             "profile": "Different settings / combined",
+             "postprocess_settings": {"mode": "combined"}}
+        ]):
+            child = next(r for r in runs.list_runs("project-demo") if r["id"] == self.child_id)
+            self.assertEqual(child["auto_name"], "24.12.26 22:14")
+            self.assertNotIn("combined", child["auto_name"])
+
     def test_rename_and_delete_cpu_version_keep_parent(self):
         runs.rename_run("project-demo", self.child_id, "Касания v2", kind="postprocess")
         self.assertEqual(next(row for row in runs.list_runs("project-demo")
@@ -142,6 +153,22 @@ class HeaderEntryTests(unittest.TestCase):
                          [self.source_id])
         self.assertTrue((self.history / "20261104_001800_833293.json").exists())
 
+    def test_primary_entry_edit_skips_cpu_directory_scan(self):
+        # Removing an inference branch is metadata-only: no CPU cache traversal.
+        with patch.object(runs, "_postprocessing_runs", side_effect=AssertionError(
+                "Primary entry change should not scan CPU versions")):
+            runs.rename_run("project-demo", self.source_id, "Renamed", kind="inference")
+            result = runs.delete_run("project-demo", self.source_id,
+                                     kind="inference")
+        self.assertTrue(result["deleted"])
+
+    def test_cpu_entry_edit_uses_only_parent_history_file(self):
+        # Unrelated timing records must not be opened by a single CPU deletion.
+        (self.history / "unrelated.json").write_text("{}", encoding="utf-8")
+        with patch.object(runs, "cache_for", wraps=runs.cache_for) as cache_lookup:
+            runs.delete_run("project-demo", self.child_id, kind="postprocess")
+        self.assertEqual(cache_lookup.call_count, 1)
+
     def test_invalid_ids_and_names_are_rejected(self):
         with self.assertRaises(ValueError):
             runs.delete_run("project-demo", "../../outside")
@@ -149,6 +176,70 @@ class HeaderEntryTests(unittest.TestCase):
             runs.rename_run("project-demo", self.source_id, " ")
         with self.assertRaises(ValueError):
             runs.rename_run("project-demo", self.source_id, "x"*101)
+
+    def test_http_cpu_delete_during_active_gpu_analysis(self):
+        """A new GPU inference must not block deleting older CPU versions."""
+        import urllib.request
+        import threading
+        from unittest.mock import Mock
+        from http.server import ThreadingHTTPServer
+        from scripts.volleyball_ui import server
+
+        http = ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
+        worker = threading.Thread(target=http.serve_forever, daemon=True)
+        worker.start()
+        self.addCleanup(worker.join, 3)
+        self.addCleanup(http.server_close)
+        self.addCleanup(http.shutdown)
+        body = json.dumps({"project_id": "project-demo",
+                           "run_id": self.child_id,
+                           "kind": "postprocess"}).encode("utf8")
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{http.server_port}/api/analysis-run/delete",
+            data=body, method="POST",
+            headers={"Content-Type": "application/json"})
+        with patch.dict(server.JOB, {"process": Mock(poll=lambda: None),
+                                     "project_id": "project-demo",
+                                     "kind": "analyze", "run_id": None}):
+            with urllib.request.urlopen(request, timeout=5) as response:
+                self.assertTrue(json.load(response)["deleted"])
+        self.assertEqual([run["id"] for run in runs.list_runs("project-demo")],
+                         [self.source_id])
+
+    def test_http_delete_guards_only_active_run(self):
+        import urllib.request
+        import urllib.error
+        import threading
+        from unittest.mock import Mock
+        from http.server import ThreadingHTTPServer
+        from scripts.volleyball_ui import server
+
+        http = ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
+        worker = threading.Thread(target=http.serve_forever, daemon=True)
+        worker.start()
+        self.addCleanup(worker.join, 3)
+        self.addCleanup(http.server_close)
+        self.addCleanup(http.shutdown)
+
+        def request(kind, run_id):
+            body = json.dumps({"project_id": "project-demo",
+                               "run_id": run_id, "kind": kind}).encode("utf8")
+            return urllib.request.Request(
+                f"http://127.0.0.1:{http.server_port}/api/analysis-run/delete",
+                data=body, method="POST",
+                headers={"Content-Type": "application/json"})
+
+        with patch.dict(server.JOB, {"process": Mock(poll=lambda: None),
+                                     "project_id": "project-demo",
+                                     "kind": "highlights",
+                                     "run_id": self.child_id}):
+            with self.assertRaises(urllib.error.HTTPError) as exact:
+                urllib.request.urlopen(request("postprocess", self.child_id), timeout=5)
+            self.assertEqual(exact.exception.code, 400)
+            with self.assertRaises(urllib.error.HTTPError) as parent:
+                urllib.request.urlopen(request("inference", self.source_id), timeout=5)
+            self.assertEqual(parent.exception.code, 400)
+        self.assertEqual(len(runs.list_runs("project-demo")), 2)
 
 
 if __name__ == "__main__":

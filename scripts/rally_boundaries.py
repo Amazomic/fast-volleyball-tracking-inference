@@ -80,6 +80,17 @@ def rebuild(tracks: Iterable[dict], *, events=None, fps=FPS,
     valid.sort(key=lambda entry:(entry[0],entry[1]))
     blockers.sort()
     serves=_usable_serves(events)
+    contact_frames=[]
+    for event in events or []:
+        if not isinstance(event,dict) or "contact" not in event:
+            continue
+        try:
+            frame=int(event["frame"])
+            confidence=float(event.get("confidence") or 0)
+        except (KeyError,TypeError,ValueError,OverflowError):
+            continue
+        if frame>=0 and math.isfinite(confidence) and confidence>=.5:
+            contact_frames.append(frame)
     grouped=[]
     def barrier_between(start,end):
         if end<start:return False
@@ -127,12 +138,17 @@ def rebuild(tracks: Iterable[dict], *, events=None, fps=FPS,
         upper=min(end_of_video-1,(b+nex-1)//2)
         start=max(lower,a-padding_frames)
         stop=min(upper,b+padding_frames)
+        last_touch=max((f for f in contact_frames if b-round(.5*fps)<=f<=b),
+                       default=None)
         for x,y in blockers:
             # Do not include a confirmed return ball in context.
             if y>=start and x<a:
                 start=max(start,y+1)
             if x<=stop and x>b:
-                stop=min(stop,x-1)
+                boundary=x-1
+                if last_touch is not None and x-b<=round(.15*fps):
+                    boundary=max(boundary,last_touch+round(.75*fps))
+                stop=min(stop,boundary)
         later_serves=[f for f in serves if b<f<=stop]
         if later_serves:stop=min(stop,min(later_serves)-1)
         g["source_start_frame"]=min(max(0,start),a)

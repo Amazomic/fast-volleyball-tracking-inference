@@ -34,7 +34,7 @@ def _index(path: str, mtime_ns: int, size: int):
             continue
         if not all(map(math.isfinite,(x1,y1,x2,y2,score))) or frame<0 or track<0:
             continue
-        if x2<=x1 or y2<=y1 or score<.20:
+        if x2<=x1 or y2<=y1 or score<.02:
             continue
         x1,y1=max(0,x1),max(0,y1)
         x2,y2=min(width,x2),min(height,y2)
@@ -156,7 +156,7 @@ def player_boxes_window(project_id: str, video: str, start, length=6,
         raise ValueError("Недопустимые границы видео или порог игроков") from e
     if (not math.isfinite(start) or not math.isfinite(length) or start<0
             or not 0<length<=10 or (threshold is not None and
-            (not math.isfinite(threshold) or not .05<=threshold<=.95))):
+            (not math.isfinite(threshold) or not .02<=threshold<=.95))):
         raise ValueError("Недопустимые границы рамок или порог игроков")
     from .analysis_runs import cache_for
     cache=cache_for(video,project_id,cache_id) if cache_id else find_cache(video,project_id)
@@ -172,15 +172,34 @@ def player_boxes_window(project_id: str, video: str, start, length=6,
     if threshold is not None:
         if not capability["available"]:
             return {"available":False,"reason":"no_raw_players","frames":[]}
+        if threshold < capability["minimum_confidence"]:
+            raise ValueError("Порог ниже сохранённых сырых обнаружений RAVEL")
         rows=_raw_window(cache/"players.raw.jsonl",
             max(0,math.floor(start*fps)),math.ceil((start+length)*fps),
             threshold,width,height,frames)
     else:
         rows=[[frame,frames[frame][:16]] for frame in keys[lo:hi]]
+    # Labels are resolved per request, not cached with GPU detections. Renames,
+    # manual merges and linked players therefore appear without a CPU rerun.
+    identity = {"candidates": {}, "players": {}}
+    if project_id:
+        from .player_identity_groups import effective_track_identities
+        try:
+            identity = effective_track_identities(project_id, video, cache_id or cache.name)
+        except (FileNotFoundError, ValueError):
+            # Legacy/unregistered analyses still display their original IDs.
+            pass
+    from .data import excluded_track_ids
+    excluded = excluded_track_ids(video, project_id, cache_id or cache.name)
+    if excluded:
+        rows = [[frame, [box for box in boxes if str(box[0]) not in excluded]]
+                for frame, boxes in rows]
     return {
         "available":True,"fps":fps,"width":width,"height":height,
         "frames":rows,"supports_threshold":capability["available"],
         "preview_track_ids":threshold is not None,
+        "player_labels":identity["players"],
+        "candidate_groups":identity["candidates"],
         "frame_step":int(max(1,round(fps*length/max(1,len(rows)))))
                       if rows else 1,
     }

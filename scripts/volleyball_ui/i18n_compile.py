@@ -523,6 +523,27 @@ curated.update({
     "Обновление сходства": "Updating similarity",
 })
 translations.update(curated)
+translations.update({
+    "Удалить ID": "Delete ID",
+    "Удалить выбранные ID": "Delete selected IDs",
+    "Исключить неудачный Track ID из CPU-обработки": "Exclude a bad Track ID from CPU processing",
+    "Неудачные Track ID можно удалить из CPU-обработки. Исходный GPU-кэш останется нетронутым; для обновления событий выполните новый CPU-пересчёт.":
+        "Bad Track IDs can be excluded from CPU processing. Original GPU predictions remain intact; rerun CPU processing to refresh events.",
+})
+translations.update({
+    "Привязанные ID": "Linked IDs",
+    "Сохранённые фото": "Saved photos",
+    "Таблица выбранного игрока": "Selected player table",
+    "Сохранить фото привязанных ID": "Save photos of linked IDs",
+    "Привязанные ID выбранного игрока": "Selected player's linked IDs",
+    "ID текущего видео и выбранной версии анализа. Для сохранения фото используются только подтверждённые привязки.":
+        "IDs for the current video and selected analysis version. Only confirmed links are used to save photos.",
+    "ПРИВЯЗКА": "LINK STATUS",
+    "ФОТО": "PHOTO",
+    "ИСТОЧНИК": "SOURCE",
+})
+translations["Сброс настроек"] = "Reset settings"
+translations["Золотые настройки восстановлены. Для новой CPU-версии нажмите «Пересчитать проект»."] = "Golden defaults restored. Click Reprocess project to create a new CPU version."
 for key,value in list(translations.items()):
     if not isinstance(value,str):continue
     if re.search("розыгрыш",key,re.I) and key not in curated:

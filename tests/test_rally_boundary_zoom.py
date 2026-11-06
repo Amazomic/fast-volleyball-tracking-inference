@@ -20,6 +20,25 @@ def track(a,b,label="rally",tid=0,confidence=.88):
 
 
 class RallyBoundaryTests(unittest.TestCase):
+    def test_last_touch_keeps_follow_through_before_adjacent_return(self):
+        barrier=track(706,790,"not_rally",tid=2)
+        barrier["rally_classification"].update(
+            not_rally_reason="technical_return",technical_return_confidence=.95)
+        events=[{"type":"attack","frame":702,"confidence":.9,"contact":{}}]
+        rows=rebuild([track(35,704,tid=1),barrier],events=events,
+                     padding_frames=45,duration_frames=973)
+        self.assertGreaterEqual(rows[0]["source_end_frame"],724)
+        self.assertEqual(rows[0]["detected_end_frame"],704)
+
+    def test_follow_through_never_crosses_new_serve_or_video_end(self):
+        barrier=track(706,790,"not_rally",tid=2)
+        barrier["rally_classification"].update(not_rally_reason="technical_return")
+        events=[{"type":"attack","frame":702,"confidence":.9,"contact":{}},
+                {"type":"serve","frame":712,"confidence":.95}]
+        rows=rebuild([track(35,704),barrier],events=events,
+                     padding_frames=45,duration_frames=973)
+        self.assertLess(rows[0]["source_end_frame"],712)
+
     def test_merges_brief_dropout_and_keeps_full_extent(self):
         rows=rebuild([track(100,174,tid=1),track(183,260,tid=2)],
             max_gap_frames=90,padding_frames=45,duration_frames=400)

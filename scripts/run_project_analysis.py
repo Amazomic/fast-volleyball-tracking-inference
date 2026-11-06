@@ -284,32 +284,31 @@ def main():
       summary["gpu_finished_at"]=datetime.now(timezone.utc).isoformat()
       summary["finished_at"]=summary["gpu_finished_at"]
       summary["duration_sec"]=round(time.monotonic()-started,2)
+      summary["gpu_duration_sec"]=summary["duration_sec"]
       write_summary()
       # GPU inference is finished and immutable. Create the recommended
       # interpretation as an independent, versioned CPU replay. This can be
       # tuned repeatedly later without rerunning either neural network.
-      if args.player_identity_mode == "amateur" and args.player_model == "RAVEL-VB-013-9f":
-          try:
-              from scripts.run_project_reprocess import process_project
-              print(json.dumps({"event":"UI_PROGRESS","kind":"reprocess",
-                  "stage":"Рекомендуемая CPU-интерпретация · касания и игроки",
-                  "phase":"running","overall_percent":0,
-                  "profile_name":args.profile_name},ensure_ascii=False),flush=True)
-              cpu = process_project(args.project_id,"run_"+run_id,
-                  mode="combined",touch_threshold=.45,
-                  player_threshold=.30,track_player_threshold=.30,
-                  touch_min_interval_sec=.35,
-                  touch_max_reach_ratio=.35,
-                  beach=args.beach)
-              summary["default_cpu_status"]="complete"
-              summary["default_cpu_versions"]=cpu["videos"]
-              print("DEFAULT CPU INTERPRETATION COMPLETE",flush=True)
-          except Exception as cpu_error:
-              summary["default_cpu_status"]="error"
-              summary["default_cpu_error"]=str(cpu_error)
-              print("DEFAULT CPU INTERPRETATION WARNING: "+str(cpu_error),flush=True)
-          finally:
-              write_summary()
+      try:
+          from scripts.run_project_reprocess import process_project
+          print(json.dumps({"event":"UI_PROGRESS","kind":"reprocess",
+              "stage":"Рекомендуемая CPU-интерпретация · касания и игроки",
+              "phase":"running","overall_percent":0,
+              "profile_name":args.profile_name},ensure_ascii=False),flush=True)
+          from scripts.volleyball_ui.cpu_defaults import automatic_cpu_settings
+          cpu = process_project(args.project_id,"run_"+run_id,
+              **automatic_cpu_settings(args.player_model))
+          summary["default_cpu_status"]="complete"
+          summary["default_cpu_versions"]=cpu["videos"]
+          print("DEFAULT CPU INTERPRETATION COMPLETE",flush=True)
+      except Exception as cpu_error:
+          summary["default_cpu_status"]="error"
+          summary["default_cpu_error"]=str(cpu_error)
+          print("DEFAULT CPU INTERPRETATION WARNING: "+str(cpu_error),flush=True)
+      finally:
+          summary["finished_at"]=datetime.now(timezone.utc).isoformat()
+          summary["duration_sec"]=round(time.monotonic()-started,2)
+          write_summary()
       print(json.dumps({"event":"UI_PROGRESS","kind":"analyze",
                         "stage":"Все видео обработаны","phase":"complete",
                         "overall_percent":100,"stage_percent":100,

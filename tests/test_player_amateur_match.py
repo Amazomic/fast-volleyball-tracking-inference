@@ -18,6 +18,34 @@ def track(start, end, frames=20):
 
 
 class AmateurIdentityTests(unittest.TestCase):
+    def test_best_candidate_wins_even_with_small_similarity_gap(self):
+        matches = {"1": {"player_id": "best", "similarity": .96,
+                          "runner_up_similarity": .955, "reference_count": 2,
+                          "ambiguous": True}}
+        result = auto_assignment_proposals(matches, [], {"1": track(0, 60)}, {})
+        self.assertEqual(result, {"best": ["1"]})
+
+    def test_equal_best_candidates_require_manual_choice(self):
+        matches = {"1": {"player_id": "best", "similarity": .96,
+                          "runner_up_similarity": .96, "reference_count": 2}}
+        self.assertEqual(auto_assignment_proposals(
+            matches, [], {"1": track(0, 60)}, {}), {})
+
+    def test_one_confirmed_reference_can_match_above_threshold(self):
+        matches = {"1": {"player_id": "best", "similarity": .96,
+                          "runner_up_similarity": .8, "reference_count": 1}}
+        self.assertEqual(auto_assignment_proposals(
+            matches, [], {"1": track(0, 60)}, {}), {"best": ["1"]})
+
+    def test_auto_binding_requires_strictly_more_than_ninety_percent(self):
+        tracks={str(i):track(i*100,i*100+50) for i in range(1,5)}
+        matches={str(i):{"player_id":"p1","similarity":score,
+                          "runner_up_similarity":.7,"reference_count":3,
+                          "ambiguous":False}
+                 for i,score in enumerate((.89999,.9,.90001,.95),1)}
+        result=auto_assignment_proposals(matches,[],tracks,{},threshold_percent=90)
+        self.assertEqual(set(result.get("p1",[])),{"3","4"})
+
     def test_fragments_across_rallies_yield_five_distinct_people(self):
         tracks = {
             "1":track(0,60),"2":track(0,270),"3":track(0,270),
@@ -81,7 +109,7 @@ class AmateurIdentityTests(unittest.TestCase):
         out=stitch_rallies(features,tracks,[],{"1":"A","2":"B"})
         self.assertEqual(out["groups"],[])
 
-    def test_auto_binding_uses_threshold_margin_and_no_coexistence(self):
+    def test_auto_binding_uses_best_match_threshold_and_no_coexistence(self):
         tracks={str(k):track(*rng) for k,rng in {
             1:(0,60),2:(90,160),3:(100,160),4:(240,300),
             5:(290,340),6:(400,460)}.items()}
@@ -102,9 +130,9 @@ class AmateurIdentityTests(unittest.TestCase):
             tracks,{"1":"p1"},threshold_percent=97)
         # 2 + 3 simultaneous, so at most one may join p1.
         self.assertEqual(len(set(out.get("p1",[])) & {"2","3"}),1)
-        self.assertIn("4",out.get("p1",[]))
-        self.assertNotIn("5",out.get("p1",[]))  # margin under 0.04
-        self.assertNotIn("6",out.get("p2",[]))  # margin under 0.04
+        self.assertNotIn("4",out.get("p1",[]))
+        self.assertIn("5",out.get("p1",[]))
+        self.assertIn("6",out.get("p2",[]))
         self.assertNotIn("1",sum(out.values(),[]))
 
     def test_observed_four_can_interpolate_five_only_between_seen_frames(self):

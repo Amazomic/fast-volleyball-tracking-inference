@@ -59,6 +59,18 @@
     if(!run)return "Нет обработки";
     const settings=run.postprocess_settings;
     if(run.display_name)return run.display_name;
+    if(run.parent_run_id){
+      if(run.auto_name)return run.auto_name;
+      // Older servers have no auto_name: keep the timestamp's own clock
+      // rather than converting it to the viewer's browser timezone.
+      const match=String(run.started_at||"").match(
+        /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/);
+      if(match&&!Number.isNaN(Date.parse(run.started_at))){
+        const [,year,month,day,hour,minute]=match;
+        return day+"."+month+"."+year.slice(-2)+" "+hour+":"+minute;
+      }
+      return "Время обработки не записано";
+    }
     if(!settings)return run.inference_only
       ?"Первичный инференс нейросетей · CPU ещё не выполнен"
       :"Старый полный анализ · треки, касания и розыгрыши";
