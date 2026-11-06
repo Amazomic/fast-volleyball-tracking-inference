@@ -1,0 +1,173 @@
+name: PR quality
+
+on:
+  pull_request:
+    branches: [master]
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-quality-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  preflight:
+    name: 01 / Structure and policy
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      docker: ${{ steps.scope.outputs.docker }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+      - name: Syntax of all Python modules
+        run: python -m compileall -q main.py src scripts
+      - name: Validate architecture, defaults and PR scope
+        id: scope
+        run: |
+          python scripts/ci/repo_policy.py \
+            --base "${{ github.event.pull_request.base.sha || github.event.before }}" \
+            --github-output "$GITHUB_OUTPUT"
+      - name: Self-test quality policy without heavy dependencies
+        run: python -m unittest discover -s tests -p test_ci_quality.py -v
+
+  web-ui:
+    name: 02 / Browser logic (Node)
+    needs: preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: JavaScript syntax
+        run: find scripts/volleyball_ui/static -type f -name '*.js' -print0 | xargs -0 -n 1 node --check
+      - name: Existing browser-state and UI contracts
+        run: node --test tests/*.cjs
+
+  cpu-unit:
+    name: 03 / CPU domain regressions
+    needs: preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - name: Locked dependencies
+        run: uv sync --frozen --extra dev
+      - name: Inference interpretation and player continuity
+        env:
+          PYTHONPATH: '.:src'
+        run: |
+          uv run --no-sync pytest -q \
+            tests/test_cpu_golden_defaults.py \
+            tests/test_ravel_touch_motion.py \
+            tests/test_player_three_second_gap.py \
+            tests/test_player_id_stability.py \
+            tests/test_player_reference_matching.py \
+            tests/test_rally_reconstruction.py \
+            tests/test_touch_peaks.py
+
+  integration:
+    name: 04 / Project-to-reel contracts
+    needs: preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - name: FFmpeg availability
+        run: ffmpeg -version && ffprobe -version
+      - name: Locked dependencies
+        run: uv sync --frozen --extra dev
+      - name: Source cache, CPU versions, identities, quick reel and export
+        env:
+          PYTHONPATH: '.:src'
+        run: |
+          uv run --no-sync pytest -q \
+            tests/test_gpu_cpu_chain.py \
+            tests/test_reprocess_pipeline.py \
+            tests/test_project_dependency_tree.py \
+            tests/test_postprocessing_version_selection.py \
+            tests/test_quick_reel.py \
+            tests/test_montage_original_quality.py
+
+  docker-smoke:
+    name: 05 / Docker deployment smoke
+    needs: preflight
+    if: needs.preflight.outputs.docker == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build CPU image
+        run: docker build -t volley-studio:ci .
+      - name: Start container and validate health endpoint
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run -d --name volley-ci \
+            -p 127.0.0.1:8765:8765 \
+            -v volley-ci-results:/app/results \
+            -v volley-ci-project:/app/project \
+            volley-studio:ci
+          trap 'docker logs volley-ci || true; docker rm -f volley-ci || true' EXIT
+          for i in {1..60}; do
+            if curl --silent --show-error --fail --max-time 2 \
+              http://127.0.0.1:8765/api/health \
+              | python -c 'import json,sys; assert json.load(sys.stdin)["ok"]' 2>/dev/null; then
+              echo "Studio API healthcheck passed"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Studio API never became healthy" >&2
+          exit 1
+
+  quality-gate:
+    name: 06 / Merge gate
+    if: always()
+    needs: [preflight, web-ui, cpu-unit, integration, docker-smoke]
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Require all applicable validation stages
+        env:
+          PRE: ${{ needs.preflight.result }}
+          UI: ${{ needs.web-ui.result }}
+          CPU: ${{ needs.cpu-unit.result }}
+          INTEGRATION: ${{ needs.integration.result }}
+          DOCKER: ${{ needs.docker-smoke.result }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for job in PRE UI CPU INTEGRATION; do
+            if [[ "${!job}" != success ]]; then
+              echo "Required stage $job ended with ${!job}" >&2
+              exit 1
+            fi
+          done
+          if [[ "$DOCKER" != success && "$DOCKER" != skipped ]]; then
+            echo "Docker stage ended with $DOCKER" >&2
+            exit 1
+          fi
+          echo "All applicable pull request quality gates passed"

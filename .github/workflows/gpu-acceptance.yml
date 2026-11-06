@@ -1,0 +1,38 @@
+name: GPU acceptance (manual)
+
+on:
+  workflow_dispatch:
+    inputs:
+      project_id:
+        description: 'Existing locally available annotated test project ID'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+# Explicit opt-in only. Register a dedicated secure runner with the volley-gpu
+# label and pre-provision non-public test clips; do not expose user media in CI.
+jobs:
+  gpu:
+    name: Manual / CUDA inference and project benchmark
+    runs-on: [self-hosted, linux, x64, volley-gpu]
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: false
+      - name: GPU and FFmpeg prerequisites
+        run: |
+          nvidia-smi
+          ffmpeg -version
+          ffprobe -version
+      - name: Sync locked dependencies on runner
+        run: uv sync --frozen --extra dev
+      - name: Device and model smoke
+        run: uv run --no-sync python -m scripts.volleyball_studio --doctor
+      - name: Project benchmark (runner-owned data)
+        env:
+          PROJECT_ID: ${{ inputs.project_id }}
+        run: uv run --no-sync python scripts/benchmark_project.py --project-id "$PROJECT_ID"
