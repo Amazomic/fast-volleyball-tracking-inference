@@ -35,6 +35,15 @@ For setup and the original CLI,
 see [Installation](#installation) and [Quick start](#quick-start-tested) below.
 For the interface, see the [Russian UI guide](docs/VOLLEY_STUDIO_UI.md).
 
+## Contributing and automated checks
+
+All changes go through a pull request into `master`. The development process,
+automated PR gates, regression scenarios and quality-evaluation policy are in
+[Development workflow](docs/DEVELOPMENT_WORKFLOW.md),
+[Testing stages](docs/TESTING.md), and
+[Quality evidence](docs/quality/README.md). CI keeps expensive GPU work outside
+fast PR checks and requires evidence before changing golden CPU defaults.
+
 ## Studio architecture
 
 The key design rule is **infer once, interpret many times**. Model execution

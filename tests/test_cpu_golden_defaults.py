@@ -20,7 +20,7 @@ class GoldenCpuTests(unittest.TestCase):
         a["touch_threshold"] = 0
         self.assertEqual(golden_cpu_settings()["touch_threshold"],.45)
         self.assertEqual(golden_cpu_settings()["player_threshold"],.30)
-        self.assertEqual(golden_cpu_settings()["ball_threshold"],.44)
+        self.assertEqual(golden_cpu_settings()["ball_threshold"],.35)
         self.assertEqual(golden_cpu_settings()["mode"],"combined")
         self.assertTrue(golden_cpu_settings()["beach"])
 

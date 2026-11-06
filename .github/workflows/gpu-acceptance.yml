@@ -1,0 +1,56 @@
+name: GPU acceptance (manual)
+
+on:
+  workflow_dispatch:
+    inputs:
+      project_id:
+        description: 'Existing locally available annotated test project ID'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+# Explicit opt-in only. Register a dedicated secure runner with the volley-gpu
+# label and pre-provision non-public test clips; do not expose user media in CI.
+jobs:
+  gpu:
+    name: Manual / CUDA inference and project benchmark
+    runs-on: [self-hosted, linux, x64, volley-gpu]
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: false
+      - name: GPU and FFmpeg prerequisites
+        run: |
+          nvidia-smi
+          ffmpeg -version
+          ffprobe -version
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+      - name: Sync locked dependencies on runner
+        run: uv sync --frozen --extra dev
+      - name: Install the CUDA execution provider on this dedicated GPU runner
+        run: |
+          uv pip uninstall --python .venv/bin/python onnxruntime
+          uv pip install --python .venv/bin/python 'onnxruntime-gpu==1.31.1'
+      - name: Assert a real CUDA inference session (not silent CPU fallback)
+        env:
+          PYTHONPATH: 'src:.'
+        run: |
+          uv run --no-sync python - <<'PY'
+          from inference_onnx_seq_gray_v2 import load_onnx_model
+          model = 'models/VballNetV4c_seq9_grayscale_20260908_213829.onnx'
+          session, *_ = load_onnx_model(model, device='cuda')
+          assert session.get_providers()[0] == 'CUDAExecutionProvider', session.get_providers()
+          print('CUDAExecutionProvider initialized for VballNetV4c')
+          PY
+      - name: Device and model smoke
+        run: uv run --no-sync python -m scripts.volleyball_studio --doctor
+      - name: Project benchmark (runner-owned data)
+        env:
+          PROJECT_ID: ${{ inputs.project_id }}
+        run: uv run --no-sync python scripts/benchmark_project.py --project-id "$PROJECT_ID"
