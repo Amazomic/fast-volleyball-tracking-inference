@@ -35,14 +35,16 @@ For setup and the original CLI,
 see [Installation](#installation) and [Quick start](#quick-start-tested) below.
 For the interface, see the [Russian UI guide](docs/VOLLEY_STUDIO_UI.md).
 
-## Contributing and automated checks
+## Contributing and local checks
 
 All changes go through a pull request into `master`. The development process,
-automated PR gates, regression scenarios and quality-evaluation policy are in
+local test commands, regression scenarios and quality-evaluation policy are in
 [Development workflow](docs/DEVELOPMENT_WORKFLOW.md),
 [Testing stages](docs/TESTING.md), and
-[Quality evidence](docs/quality/README.md). CI keeps expensive GPU work outside
-fast PR checks and requires evidence before changing golden CPU defaults.
+[Quality evidence](docs/quality/README.md). GitHub Actions are removed: run
+`python -m scripts.ci.run_checks` before submitting a PR, and
+`python -m scripts.ci.run_checks --full` for full regression checks.
+Golden CPU defaults still require real annotated-match evidence.
 
 ## Studio architecture
 

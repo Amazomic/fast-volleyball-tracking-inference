@@ -38,7 +38,7 @@ before touching model output, identities or CPU replay.
    and output quality (touch/rally/player accuracy and reel fidelity).
 6. Submit a PR with paths, test evidence, risk and rollback. Do not claim
    Docker, GPU or browser E2E passed unless it actually ran.
-7. Merge only with green applicable checks; perform human review for high-risk
+7. Merge only after locally completed and documented applicable checks; perform human review for high-risk
    default/model/data migrations. Revert or correct regressions instead of
    lowering test expectations.
 
@@ -48,7 +48,9 @@ before touching model output, identities or CPU replay.
 - JS UI contracts: `node --test tests/*.cjs`
 - Python (after `uv sync --frozen --extra dev`):
   `PYTHONPATH=.:src uv run --no-sync pytest -q tests`
-- CI stages and deeper validation: [docs/TESTING.md](docs/TESTING.md).
+- Local checks: `python -m scripts.ci.run_checks` (or `--full`).
+- There is no hosted CI merge gate. Report skipped checks as NOT TESTED.
+- Full guidance: [docs/TESTING.md](docs/TESTING.md).
 
 Keep code and comments in the original module's language. Describe every new
 configuration option (meaning, unit, default, effect) and make UI errors clear.
