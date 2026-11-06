@@ -41,6 +41,14 @@ class EvaluationTests(unittest.TestCase):
         self.assertAlmostEqual(metrics["rally_boundary_mae_sec"], .3)
         self.assertEqual(metrics["rally_extra"], 1)
 
+    def test_rally_matching_maximizes_count_not_greedy_nearest(self):
+        gold = [{"start_sec": 1.0, "end_sec": 5.0},
+                {"start_sec": 1.4, "end_sec": 5.4}]
+        proposed = [{"start_sec": .5, "end_sec": 4.7},
+                    {"start_sec": 1.1, "end_sec": 5.2}]
+        matched, _ = quality_eval.match_rallies(gold, proposed, .6)
+        self.assertEqual(matched, 2)
+
     def test_three_second_player_switch_and_simultaneous_merge(self):
         samples = [
             {"time_sec": 0, "person_id": "A", "track_id": "1"},
@@ -82,6 +90,36 @@ class RepositoryPolicyTests(unittest.TestCase):
                           return_value=json.dumps({"revision": 3})):
             with self.assertRaisesRegex(repo_policy.PolicyError, "revision"):
                 repo_policy.check_changes({repo_policy.GOLD}, "base-sha")
+
+    def test_golden_evidence_rejects_regression_and_requires_improvement(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            gold = root / repo_policy.GOLD
+            gold.parent.mkdir(parents=True, exist_ok=True)
+            gold.write_text(json.dumps({"revision": 4}))
+            report_path = "docs/quality/reports/clip-evidence.json"
+            report_file = root / report_path
+            report_file.parent.mkdir(parents=True, exist_ok=True)
+            report = {
+                "schema": "volley-quality-evidence/1",
+                "baseline_revision": 3, "candidate_revision": 4,
+                "dataset_id": "real-annotated-clip", "annotation_sha256": "a" * 64,
+                "metrics": {
+                    "touch_f1": {"before": .7, "after": .8},
+                    "rally_boundary_mae_sec": {"before": .4, "after": .3},
+                    "identity_switches": {"before": 2, "after": 2},
+                    "identity_collisions": {"before": 0, "after": 0}
+                }
+            }
+            diff = {repo_policy.GOLD, repo_policy.GOLD_DOC, report_path}
+            with patch.object(repo_policy, "git",
+                              return_value=json.dumps({"revision": 3})):
+                report_file.write_text(json.dumps(report))
+                self.assertFalse(repo_policy.check_changes(diff, "base", root))
+                report["metrics"]["identity_switches"]["after"] = 3
+                report_file.write_text(json.dumps(report))
+                with self.assertRaisesRegex(repo_policy.PolicyError, "No report"):
+                    repo_policy.check_changes(diff, "base", root)
 
     def test_docker_scope(self):
         self.assertTrue(repo_policy.check_changes({"Dockerfile"}, "base-sha"))

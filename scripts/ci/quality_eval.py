@@ -42,6 +42,38 @@ def match_times(reference: list[float], candidate: list[float],
     return count, -neg_error
 
 
+def match_rallies(reference: list[dict], candidate: list[dict],
+                  tolerance: float) -> tuple[int, float]:
+    """Match complete rally intervals, maximizing matches before accuracy.
+
+    Sorting by start makes this monotone dynamic program deterministic even if
+    a prediction is near two adjacent rallies.
+    """
+    def intervals(items: list[dict]) -> list[tuple[float, float]]:
+        result = []
+        for item in items:
+            start, end = _point(item, "start_sec"), _point(item, "end_sec")
+            if end < start:
+                raise ValueError("Rally end precedes start")
+            result.append((start, end))
+        return sorted(result)
+
+    a, b = intervals(reference), intervals(candidate)
+    n, m = len(a), len(b)
+    dp = [[(0, 0.0)] * (m + 1) for _ in range(n + 1)]
+    for i in range(n - 1, -1, -1):
+        for j in range(m - 1, -1, -1):
+            options = [dp[i + 1][j], dp[i][j + 1]]
+            start_delta = abs(a[i][0] - b[j][0])
+            end_delta = abs(a[i][1] - b[j][1])
+            if start_delta <= tolerance and end_delta <= tolerance:
+                matches, neg_error = dp[i + 1][j + 1]
+                options.append((matches + 1, neg_error - start_delta - end_delta))
+            dp[i][j] = max(options)
+    count, neg_error = dp[0][0]
+    return count, -neg_error
+
+
 def identity_errors(observations: list[dict]) -> tuple[int | None, int | None]:
     """Count within-player ID switches and simultaneous cross-player collisions.
 
@@ -84,30 +116,9 @@ def evaluate(annotation: dict, prediction: dict, *, touch_window: float = .20,
     recall = true_positive / len(gt) if gt else (1.0 if not predicted else 0.0)
     f1 = 2 * precision * recall / (precision + recall) if precision + recall else 0.0
 
-    # Rally matching requires both start and end within a tolerable range.
     gt_rallies = annotation.get("rallies", [])
     pr_rallies = prediction.get("rallies", [])
-    matched = 0
-    total_error = 0.0
-    used = set()
-    for gt_rally in sorted(gt_rallies, key=lambda r: r["start_sec"]):
-        start, end = _point(gt_rally, "start_sec"), _point(gt_rally, "end_sec")
-        if end < start:
-            raise ValueError("Rally end precedes start")
-        options = []
-        for j, pr_rally in enumerate(pr_rallies):
-            if j in used:
-                continue
-            p_start, p_end = _point(pr_rally, "start_sec"), _point(pr_rally, "end_sec")
-            if p_end < p_start:
-                raise ValueError("Predicted rally end precedes start")
-            if abs(start - p_start) <= rally_window and abs(end - p_end) <= rally_window:
-                options.append((abs(start - p_start) + abs(end - p_end), j))
-        if options:
-            error, index = min(options)
-            used.add(index)
-            matched += 1
-            total_error += error
+    matched, total_error = match_rallies(gt_rallies, pr_rallies, rally_window)
     switches, collisions = identity_errors(prediction.get("identity_samples", []))
     return {
         "touch_precision": round(precision, 6),

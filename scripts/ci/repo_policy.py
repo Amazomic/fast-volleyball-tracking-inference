@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -116,8 +117,34 @@ def check_changes(paths: set[str] | None, base: str | None,
             measurements = payload.get("metrics", {})
             if not all(k in measurements for k in REPORT_METRICS):
                 continue
-            # CI validates evidence structure; an independent reviewer must
-            # verify the annotation provenance and evaluate the real reel.
+            directions = {"touch_f1": 1, "rally_boundary_mae_sec": -1,
+                          "identity_switches": -1, "identity_collisions": -1}
+            improved = False
+            acceptable = True
+            for key, direction in directions.items():
+                values = measurements.get(key)
+                if not isinstance(values, dict):
+                    acceptable = False
+                    break
+                before_value, after_value = values.get("before"), values.get("after")
+                if (type(before_value) not in (int, float)
+                        or type(after_value) not in (int, float)
+                        or not all(math.isfinite(v)
+                                   for v in (before_value, after_value))
+                        or before_value < 0 or after_value < 0):
+                    acceptable = False
+                    break
+                if key == "touch_f1" and max(before_value, after_value) > 1:
+                    acceptable = False
+                    break
+                if direction * (after_value - before_value) < -1e-9:
+                    acceptable = False
+                    break
+                improved |= direction * (after_value - before_value) > 1e-9
+            if not acceptable or not improved:
+                continue
+            # CI checks comparable numbers; independent review must confirm
+            # the real match annotations and quality of the resulting reel.
             valid = True
         if not valid:
             raise PolicyError("No report with matching revisions, dataset and "
