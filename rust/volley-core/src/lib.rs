@@ -9,6 +9,7 @@ pub mod continuity;
 pub mod motion;
 pub mod rallies;
 pub mod reid;
+pub mod statistics;
 pub mod touch;
 
 /// Must match the positive-area intersection-over-union operation used by

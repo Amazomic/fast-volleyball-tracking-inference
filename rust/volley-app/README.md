@@ -46,6 +46,7 @@ POST /api/players/continuity-preview  provisional Track ID groups and 4s gap sug
 POST /api/players/reid-native/preview   cached native ReID grouping and vetted references (read-only)
 POST /api/players/reid-native/groups    read/merge/split candidate groups with source/owner checks (isolated root)
 POST /api/players/identity/native      read or manually assign/unassign/exclude/restore IDs (isolated root)
+POST /api/players/statistics/native    preview/recalculate per-player CPU actions, versioned report (isolated root)
 POST /api/project-create        experimental isolated registry only
 POST /api/project-update        experimental isolated registry only
 GET  /api/project-preparation?project_id=...  preparation states, enqueue missing when isolated
@@ -207,3 +208,22 @@ Use `group_id` instead of `track_ids` to approve the entire **saved**, non-stale
 To split, change `action` to `split` and list the IDs to remove from candidate groups; no players are deleted. Each edit returns a **new** revision that must be used next time. Conflicting confirmed owners, overlapping tracks, excluded IDs, stale group catalogues and concurrent edits produce errors without writing changes. All group edits require isolated `VOLLEY_RUST_DATA_ROOT` and do not write the original project.
 
 To then **confirm a saved group as a real player**, call `POST /api/players/identity/native` with `action:"assign"`, `group_id`, `player_id`, the current identity `expected_revision`, **and** `expected_group_revision` returned by the group endpoint. The group revision is checked again while holding the exclusive identity lock. A group is a candidate until this separate approval.
+
+## Experimental native player statistics
+
+Read-only preview for one specific saved CPU run:
+
+~~~json
+{
+  "project_id": "1234abcdef01",
+  "run_id": "run_20261107_123456_pp_example",
+  "mode": "preview",
+  "selected_videos": ["match.mp4"]
+}
+~~~
+
+Call `POST /api/players/statistics/native`. The response provides `per_video` and `overall` totals, verified project player actions, unassigned and excluded counts, contact deduplication diagnostics, rally filtering and an input source fingerprint. Without selected_videos, all videos present in the chosen run are included.
+
+To publish an immutable/versioned report **only in the isolated Rust development data root**, use `mode:"recalculate"`. The response includes `snapshot_file` and `snapshot_created`; repeated identical inputs reuse the prior report. The source CPU events, GPU player detection cache and original Python identity/photo store are not rewritten. A change in roster, assignments, ReID groups, source CPU evidence or the statistics algorithm invalidates the previous source fingerprint.
+
+Only explicit reviewed Track IDs and a single unambiguous owner inherited through a manually approved candidate group are counted for a named athlete. Automatic appearance or geometric suggestions remain unassigned. The report is not yet wired to the production Players/Preview UI. Real-match quality tests and final parity remain deferred.
