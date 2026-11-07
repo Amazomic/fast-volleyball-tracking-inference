@@ -4,13 +4,25 @@
 
 ## Workspace
 
-The three maintained crates share `rust/Cargo.toml` and `rust/Cargo.lock`:
+The four maintained crates share `rust/Cargo.toml` and `rust/Cargo.lock`:
 
 - `volley-core`: deterministic geometry and motion kernels (historic S01/S02a).
 - `volley-media`: FFprobe metadata, rotation, target resolution, H.264/30 FPS readiness, schema-2 SHA256 prepared identities, JPEG preview rendering and original-quality montage planning.
 - `volley-app`: standalone HTTP server, JSON project/catalog/history APIs, isolated preparation and manual montage jobs, audio upload, FFmpeg orchestration and byte-range MP4 streaming.
+- `volley-inference`: native ONNX Runtime model sessions and one-clip execution; complete GPU streaming remains pending.
 
-From repository root in WSL Ubuntu-25.04:
+For Windows, use the isolated WSL development launcher from the repository root:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/start-volley-rust-dev.ps1 -CheckOnly
+powershell -ExecutionPolicy Bypass -File scripts/start-volley-rust-dev.ps1
+# Inspect existing records read-only without touching Python data:
+powershell -ExecutionPolicy Bypass -File scripts/start-volley-rust-dev.ps1 -ReadOnly
+```
+
+The launcher accepts `-Distro`, `-Bind 127.0.0.1:8875` and an optional absolute WSL `-DataRoot` for sandbox writes. It refuses the Python production port `8765`, non-loopback binding and unsafe/relative data roots; `-CheckOnly` compiles without launching the server. Rust dependencies must already be cached for offline Cargo. The default isolated data root is `$HOME/.cache/volley-rust-sandbox` within WSL.
+
+Alternatively, from repository root in WSL Ubuntu-25.04:
 
 ```bash
 cargo check --manifest-path rust/Cargo.toml --workspace
