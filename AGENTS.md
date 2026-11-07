@@ -1,20 +1,64 @@
-# Правила разработки Volleyball Studio
+# Volley Studio — contributor and coding-agent contract
 
-## Главный принцип
-Упрощать архитектуру без ухудшения результата. Сохранять имеющиеся локальные изменения и пользовательские данные. Не заменять рабочую логику косметическим обходным решением.
+The goal is **less code and fewer moving parts without reducing the quality of
+real volleyball analysis or exported reels**. Read
+[docs/DEVELOPMENT_WORKFLOW.md](docs/DEVELOPMENT_WORKFLOW.md) before making changes
+and [docs/ARCHITECTURE_INFERENCE_POSTPROCESSING.md](docs/ARCHITECTURE_INFERENCE_POSTPROCESSING.md)
+before touching model output, identities or CPU replay.
 
-## Обязательный контракт стабильности UI
-**Перезагрузка страницы, переключение вкладок и догрузка данных не должны перестраивать каркас интерфейса.** Это обязательное правило для всех UI-изменений.
+## Invariants
 
-1. **Один источник геометрии.** На десктопе `.shell` и боковая панель привязаны к одному `100dvh` без глобального масштабирования. Запрещено использовать `zoom` или `transform:scale(...)` для всего `body`, `html` или `.shell`; размер компонентов настраивать локально. Размеры общих контейнеров не должны зависеть от активной вкладки, количества данных или статуса запроса. Запрещены решения вида `125vh`, `.shell:has(#view-...)` для изменения высоты и искусственные `clamp(...)` для имитации заполнения свободной высоты.
-2. **Одинаковый первый кадр и итоговая разметка.** CSS для `data-initial-view` и итоговое состояние `.active` должны использовать одинаковую геометрию. Восстанавливать активную вкладку до асинхронной загрузки, не после неё.
-3. **Фиксированный каркас, независимая прокрутка.** Шапка, навигация, переключатель языка и контейнеры панелей остаются на месте. Для вложенных flex/grid-областей с прокруткой использовать `min-height:0`, `min-width:0`, `overflow:auto` и `scrollbar-gutter:stable` по необходимости. Высоту области задаёт родитель, не содержимое списка.
-4. **Данные не управляют компоновкой.** Пусто/загрузка/ошибка/заполнено должны сохранять высоту основных панелей. Индикаторы загрузки размещаются внутри существующих областей. Обновлять только изменившийся контент; сохранять scroll position, фокус, раскрытые детали и выбранную вкладку. Никаких полных перезагрузок страницы при смене источника данных.
-5. **Адаптивность без скачков.** Проверять узкое окно и увеличенный масштаб. Применять общий набор брейкпоинтов; внутри одного брейкпоинта компоненты не должны менять положение из-за пришедших данных. Не смешивать `display:block` на первом кадре с `display:flex` после инициализации.
-6. **Кэш и ресурсы.** После изменения CSS/JS обновлять его version query в `scripts/volleyball_ui/static/index.html`, чтобы старый кэш не смешивался с новым стилем.
+- Project → immutable GPU inference → separately versioned CPU interpretation
+  → preview, player identities, reports and original-source montage.
+- GPU inference is expensive and runs only when the recorded model inputs change.
+  New thresholds, ReID, touches, rallies and Track ID associations must be
+  reinterpretable on CPU from recorded evidence.
+- A Track ID proposal is **not** a verified person. Concurrent visible people
+  cannot share one confirmed identity; manual assignments are authoritative.
+- Never promote a new default in
+  `scripts/volleyball_ui/static/cpu-defaults.json` without comparable
+  annotated-match measurements, a revision bump and a documented report.
+- Do not silently degrade video output resolution, FPS, codec or use a lower-
+  quality proxy as the montage source.
+- Never edit active user project data under `project/` or `results/` as part
+  of development. Do not terminate an active user analysis to run tests.
 
-## Готовность UI-изменения (definition of done)
-- Проверен сценарий: прямой переход `?view=players` → F5 → смена вкладки → возврат → переключение проекта/CPU-результата → загрузка списка и фотографий. Никаких прыжков каркаса.
-- Проверены хотя бы 1440×900, 1920×1080, 800×900 и 480×812; при фиксированном размере окна шапка, sidebar, основной контейнер не смещаются более чем на 2 px после догрузки.
-- Обязательные локальные проверки: `python -m unittest discover -s tests -p "test_ui_layout_contract.py"`, `node tests/players_workspace_layout.cjs` (при наличии Chrome). Если браузерный тест недоступен, прямо сообщить, что визуальная проверка не выполнена.
-- Не изменять и не коммитить посторонние незавершённые пользовательские правки. Для этого проекта код по возможности менять локально через SentinelX; в основную ветку напрямую не пушить.
+## Change process
+
+1. Branch from `master`; do not push directly to the default branch.
+2. State user-visible behavior, observable failure, intended invariant and
+   acceptance tests. Prefer deleting unused complexity over adding adapters.
+3. Change the **smallest authoritative module**. Avoid duplicating defaults,
+   UI state or cache ownership. Preserve old project formats via explicit
+   compatibility tests when necessary.
+4. Add a failing regression test, implement the fix, run quick and targeted
+   suites. For CPU or model changes, compare the same saved inference and
+   manually annotated clips before/after, not only synthetic examples.
+5. Check source quality (maintainability, reuse, size, latency, CPU/GPU work)
+   and output quality (touch/rally/player accuracy and reel fidelity).
+6. Submit a PR with paths, test evidence, risk and rollback. Do not claim
+   Docker, GPU or browser E2E passed unless it actually ran.
+7. Merge only after locally completed and documented applicable checks; perform human review for high-risk
+   default/model/data migrations. Revert or correct regressions instead of
+   lowering test expectations.
+
+## Tests
+
+- Quick policy: `python -m unittest discover -s tests -p test_ci_quality.py`
+- JS UI contracts: `node --test tests/*.cjs`
+- Python (after `uv sync --frozen --extra dev`):
+  `PYTHONPATH=.:src uv run --no-sync pytest -q tests`
+- Local checks: `python -m scripts.ci.run_checks` (or `--full`).
+- There is no hosted CI merge gate. Report skipped checks as NOT TESTED.
+- Full guidance: [docs/TESTING.md](docs/TESTING.md).
+
+Keep code and comments in the original module's language. Describe every new
+configuration option (meaning, unit, default, effect) and make UI errors clear.
+
+## UI stability policy
+
+Keep the detailed no-layout-jump, scroll, cache-busting and browser-acceptance invariants in [docs/UI_LAYOUT_POLICY.md](docs/UI_LAYOUT_POLICY.md). Read it before modifying UI, layout, client-side reloads or player tables.
+
+## Rust migration
+
+Read [docs/RUST_MIGRATION.md](docs/RUST_MIGRATION.md) before changing the Rust/Python boundary; after each verified stage, update its log and commit with test evidence. The checkpoint and rollback branch must remain untouched.
