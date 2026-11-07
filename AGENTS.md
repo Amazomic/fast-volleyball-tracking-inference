@@ -59,6 +59,6 @@ configuration option (meaning, unit, default, effect) and make UI errors clear.
 
 Keep the detailed no-layout-jump, scroll, cache-busting and browser-acceptance invariants in [docs/UI_LAYOUT_POLICY.md](docs/UI_LAYOUT_POLICY.md). Read it before modifying UI, layout, client-side reloads or player tables.
 
-## Rust migration
+## Rust migration — complete rewrite first (2026-11-07)
 
-Read [docs/RUST_MIGRATION.md](docs/RUST_MIGRATION.md) before changing the Rust/Python boundary; after each verified stage, update its log and commit with test evidence. The checkpoint and rollback branch must remain untouched.
+Read [docs/RUST_MIGRATION.md](docs/RUST_MIGRATION.md) and [docs/RUST_REWRITE_SCOPE.md](docs/RUST_REWRITE_SCOPE.md). The user explicitly chose a **complete Rust rewrite first**, followed by **integrated testing and adaptation**, then **Python-vs-Rust comparison**. For this migration only, this sequence supersedes the per-module regression-test-first workflow above: commit genuine implementation checkpoints, allow compiler/smoke diagnostics, and defer full parity/quality gates until all Rust functionality exists. The final Rust program must not require Python services, CPU/business logic or orchestration; Rust/WASM replaces browser application behavior. The original Python branch and immutable rollback checkpoint must remain intact. Never confuse a partially working Rust kernel or hybrid server with completion.

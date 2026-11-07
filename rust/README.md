@@ -1,3 +1,9 @@
+# Current direction: full Rust application rewrite (2026-11-07)
+
+The original user-directed migration plan has changed: **implement every existing application workflow in Rust, then test/adapt the complete application, then compare it with the frozen Python checkpoint**. See `docs/RUST_MIGRATION.md` and `docs/RUST_REWRITE_SCOPE.md`. Everything below documents previously implemented **historical hybrid kernels** only; optional Python bridges are not the final architecture.
+
+---
+
 # Rust kernels for Volleyball Studio
 
 Stage S01: pure, deterministic CPU geometry with an opt-in ctypes bridge. The Python path remains authoritative by default; no GPU / FFmpeg backend has been migrated.

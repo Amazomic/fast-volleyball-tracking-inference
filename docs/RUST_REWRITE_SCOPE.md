@@ -1,0 +1,50 @@
+# Volleyball Studio — complete Rust rewrite coverage
+
+Status: **IMPLEMENTATION IN PROGRESS — NOT COMPLETE**. Owner decision 2026-11-07: finish ALL Rust functionality, **then** run complete testing/adaptation, **then** compare with the frozen Python version. This inventory is a coverage map, not a release checklist performed incrementally. Keep actual completion truthful.
+
+## Definition of complete
+
+A new Rust executable and Rust/WebAssembly frontend operate all existing volleyball-studio flows with no Python server, Python CPU business logic, Python inference orchestration, or Python montage scripts. The application reads the same existing projects and preserved caches, produces equivalent persisted analysis/run records, drives GPU models and FFmpeg through native interfaces, and exposes every used browser API. External native model/codec libraries remain legitimate dependencies. Existing Python/JS sources are historical reference until the final comparison, not fallback services in the finished implementation.
+
+Never replace original `master`, original checkpoints, user media, `project/`, `results/`, saved photos, inference artifacts or previously prepared videos during development. Keep Rust dev services separate from the running `127.0.0.1:8765` Python/hybrid service until final cutover.
+
+## Source-to-target inventory
+
+| Domain | Existing implementation to account for | Rust destination | Actual state |
+|---|---|---|---|
+| HTTP service, routing, serialization, streaming/ranges, security | `scripts/volleyball_ui/server.py`, `data.py`, `preview.py`, `playback.py` | `rust/volley-app/` | PARTIAL: native listener and one read-only route |
+| Jobs, progress, cancellation, restarts, resources | `server.py`, `analysis_runs.py`, `project_lifecycle.py`, `quick_reel_jobs.py` | `rust/volley-app/` | NOT STARTED |
+| Projects, global profiles, per-run snapshots, CPU snapshots, history and cleanup | `projects.py`, `analysis_profiles.py`, `analysis_runs.py`, `prepared_videos.py` | `rust/volley-app/` | NOT STARTED |
+| Video input, format probe, normalization, reuse and cached evidence | `scripts/volleyball_studio/video_inputs.py`, `analysis.py`; `scripts/volleyball_ui/video_compat.py`, `local_sources.py` | `rust/volley-inference/`, `rust/volley-media/` | NOT STARTED |
+| Model inference: RAVEL-013, VballNetV4c and other supported profiles/providers | `src/inference*.py`, `scripts/volleyball_studio/ball_models.py`, `analysis_stages.py`, `inference_cache.py`, `ov/` | `rust/volley-inference/` | NOT STARTED |
+| CPU geometry, trajectory, contact momentum, extrema and touch detection | `src/player_contacts.py`, `scripts/volleyball_studio/reprocess.py`, `touch_peaks.py`, `rust_core.py` | `rust/volley-core/` | PARTIAL: IoU, batched motion only |
+| Player tracking, 3–4s gaps, overlap conflicts, track merging | `scripts/volleyball_studio/replay_player_tracking.py`, `player_continuity.py`, `scripts/volleyball_ui/player_retracking.py` | `rust/volley-core/` | NOT STARTED |
+| ReID similarity, grouped candidates, manual linking, persistent player reference photos | `src/player_reid.py`, `scripts/volleyball_ui/player_identity_groups.py`, `player_reference_matching.py`, `player_library.py`, `photos.py` | `rust/volley-core/`, `rust/volley-app/` | NOT STARTED |
+| Rallies, events, touch counts, player statistics, reports and beach-volleyball defaults | `scripts/volleyball_studio/events.py`, `reprocess.py`, `scripts/volleyball_ui/report_statistics.py`, `timeline.py` | `rust/volley-core/`, `rust/volley-app/` | NOT STARTED |
+| Preview, original resolution, overlays, safe video range serving | `scripts/volleyball_ui/preview.py`, `playback.py`, `player_overlay.py`, `montage_source.py` | `rust/volley-media/`, `rust/volley-app/` | NOT STARTED |
+| Manual montage, filters/gold-marked rallies, trims, audio overlay, original-quality renders | `src/make_reels.py`, `scripts/volleyball_ui/montage_*.py`, `montage_runner.py` | `rust/volley-media/` | NOT STARTED |
+| Quick reel, separate job/cache, video/audio upload and export | `scripts/volleyball_ui/quick_reel_*.py`, `video_uploads.py` | `rust/volley-app/`, `rust/volley-media/` | NOT STARTED |
+| User interface, interactions, RU/EN, data cache, analysis, players, preview and montage views | `scripts/volleyball_ui/static/*.js`, `*.css`, `index.html` | `rust/volley-web/` (WASM application plus HTML/CSS) | NOT STARTED |
+| Desktop/WSL launcher, config/env, logs, GPU resources, Docker | `start-volley-ui.cmd`, `Dockerfile`, CLI entrypoints, `pyproject.toml` | standalone Rust package, launcher, Docker | NOT STARTED |
+
+All columns refer to the entire behavior, not just a file existing. A feature is complete only if its Rust implementation runs without forwarding to Python.
+
+## Behavioral contracts to retain
+
+- One immutable GPU inference record per model/config and video; multiple selectable CPU postprocessing snapshots. Don't rerun expensive inference to change Touch, ID matching or rally thresholds.
+- Default GPU profile and RAVEL Touch behavior available; settings and percentages explain themselves. No silent GPU fallback to CPU.
+- Preserve assigned players, manually rejected Track IDs, grouped ReID candidate ordering and stored reference photos; never merge two visibly different concurrent players into one identity.
+- Existing saved project/analysis compatibility, global profiles and prepared-video cache reuse. Preserve timestamps/names and golden CPU configuration exactly until measured justified changes after implementation.
+- Preview filters and playback, responsive loading overlays, working scroll, photo cycling by click, compact player/rally cards, manual montage gold marking and all current RU/EN UI semantics.
+- Original-quality video/codec settings for montage; ability to cancel jobs, handle interrupted input and delete nonrunning results without blocking other jobs.
+- One active instance and trustworthy progress states. Preserve rollback without manipulating personal caches or media.
+
+## Final acceptance only after all functionality is implemented
+
+1. Run full Rust build and independent standalone app with no Python dependency for application logic.
+2. Exercise project creation, uploads/preparation/reuse, GPU inference, CPU resnapshot, player ReID/manual linking, touches and rallies, preview, quick reel, montage, music, export, cancellation, reboot/reload, project deletion and old-project reopening.
+3. Run all reproducible unit/integration/API/UI regression tests, annotated real-volleyball accuracy checks and memory/caching/resource safety. Fix and adapt until the complete Rust product is acceptable.
+4. Compare against immutable Python checkpoint `aeaf7704ac4228affe04f8e50fbc52769c44b725` on the same videos/model versions/machine/GPU, with speed, RAM/VRAM, touch events, ID fragmentation/recall, rallies, user interaction and output quality measurements.
+5. Choose and record the final commit to deploy. If not worthwhile, restore the original checkpoint (or a specifically chosen later good Python commit) without removing the Rust branch or user files.
+
+The earlier migration ledger stages S00–S02a describe real work already done, but their parity-first gates are **superseded**. Do not claim end-to-end Rust completion until the entire inventory is implemented.
