@@ -5,6 +5,7 @@ mod history;
 mod montage;
 mod playback;
 mod player_continuity;
+mod player_identity;
 mod preparation;
 mod projects;
 mod rallies;
@@ -30,6 +31,7 @@ struct AppState {
     touch_limit: tokio::sync::Semaphore,
     continuity_limit: tokio::sync::Semaphore,
     reid_limit: tokio::sync::Semaphore,
+    identity_limit: tokio::sync::Semaphore,
 }
 
 #[derive(Serialize)]
@@ -70,6 +72,7 @@ async fn rewrite_status(
             "POST /api/cpu/touch-preview (read-only RAVEL diagnostics)",
             "POST /api/players/continuity-preview (read-only geometry candidates)",
             "POST /api/players/reid-native/preview (saved embeddings, read-only)",
+            "POST /api/players/identity/native (manual review/edit, isolated root)",
             "POST /api/montage/native/start-from-run (CPU-backed, isolated root)",
             "GET /api/montage/native/status",
             "POST /api/montage/native/cancel (isolated root)",
@@ -106,6 +109,10 @@ fn app(state: Arc<AppState>) -> Router {
         .route("/api/montage/native/status", get(montage::native_status))
         .route("/api/montage/native/plan", post(rallies::preview_selection))
         .route("/api/cpu/touch-preview", post(touch_preview::touch_preview))
+        .route(
+            "/api/players/identity/native",
+            post(player_identity::read_or_edit),
+        )
         .route(
             "/api/players/reid-native/preview",
             post(reid_native::preview),
@@ -178,6 +185,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         touch_limit: tokio::sync::Semaphore::new(1),
         continuity_limit: tokio::sync::Semaphore::new(1),
         reid_limit: tokio::sync::Semaphore::new(1),
+        identity_limit: tokio::sync::Semaphore::new(1),
     });
     println!(
         "Volleyball Studio Rust rewrite (INCOMPLETE): http://{addr}/internal/rewrite-status (isolated writes={writes_enabled})"

@@ -44,6 +44,7 @@ GET  /api/analysis-resources     CPU thread count
 GET  /api/players/library       existing global athlete catalog
 POST /api/players/continuity-preview  provisional Track ID groups and 4s gap suggestions for selected run
 POST /api/players/reid-native/preview   cached native ReID grouping and vetted references (read-only)
+POST /api/players/identity/native      read or manually assign/unassign/exclude/restore IDs (isolated root)
 POST /api/project-create        experimental isolated registry only
 POST /api/project-update        experimental isolated registry only
 GET  /api/project-preparation?project_id=...  preparation states, enqueue missing when isolated
@@ -156,3 +157,32 @@ Read-only POST /api/players/reid-native/preview body:
 ~~~
 
 Requires a chosen saved run and existing fresh player_identity_groups/*.npz embedding archive. Rust calculates cosine scores and candidate groups, honoring manual exclusions and reviewed owners. Existing trusted photo-album vectors provide suggested player matches for the project's roster; automatic assignment is disabled. No Python subprocess is used. ReID image encoder and uncached embedding capture, real manual linking UI, model parity checks and full integration tests are still outstanding.
+
+## Experimental manual player identity persistence
+
+`POST /api/players/identity/native` reads the selected project/video/inference and its verified player assignments:
+
+~~~json
+{
+  "project_id": "1234abcdef01",
+  "run_id": "run_20261107_123456",
+  "video": "match.mp4",
+  "action": "read"
+}
+~~~
+
+The response includes `revision`, `groups`, `roster`, excluded/rejected IDs, assigned and unassigned counts. To approve an individual ID or a group, submit the **same** project/run/video and the `revision` returned by this read:
+
+~~~json
+{
+  "project_id": "1234abcdef01",
+  "run_id": "run_20261107_123456",
+  "video": "match.mp4",
+  "action": "assign",
+  "track_ids": ["12", "56"],
+  "player_id": "existing-project-athlete-id",
+  "expected_revision": "sha256-from-read"
+}
+~~~
+
+Use `group_id` instead of `track_ids` to approve the entire **saved**, non-stale ReID candidate group. `unassign`, `exclude`, and `restore` accept `track_ids` plus `expected_revision`; a reassignment from an already confirmed *different* owner additionally requires `allow_reassign:true`. A stale revision returns HTTP 409, never overwriting another tab's work. Edits are **only** allowed with an explicitly isolated development `VOLLEY_RUST_DATA_ROOT` and are saved under `projects/<project_id>/player_identities.json` there, preserving Python schema 2. The original production file is never written. Manual grouping UI, album photo enrollment and confirmed-statistics generation are separate remaining migration steps.

@@ -97,7 +97,7 @@ fn path_key(video: &str, cache_id: &str) -> String {
     format!("{:x}", Sha256::digest(input.as_bytes()))[..24].to_owned()
 }
 
-fn track_statistics(source: &Path) -> Result<Vec<TrackInfo>, ApiError> {
+pub(crate) fn track_statistics(source: &Path) -> Result<Vec<TrackInfo>, ApiError> {
     let doc = read_json(source, 512 * 1024 * 1024)?;
     let rows = doc["predictions"]
         .as_array()
