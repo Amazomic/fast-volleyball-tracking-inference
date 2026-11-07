@@ -50,12 +50,12 @@ Progress can be committed in coherent batches and compilation checked, but **no 
 | Workstream | Original sources | New Rust ownership | Status |
 |---|---|---|---|
 | R00 — checkpoint and coverage | `scripts/`, `src/`, `ov/` | `docs/RUST_REWRITE_SCOPE.md` | BASELINE SAVED |
-| R01 — API/job/process management | `scripts/volleyball_ui/server.py`, service modules | `rust/volley-app/` | PARTIAL: read-only project route + dev-only server |
-| R02 — projects, profiles, caches | `scripts/volleyball_ui/projects.py`, `analysis_runs.py`, `prepared_videos.py` | `rust/volley-app/` | NOT STARTED |
-| R03 — video preparation and model inference GPU | `src/inference*.py`, `scripts/volleyball_studio/analysis*.py` | `rust/volley-inference/` | NOT STARTED |
+| R01 — API/job/process management | `scripts/volleyball_ui/server.py`, service modules | `rust/volley-app/` | PARTIAL: native JSON HTTP routes and dev-only writes; job scheduling/cancellation pending |
+| R02 — projects, profiles, caches | `scripts/volleyball_ui/projects.py`, `analysis_runs.py`, `prepared_videos.py` | `rust/volley-app/` | PARTIAL: projects, global profiles and player catalogs, runs/history; cache generation and preparation pending |
+| R03 — video preparation and model inference GPU | `src/inference*.py`, `scripts/volleyball_studio/analysis*.py` | `rust/volley-inference/`, `rust/volley-media/` | PARTIAL: video probe/readiness only; GPU inference and preparation pending |
 | R04 — trajectories/tracks/Touch/CPU | `src/player_contacts.py`, `scripts/volleyball_studio/reprocess.py` | `rust/volley-core/` | PARTIAL (S01 + S02a) |
-| R05 — ReID, players, rallies and statistics | `src/player_reid.py`, player services | `rust/volley-core/`, `rust/volley-app/` | NOT STARTED |
-| R06 — preview, montage, audio, quick reel | `src/make_reels.py`, `scripts/volleyball_ui/*montage*.py`, `quick_reel*.py` | `rust/volley-media/` | NOT STARTED |
+| R05 — ReID, players, rallies and statistics | `src/player_reid.py`, player services | `rust/volley-core/`, `rust/volley-app/` | PARTIAL: read-only player catalog; identification/statistics pending |
+| R06 — preview, montage, audio, quick reel | `src/make_reels.py`, `scripts/volleyball_ui/*montage*.py`, `quick_reel*.py` | `rust/volley-media/` | PARTIAL: FFprobe/video metadata/compatibility; FFmpeg rendering pending |
 | R07 — complete UI and localization | `scripts/volleyball_ui/static/` | `rust/volley-web/` (Rust/WASM and assets) | NOT STARTED |
 | R08 — packaging, launch and deployment | `start-volley-ui.cmd`, `Dockerfile` | standalone Rust launch/deployment | NOT STARTED |
 | R09 — **after R01–R08** full tests and adaptation | All E2E workflows | integrated Rust application | DEFERRED |
@@ -203,3 +203,19 @@ Detailed functional inventory, required file formats and parity targets: `docs/R
 - Linux WSL cargo toolchain available and used to compile dependencies; `cargo check --manifest-path rust/volley-app/Cargo.toml` **PASSED**, with one unused-import warning corrected afterward.
 - All remaining server endpoints, persistent jobs, GPU inference, full postprocessing, montage and Rust/WASM UI: **NOT IMPLEMENTED**. Full tests, real-video metrics and quality comparison: **DEFERRED** until full rewrite, per user decision.
 - The existing service on `127.0.0.1:8765`, old Python checkpoint and saved projects were not modified by this checkpoint. The new Rust server has not replaced or taken over production.
+
+## 8. Full rewrite continuation: native project/catalog/history/media layers — 2026-11-07
+
+**Implementation status: PARTIAL; application not ready to replace Python.**
+
+- Consolidated new Rust code into a three-crate workspace at `rust/Cargo.toml` with **one** `rust/Cargo.lock`: `volley-core` (historical Rust kernels), `volley-app` (new Axum/Tokio API) and `volley-media` (native FFprobe/media metadata).
+- `rust/volley-app/src/projects.rs`: project registry summaries in the actual browser `{"projects":[...]}` shape, source video availability/cached-analysis pointers, read-only source video catalog, and native create/update of project registries. Experimental writes require `VOLLEY_RUST_DATA_ROOT` pointing at an **isolated absolute directory** outside the original `results/`, and origin-checked POST. Registry writes use a dedicated file lock and atomic JSON files. This does **not yet queue video preparation**.
+- `rust/volley-app/src/catalog.rs`: native global profile listing, athlete library listing, source video listing, resource estimates and `GET /api/video-info`.
+- `rust/volley-app/src/history.rs`: native analysis/experiment timing history built from saved complete runs and valid stage records.
+- `rust/volley-app/src/analysis_runs.rs`: native GPU run and CPU snapshot/version enumeration, run renames/hidden IDs, cache/source ownership validation and deterministic legacy CPU-setting hashes. Does **not** alter saved project files or materialize branches.
+- `rust/volley-app/src/storage.rs`: JSON handling, no-traversal identifiers, origin checks, isolated data root guard and atomic writes.
+- `rust/volley-media/src/lib.rs`: FFprobe metadata (rotation, display/coded size, duration, auto analysis width), exact H.264/YUV420P/30 FPS/AAC/no-rotation readiness filter for skipping unnecessary transcodes. External FFmpeg/FFprobe remain native tools; **not Python**.
+- `rust/volley-app/src/main.rs`: dev-only loopback listener on port `8875` (configurable), no fake production `/api/health`, route list and accurate `migration_complete=false` flag. Existing Studio on port `8765` remains untouched.
+- Verified after code changes in Ubuntu-25.04: `cargo fmt --all --manifest-path rust/Cargo.toml -- --check`, `cargo check --workspace --manifest-path rust/Cargo.toml` and `cargo build --workspace --manifest-path rust/Cargo.toml` — **PASS**. Full functional/API/browser tests and behavior validation are **DEFERRED** until the full rewrite, per user instruction.
+- **Not attempted by design:** full Python-vs-Rust parity, real annotated match comparison, GPU inference, FFmpeg renders, all-app E2E and production cutover. These occur after implementation of all workstreams under the owner decision. Native Rust registry creation is isolated from the existing user data until that stage.
+- Outstanding compatibility concerns for the later adaptation phase: legacy imported player identities and source aliases, project preparation queue on create/update, source metadata refresh semantics, CPU run manifest variations, and full browser API coverage.

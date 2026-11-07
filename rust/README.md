@@ -1,3 +1,7 @@
+**New architecture:** the shared workspace is `rust/Cargo.toml` with a single `rust/Cargo.lock`; crates are `volley-core`, `volley-media`, `volley-app`. Build with `cargo check --workspace --manifest-path rust/Cargo.toml`. The Python ctypes bridge documented below is historical and is not the final production architecture. See `rust/volley-app/README.md` for the standalone native Rust backend.
+
+---
+
 # Current direction: full Rust application rewrite (2026-11-07)
 
 The original user-directed migration plan has changed: **implement every existing application workflow in Rust, then test/adapt the complete application, then compare it with the frozen Python checkpoint**. See `docs/RUST_MIGRATION.md` and `docs/RUST_REWRITE_SCOPE.md`. Everything below documents previously implemented **historical hybrid kernels** only; optional Python bridges are not the final architecture.

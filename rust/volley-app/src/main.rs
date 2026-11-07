@@ -1,13 +1,22 @@
-//! Rust-native Studio entrypoint. Incomplete: never replace the running Python UI.
+//! Rust-native Studio HTTP application. The replacement is still incomplete.
+mod analysis_runs;
+mod catalog;
+mod history;
 mod projects;
+mod storage;
 
-use axum::{routing::get, Json, Router};
+use axum::{
+    routing::{get, post},
+    Json, Router,
+};
 use serde::Serialize;
 use std::{env, error::Error, io, net::SocketAddr, path::PathBuf, sync::Arc};
 
 #[derive(Clone)]
 struct AppState {
     repository_root: PathBuf,
+    data_root: PathBuf,
+    writes_enabled: bool,
 }
 
 #[derive(Serialize)]
@@ -15,26 +24,48 @@ struct RewriteStatus {
     name: &'static str,
     migration_complete: bool,
     production_ready: bool,
+    isolated_writes_enabled: bool,
     supported_api_endpoints: &'static [&'static str],
     pid: u32,
 }
 
-async fn rewrite_status() -> Json<RewriteStatus> {
+async fn rewrite_status(
+    axum::extract::State(state): axum::extract::State<Arc<AppState>>,
+) -> Json<RewriteStatus> {
     Json(RewriteStatus {
         name: "Volleyball Studio - standalone Rust rewrite (development only)",
         migration_complete: false,
         production_ready: false,
-        supported_api_endpoints: &["GET /api/projects"],
+        isolated_writes_enabled: state.writes_enabled,
+        supported_api_endpoints: &[
+            "GET /api/projects",
+            "GET /api/videos",
+            "GET /api/video-info",
+            "GET /api/analysis-profiles",
+            "GET /api/players/library",
+            "GET /api/analysis-resources",
+            "POST /api/project-create (isolated data root only)",
+            "POST /api/project-update (isolated data root only)",
+        ],
         pid: std::process::id(),
     })
 }
 
 fn app(state: Arc<AppState>) -> Router {
     Router::new()
-        // Deliberately no /api/health: the existing UI must NOT mistake this
-        // partial service for a fully compatible replacement of API v28.
+        // This is not /api/health: do not fool the production UI's API gate
+        // into believing this partial Rust rewrite is ready.
         .route("/internal/rewrite-status", get(rewrite_status))
         .route("/api/projects", get(projects::get_projects))
+        .route("/api/videos", get(catalog::get_videos))
+        .route("/api/video-info", get(catalog::get_video_info))
+        .route("/api/analysis-resources", get(catalog::get_resources))
+        .route("/api/analysis-profiles", get(catalog::get_profiles))
+        .route("/api/analysis-history", get(history::get_history))
+        .route("/api/analysis-runs", get(analysis_runs::get_runs))
+        .route("/api/players/library", get(catalog::get_library))
+        .route("/api/project-create", post(projects::create_project))
+        .route("/api/project-update", post(projects::update_project))
         .with_state(state)
 }
 
@@ -45,6 +76,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
         None => PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../.."),
     };
     let root = root.canonicalize()?;
+    let isolated = storage::writable_data_root(&root).map_err(|(_, message)| {
+        io::Error::other(format!("Invalid Rust data root: {}", message.0))
+    })?;
+    let (data_root, writes_enabled) = match isolated {
+        Some(root) => (root, true),
+        None => (root.join("results"), false),
+    };
     let addr: SocketAddr = env::var("VOLLEY_RUST_BIND")
         .unwrap_or_else(|_| "127.0.0.1:8875".to_owned())
         .parse()?;
@@ -56,12 +94,16 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .into());
     }
 
-    // Exclusive listener: refuses to create a duplicate if a port is in use.
+    // Exclusive port listener: cannot create a second instance on the same port.
     let listener = tokio::net::TcpListener::bind(addr).await?;
     let state = Arc::new(AppState {
         repository_root: root,
+        data_root,
+        writes_enabled,
     });
-    println!("Volleyball Studio Rust rewrite (INCOMPLETE): http://{addr}/internal/rewrite-status");
+    println!(
+        "Volleyball Studio Rust rewrite (INCOMPLETE): http://{addr}/internal/rewrite-status (isolated writes={writes_enabled})"
+    );
     axum::serve(listener, app(state))
         .with_graceful_shutdown(async {
             let _ = tokio::signal::ctrl_c().await;

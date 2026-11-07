@@ -8,6 +8,3 @@ description = "Deterministic CPU kernels for Volleyball Studio; Python remains t
 [lib]
 name = "volley_core"
 crate-type = ["cdylib", "rlib"]
-
-[profile.release]
-lto = "thin"
