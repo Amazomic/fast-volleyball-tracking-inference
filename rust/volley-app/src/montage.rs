@@ -882,3 +882,63 @@ pub async fn native_upload_audio(
         .map_err(|error| storage::internal(format!("Cannot publish audio upload: {error}")))?;
     Ok(Json(json!({"audio_file":filename,"bytes":uploaded})))
 }
+
+#[derive(Debug, Deserialize)]
+pub struct MontageFromRunRequest {
+    #[serde(flatten)]
+    pub selection: crate::rallies::SelectionRequest,
+    #[serde(default)]
+    pub audio_file: Option<String>,
+    #[serde(default = "default_volume")]
+    pub audio_volume: f64,
+    #[serde(default)]
+    pub encoder: Option<String>,
+}
+
+/// Verified CPU-run selection is the only source of rally boundaries for
+/// this route. The caller never supplies source offsets or frame intervals.
+pub async fn start_native_from_run(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(request): Json<MontageFromRunRequest>,
+) -> ApiResult<Value> {
+    storage::validate_origin(&headers)?;
+    if !state.writes_enabled {
+        return Err(storage::conflict(
+            "Rust-монтаж разрешён только в изолированном хранилище разработки",
+        ));
+    }
+    let selection = tokio::task::spawn_blocking({
+        let state = state.clone();
+        let request = request.selection;
+        move || crate::rallies::select_for_montage(&state, &request)
+    })
+    .await
+    .map_err(|error| storage::internal(format!("Montage run planning failed: {error}")))??;
+    if selection.selected.is_empty() {
+        return Err(storage::bad_request("Нет выбранных полных розыгрышей"));
+    }
+    if selection.selected.len() > MAX_CLIPS {
+        return Err(storage::bad_request(
+            "Слишком много розыгрышей для одного монтажа (максимум 80)",
+        ));
+    }
+    let clips = selection
+        .selected
+        .into_iter()
+        .map(|scene| SelectedClip {
+            video: scene.video,
+            start_frame: scene.rally.source_start_frame,
+            end_frame: scene.rally.source_end_frame,
+            analysis_offset_sec: Some(scene.analysis_offset_sec),
+        })
+        .collect();
+    let montage_request = MontageRequest {
+        project_id: selection.project_id,
+        clips,
+        audio_file: request.audio_file,
+        audio_volume: request.audio_volume,
+        encoder: request.encoder,
+    };
+    start_native_montage(State(state), headers, Json(montage_request)).await
+}

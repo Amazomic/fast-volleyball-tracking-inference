@@ -78,7 +78,7 @@ fn settings_hash(settings: &Value) -> String {
     hex[..12].to_owned()
 }
 
-fn source_matches(state: &AppState, project_id: &str, name: &str, cache: &str) -> bool {
+pub(crate) fn source_matches(state: &AppState, project_id: &str, name: &str, cache: &str) -> bool {
     if !valid_cache_id(cache) {
         return false;
     }
@@ -359,7 +359,7 @@ fn started_timestamp(value: &Value) -> i64 {
         .unwrap_or(0)
 }
 
-fn list_runs(state: &AppState, id: &str) -> Result<Vec<Value>, storage::ApiError> {
+pub(crate) fn list_runs(state: &AppState, id: &str) -> Result<Vec<Value>, storage::ApiError> {
     let project = projects::existing_project(state, id)?;
     let Some(videos) = project["videos"].as_array() else {
         return Err(storage::internal("Project videos are invalid"));

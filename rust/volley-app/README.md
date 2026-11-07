@@ -53,17 +53,19 @@ POST /api/montage/native/cancel        cancel current montage (job_id)
 GET  /api/montage/native/library?project_id=...  saved versioned Rust MP4s
 GET  /api/montage/native/media?project_id=...&job_id=...  MP4 with HTTP Range
 POST /api/montage/native/audio         multipart file upload (field file, max 90 MiB)
+POST /api/montage/native/plan          read-only auto/manual full-rally selection from chosen CPU run
+POST /api/montage/native/start-from-run  isolated rendering of selected CPU-run rallies
 ```
 
 These routes are implementations of persisted formats, not a claim of complete API parity. Rust project creation/update now queues native preparation. Compatible original MP4s are reused without recoding; other sources are converted by native FFmpeg to H.264/30 FPS/YUV420P and stored in the separate content-addressed development cache. One converter runs at a time; file locks prevent duplicate publication, status tracks FFmpeg progress, and cancellation is persisted per project until an explicit retry. Existing projects may use legacy storage conventions not fully supported; player catalog loading does not yet run legacy photo/identity backfills.
 
-**Not implemented:** automatic rally ranking/selection, full manual montage UI contract and filters, player/ball overlays or auto-follow/vertical crop, audio mixing with source sound, cross-project adoption of old prepared results, general uploads, complete model/GPU inference, complete CPU postprocessing, full ReID/manual players, player statistics and rallies, on-demand fallback video segments, quick reel, full API, Rust/WASM browser UI and desktop packaging.
+**Not implemented:** gold-marked episode filters, complete player/ball overlays or auto-follow/vertical crop, audio mixing with source sound, complete browser montage UI contract, cross-project adoption of old prepared results, general uploads, complete model/GPU inference and CPU touch inference, full ReID/manual players, personal player statistics, on-demand fallback video segments, quick reel, full API, Rust/WASM browser UI and desktop packaging.
 
 Development compilation/smoke probes are allowed. User-directed order: finish all Rust functionality **first**, then comprehensive tests/adaptation, then compare final Rust vs saved Python; rollback to `checkpoint/pre-rust-2026-11-07` if needed. See `docs/RUST_REWRITE_SCOPE.md` and `docs/RUST_MIGRATION.md`.
 
 ## Experimental native montage request
 
-This is a **manual frame-range export API**, not yet the normal browser's automatic rally-selection contract. Every frame range is expressed on the 30 FPS analysis timeline; its original-recording seek is `analysis_offset_sec + start_frame / 30`. The offset currently comes from the caller; validation against the selected saved analysis run and exact reconstructed rally IDs is **not yet implemented**. Do not use it as proof that a selected rally is complete.
+The original `/api/montage/native/start` is a **manual frame-range export API**; it still trusts caller-supplied offsets and is not evidence of a complete rally. Prefer the new CPU-bound `/api/montage/native/plan` (read-only) followed by `/api/montage/native/start-from-run` (isolated output), which validate the selected saved CPU run, reconstruct rally boundaries and select only stable IDs from that run. These are still **experimental routes**, not the production browser's full montage contract. Rally intervals are inferred, not proven serve-to-point ground truth.
 
 ```json
 {
@@ -80,3 +82,26 @@ This is a **manual frame-range export API**, not yet the normal browser's automa
 POST to `/api/montage/native/start` with `Content-Type: application/json`, using a project already created inside the independent Rust sandbox. Poll `/api/montage/native/status`; cancel using `/api/montage/native/cancel` and the returned `job_id`. When complete, list `/api/montage/native/library?project_id=...` or stream from the returned media URL. Optional music must first be imported with multipart `POST /api/montage/native/audio` (form field `file`); the returned `audio_file` is an opaque filename under isolated Rust storage, not a local machine path.
 
 One montage can render at once; clip extraction preserves native video resolution/FPS and uses FFmpeg H.264 high-quality CRF15 or NVENC CQ17, retrying on CPU on encoder failure. Uniform compatible intermediate streams are concatenated with stream copy; incompatible ones are padded to the largest source resolution and re-encoded. Each output has its own versioned folder and a `selection.json` manifest. These **implementation capabilities are not final product acceptance**. Complete end-to-end functional checks happen only after all Rust workstreams are rewritten, per the migration decision.
+
+## Experimental CPU-run rally selection
+
+`POST /api/montage/native/plan` accepts a JSON object such as:
+
+```json
+{
+  "project_id": "1234abcdef01",
+  "run_id": "run_20261107_123456",
+  "duration": 120,
+  "selection_strategy": "attacks",
+  "min_rally": 1.5,
+  "min_confidence": 0.5,
+  "gap_sec": 3,
+  "context_sec": 1.5,
+  "rally_selection_mode": "auto",
+  "min_action_counts": {"attack": 1}
+}
+```
+
+Read-only planning works against existing project/CPU result files. The response contains `candidates`, `selected`, selected duration and stable `rally_id` values. For manually chosen groups, change `rally_selection_mode` to `manual` and pass the saved `selected_rally_ids` from the same current plan; stale/foreign IDs are rejected. The server rechecks the exact named CPU run and cache ownership on every request. Automatic selections never shorten a detected rally to fill the duration.
+
+`POST /api/montage/native/start-from-run` accepts the same selection fields plus optional `audio_file`, `audio_volume` and `encoder`, and performs video encoding **only** when `VOLLEY_RUST_DATA_ROOT` is an isolated sandbox that contains the relevant project/CPU snapshots. This route derives frames and time offsets server-side; no arbitrary timestamp override is accepted. The old manual `/start` route still trusts its explicit clip coordinates and should not be interpreted as CPU-verified. Both APIs are development-only. Full browser integrations, gold marking, player ReID and formal rendered-video tests remain outstanding.

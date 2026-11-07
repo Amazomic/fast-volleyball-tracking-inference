@@ -820,12 +820,18 @@ dependencies = [
  "tokio-util",
  "unicode-normalization",
  "uuid",
+ "volley-core",
  "volley-media",
 ]
 
 [[package]]
 name = "volley-core"
 version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "sha2",
+]
 
 [[package]]
 name = "volley-media"

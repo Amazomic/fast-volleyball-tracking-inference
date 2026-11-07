@@ -6,6 +6,7 @@ mod montage;
 mod playback;
 mod preparation;
 mod projects;
+mod rallies;
 mod storage;
 
 use axum::{
@@ -58,6 +59,8 @@ async fn rewrite_status(
             "POST /api/project-create (isolated data root only)",
             "POST /api/project-update (isolated data root only)",
             "POST /api/montage/native/start (manual clips, isolated root)",
+            "POST /api/montage/native/plan (CPU-based selection, read-only)",
+            "POST /api/montage/native/start-from-run (CPU-backed, isolated root)",
             "GET /api/montage/native/status",
             "POST /api/montage/native/cancel (isolated root)",
             "GET /api/montage/native/library",
@@ -91,6 +94,11 @@ fn app(state: Arc<AppState>) -> Router {
             post(montage::start_native_montage),
         )
         .route("/api/montage/native/status", get(montage::native_status))
+        .route("/api/montage/native/plan", post(rallies::preview_selection))
+        .route(
+            "/api/montage/native/start-from-run",
+            post(montage::start_native_from_run),
+        )
         .route("/api/montage/native/cancel", post(montage::native_cancel))
         .route("/api/montage/native/media", get(montage::native_media))
         .route("/api/montage/native/library", get(montage::native_library))
