@@ -507,6 +507,15 @@ fn update_record(state: &AppState, request: Value) -> Result<Value, ApiError> {
             .iter()
             .position(|row| row["id"].as_str() == Some(&id))
             .ok_or_else(|| storage::not_found("Проект не найден"))?;
+        if project_root(state)
+            .join(&id)
+            .join(".delete-requested")
+            .exists()
+        {
+            return Err(storage::conflict(
+                "Проект архивируется; изменение запрещено",
+            ));
+        }
         let before = projects[index].clone();
         let mut item = before
             .as_object()
@@ -658,6 +667,89 @@ pub(crate) fn scan_videos(state: &AppState) -> Result<Vec<Value>, ApiError> {
         }));
     }
     Ok(out)
+}
+
+pub(crate) fn mark_project_for_archive(state: &AppState, id: &str) -> Result<(), ApiError> {
+    storage::project_id(id)?;
+    with_registry_lock(state, || {
+        if !load_projects(state)?
+            .iter()
+            .any(|row| row["id"].as_str() == Some(id))
+        {
+            return Err(storage::not_found("Проект не найден"));
+        }
+        let directory = project_root(state).join(id);
+        let metadata = fs::symlink_metadata(&directory)
+            .map_err(|_| storage::not_found("Каталог проекта не найден"))?;
+        if metadata.file_type().is_symlink() || !metadata.is_dir() {
+            return Err(storage::bad_request(
+                "Каталог проекта не должен быть ссылкой",
+            ));
+        }
+        let marker = directory.join(".delete-requested");
+        if marker.exists() {
+            return Err(storage::conflict("Проект уже архивируется"));
+        }
+        fs::write(&marker, b"rust_archive_pending")
+            .map_err(|err| storage::internal(format!("Set project archive marker: {err}")))?;
+        Ok(())
+    })
+}
+
+pub(crate) fn clear_project_archive_marker(state: &AppState, id: &str) {
+    if storage::project_id(id).is_ok() && state.writes_enabled {
+        let _ = fs::remove_file(project_root(state).join(id).join(".delete-requested"));
+    }
+}
+
+/// Move only project-owned data to the isolated recoverable archive.
+/// Source videos, common prepared cache and global player photo albums are untouched.
+pub(crate) fn archive_marked_project(state: &AppState, id: &str) -> Result<Value, ApiError> {
+    storage::project_id(id)?;
+    with_registry_lock(state, || {
+        let mut registry = load_projects(state)?;
+        let index = registry
+            .iter()
+            .position(|row| row["id"].as_str() == Some(id))
+            .ok_or_else(|| storage::not_found("Проект не найден"))?;
+        let source = project_root(state).join(id);
+        let meta = fs::symlink_metadata(&source)
+            .map_err(|_| storage::not_found("Каталог проекта не найден"))?;
+        if meta.file_type().is_symlink()
+            || !meta.is_dir()
+            || !source.join(".delete-requested").is_file()
+        {
+            return Err(storage::conflict("Архивирование не было подготовлено"));
+        }
+        let trash = project_root(state).join(".trash");
+        if let Ok(meta) = fs::symlink_metadata(&trash) {
+            if meta.file_type().is_symlink() || !meta.is_dir() {
+                return Err(storage::bad_request("Каталог архива недоступен"));
+            }
+        } else {
+            fs::create_dir(&trash)
+                .map_err(|err| storage::internal(format!("Create archive root: {err}")))?;
+        }
+        let archive_id = format!("{}-{}", id, Uuid::new_v4().simple());
+        let destination = trash.join(&archive_id);
+        fs::rename(&source, &destination)
+            .map_err(|err| storage::internal(format!("Archive project directory: {err}")))?;
+        registry.remove(index);
+        if let Err(error) = storage::write_json_atomic(
+            &registry_path(state),
+            &json!({"schema":1,"projects":registry}),
+        ) {
+            // Archive rename is reversible; don't silently leave an absent
+            // registry entry pointing to an unlisted project.
+            if let Err(restore) = fs::rename(&destination, &source) {
+                eprintln!("Rust project archive rollback failed: {restore}");
+            }
+            return Err(error);
+        }
+        let _ = fs::remove_file(destination.join(".delete-requested"));
+        Ok(json!({"project_id":id,"archived":true,"deleted":false,
+            "archive_id":archive_id,"shared_prepared_retained":true}))
+    })
 }
 
 #[cfg(test)]

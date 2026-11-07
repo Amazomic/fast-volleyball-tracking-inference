@@ -12,6 +12,7 @@ mod player_identity;
 mod player_montage;
 mod player_statistics;
 mod preparation;
+mod project_archive;
 mod projects;
 mod quick_reel;
 mod rallies;
@@ -80,6 +81,7 @@ async fn rewrite_status(
             "GET /api/analysis-resources",
             "POST /api/project-create (isolated data root only)",
             "POST /api/project-update (isolated data root only)",
+            "POST /api/project-archive/native (recoverable isolated archive)",
             "POST /api/montage/native/start (manual clips, isolated root)",
             "POST /api/montage/native/plan (CPU-based selection, read-only)",
             "POST /api/rallies/native/marks (read/set gold marks, isolated root)",
@@ -125,6 +127,10 @@ fn app(state: Arc<AppState>) -> Router {
         .route("/api/players/library/native", post(player_catalog::edit))
         .route("/api/project-create", post(projects::create_project))
         .route("/api/project-update", post(projects::update_project))
+        .route(
+            "/api/project-archive/native",
+            post(project_archive::archive),
+        )
         .route(
             "/api/montage/native/start",
             post(montage::start_native_montage),

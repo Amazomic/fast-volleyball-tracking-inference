@@ -503,6 +503,32 @@ pub async fn cancel_project(state: Arc<AppState>, id: &str) -> Result<usize, Api
     Ok(affected)
 }
 
+/// Detach a project being archived from shared preparation. An FFmpeg
+/// conversion continues when another project still needs the same video.
+pub(crate) async fn detach_archiving_project(state: &AppState, id: &str) -> usize {
+    let mut jobs = state.preparation.jobs.lock().await;
+    let mut affected = 0usize;
+    for job in jobs.values_mut() {
+        if job.subscribed_projects.remove(id) {
+            affected += 1;
+            if job.subscribed_projects.is_empty() {
+                let _ = job.cancel.send(true);
+            }
+        }
+    }
+    state
+        .preparation
+        .cancelled_projects
+        .lock()
+        .await
+        .insert(id.to_owned());
+    affected
+}
+
+pub(crate) async fn resume_after_failed_archive(state: &AppState, id: &str) {
+    state.preparation.cancelled_projects.lock().await.remove(id);
+}
+
 pub(crate) async fn collect_status(state: &AppState, id: &str) -> Result<Value, ApiError> {
     let project = projects::existing_project(state, id)?;
     let videos = project["videos"]

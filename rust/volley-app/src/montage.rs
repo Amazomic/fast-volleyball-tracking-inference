@@ -596,6 +596,9 @@ pub async fn start_native_montage(
             return Err(storage::conflict("Другой монтаж уже начал работу"));
         }
     }
+    // Archive may have started while FFprobe planned this job; reject it
+    // before publishing a new worker in the montage slot.
+    projects::existing_project(&state, &selected.project_id)?;
     let total = selected.clips.len() + 1 + usize::from(selected.audio.is_some());
     let job_id = selected.job_id.clone();
     let status = Arc::new(Mutex::new(JobStatus {
@@ -654,6 +657,40 @@ pub async fn native_cancel(
         let _ = job.cancel.send(true);
     }
     Ok(Json(json!({"cancel_requested":active,"job_id":id})))
+}
+
+/// Cancel an active montage for exactly this project before archiving its
+/// owned directory. Unrelated montages must not be interrupted.
+pub(crate) async fn stop_for_project_archive(
+    state: &AppState,
+    project_id: &str,
+) -> Result<bool, ApiError> {
+    let status = {
+        let current = state.montage.current.lock().await;
+        if let Some(job) = current.as_ref() {
+            let snapshot = job.status.lock().await;
+            if snapshot.project_id == project_id && matches!(snapshot.state, "queued" | "running") {
+                let _ = job.cancel.send(true);
+                Some(job.status.clone())
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    };
+    let Some(status) = status else {
+        return Ok(false);
+    };
+    for _ in 0..120 {
+        if !matches!(status.lock().await.state, "queued" | "running") {
+            return Ok(true);
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    Err(storage::conflict(
+        "Монтаж проекта ещё останавливается; архивирование отменено",
+    ))
 }
 
 fn completed_montage(

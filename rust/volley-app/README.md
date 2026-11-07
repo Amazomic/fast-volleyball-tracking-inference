@@ -62,6 +62,7 @@ POST /api/players/identity/native      read or manually assign/unassign/exclude/
 POST /api/players/statistics/native    preview/recalculate per-player CPU actions, versioned report (isolated root)
 POST /api/project-create        experimental isolated registry only
 POST /api/project-update        experimental isolated registry only
+POST /api/project-archive/native  cancel this Rust project's preparation/montage and recoverably archive (isolated)
 GET  /api/project-preparation?project_id=...  preparation states, enqueue missing when isolated
 POST /api/project-preparation/retry    retry failed/preparation-paused jobs (isolated only)
 POST /api/project-preparation/cancel   pause and cancel this project's preparation jobs
