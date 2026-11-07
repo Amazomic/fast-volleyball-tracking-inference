@@ -92,7 +92,7 @@ fn fingerprint(source: &Path, models: &[PathBuf]) -> Result<String, ApiError> {
     Ok(format!("{:x}", Sha256::digest(repr.as_bytes())))
 }
 
-fn path_key(video: &str, cache_id: &str) -> String {
+pub(crate) fn path_key(video: &str, cache_id: &str) -> String {
     let input = format!("{video}\0{cache_id}");
     format!("{:x}", Sha256::digest(input.as_bytes()))[..24].to_owned()
 }
@@ -439,7 +439,7 @@ fn vetted_album_references(
     references
 }
 
-fn calculate(state: &AppState, request: ReidRequest) -> Result<Value, ApiError> {
+pub(crate) fn calculate(state: &AppState, request: ReidRequest) -> Result<Value, ApiError> {
     storage::project_id(&request.project_id)?;
     storage::video_name(&request.video)?;
     if !(55..=99).contains(&request.threshold_percent) {
@@ -505,6 +505,24 @@ fn calculate(state: &AppState, request: ReidRequest) -> Result<Value, ApiError> 
     };
     let (confirmed, conflicts) = owner_constraints(&identity, &request.video, base_id);
     let manual_doc = storage::read_json(&group_dir.join(format!("{key}.json")))?;
+    if let Some(ref saved) = manual_doc {
+        let meta = fs::metadata(&source)
+            .map_err(|_| storage::bad_request("GPU player source is unavailable"))?;
+        let modified = meta
+            .modified()
+            .ok()
+            .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+            .map(|time| time.as_nanos());
+        let saved_stamp = saved["stamp"]["mtime_ns"].as_u64().map(u128::from);
+        if saved["schema"].as_u64() != Some(1)
+            || modified != saved_stamp
+            || saved["stamp"]["size"].as_u64() != Some(meta.len())
+        {
+            return Err(storage::conflict(
+                "Сохранённые ReID-группы относятся к старому GPU-источнику; не применяйте их автоматически"
+            ));
+        }
+    }
     let mut prohibited = excluded.clone();
     prohibited.extend(conflicts.iter().copied());
     // Pinned/manual group members are never re-assigned to a different

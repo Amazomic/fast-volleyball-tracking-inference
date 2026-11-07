@@ -44,6 +44,7 @@ GET  /api/analysis-resources     CPU thread count
 GET  /api/players/library       existing global athlete catalog
 POST /api/players/continuity-preview  provisional Track ID groups and 4s gap suggestions for selected run
 POST /api/players/reid-native/preview   cached native ReID grouping and vetted references (read-only)
+POST /api/players/reid-native/groups    read/merge/split candidate groups with source/owner checks (isolated root)
 POST /api/players/identity/native      read or manually assign/unassign/exclude/restore IDs (isolated root)
 POST /api/project-create        experimental isolated registry only
 POST /api/project-update        experimental isolated registry only
@@ -186,3 +187,23 @@ The response includes `revision`, `groups`, `roster`, excluded/rejected IDs, ass
 ~~~
 
 Use `group_id` instead of `track_ids` to approve the entire **saved**, non-stale ReID candidate group. `unassign`, `exclude`, and `restore` accept `track_ids` plus `expected_revision`; a reassignment from an already confirmed *different* owner additionally requires `allow_reassign:true`. A stale revision returns HTTP 409, never overwriting another tab's work. Edits are **only** allowed with an explicitly isolated development `VOLLEY_RUST_DATA_ROOT` and are saved under `projects/<project_id>/player_identities.json` there, preserving Python schema 2. The original production file is never written. Manual grouping UI, album photo enrollment and confirmed-statistics generation are separate remaining migration steps.
+
+## Experimental manual ReID grouping
+
+`POST /api/players/reid-native/groups` accepts a project/run/video with `action:"read"` and optional `threshold_percent` (55–99). Its response contains `groups`, `unmatched_ids`, `manual_excluded_ids`, and `revision` (SHA256 or `absent` when the baseline is generated but not yet saved). For example, to explicitly merge two Track IDs:
+
+~~~json
+{
+  "project_id": "1234abcdef01",
+  "run_id": "run_20261107_123456",
+  "video": "match.mp4",
+  "action": "merge",
+  "track_ids": ["5", "12"],
+  "expected_revision": "sha256-or-absent-from-read",
+  "threshold_percent": 85
+}
+~~~
+
+To split, change `action` to `split` and list the IDs to remove from candidate groups; no players are deleted. Each edit returns a **new** revision that must be used next time. Conflicting confirmed owners, overlapping tracks, excluded IDs, stale group catalogues and concurrent edits produce errors without writing changes. All group edits require isolated `VOLLEY_RUST_DATA_ROOT` and do not write the original project.
+
+To then **confirm a saved group as a real player**, call `POST /api/players/identity/native` with `action:"assign"`, `group_id`, `player_id`, the current identity `expected_revision`, **and** `expected_group_revision` returned by the group endpoint. The group revision is checked again while holding the exclusive identity lock. A group is a candidate until this separate approval.

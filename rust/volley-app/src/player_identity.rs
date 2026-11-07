@@ -38,6 +38,9 @@ pub struct IdentityRequest {
     pub track_ids: Vec<String>,
     #[serde(default)]
     pub group_id: Option<String>,
+    /// Revision of the saved ReID group catalogue at the time of clicking it.
+    #[serde(default)]
+    pub expected_group_revision: Option<String>,
     #[serde(default)]
     pub player_id: Option<String>,
     /// Must equal the revision returned by a preceding read.
@@ -284,6 +287,14 @@ fn select_ids(req: &IdentityRequest, ctx: &Context) -> Result<Vec<String>, ApiEr
         let source = raw_file(&ctx.group_path)?.ok_or_else(|| {
             storage::bad_request("No saved ReID groups for this selected inference")
         })?;
+        let expected = req.expected_group_revision.as_deref().ok_or_else(|| {
+            storage::bad_request("Для привязки группы требуется её актуальная revision")
+        })?;
+        if ident_revision(Some(&source)) != expected {
+            return Err(storage::conflict(
+                "ReID-группа изменилась — откройте её повторно",
+            ));
+        }
         let record: Value = serde_json::from_slice(&source)
             .map_err(|_| storage::bad_request("Invalid saved ReID group JSON"))?;
         let meta = fs::metadata(&ctx.player_file)
@@ -588,6 +599,62 @@ fn present(ctx: &Context, raw: &Value, revision: String) -> Result<Value, ApiErr
     }))
 }
 
+/// A whole suggested group must not turn two confirmed people (or two
+/// simultaneous on-court identities) into one person, even when the caller
+/// permits reassignment of a single ID.
+fn guard_group_assignment(ctx: &Context, doc: &Value, ids: &[String]) -> Result<(), ApiError> {
+    let selected = ids.iter().collect::<HashSet<_>>();
+    let mut confirmed = HashSet::new();
+    for group in doc["videos"][&ctx.storage_key]
+        .as_array()
+        .into_iter()
+        .flatten()
+    {
+        let Some(owner) = group["id"].as_str() else {
+            continue;
+        };
+        for raw in group["track_ids"].as_array().into_iter().flatten() {
+            let Some(id) = value_id(raw) else {
+                continue;
+            };
+            if !selected.contains(&id) {
+                continue;
+            }
+            if group["link_meta"][&id]["reviewed"]
+                .as_bool()
+                .unwrap_or(true)
+            {
+                confirmed.insert(owner);
+            }
+        }
+    }
+    if confirmed.len() > 1 {
+        return Err(storage::conflict(
+            "В выбранной группе уже подтверждены разные игроки; разделите группу",
+        ));
+    }
+    let timeline = reid_native::track_statistics(&ctx.player_file)?
+        .into_iter()
+        .map(|row| (row.id.to_string(), (row.first_frame, row.last_frame)))
+        .collect::<HashMap<_, _>>();
+    for (index, id) in ids.iter().enumerate() {
+        let (start, end) = timeline
+            .get(id)
+            .ok_or_else(|| storage::conflict("Track ID отсутствует в GPU-результатах"))?;
+        for other in ids.iter().skip(index + 1) {
+            let (next_start, next_end) = timeline
+                .get(other)
+                .ok_or_else(|| storage::conflict("Track ID отсутствует в GPU-результатах"))?;
+            if start <= next_end && next_start <= end {
+                return Err(storage::conflict(
+                    "Одновременно видимые ID нельзя привязать одной ReID-группой",
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 fn calculate(state: &AppState, req: IdentityRequest) -> Result<Value, ApiError> {
     if !matches!(
         req.action.as_str(),
@@ -654,6 +721,18 @@ fn calculate(state: &AppState, req: IdentityRequest) -> Result<Value, ApiError> 
         .map_err(|err| storage::internal(format!("Cannot acquire identity lock: {err}")))?;
     // Re-read under lock to defeat TOCTOU and stale multi-tab edits.
     let old = raw_file(&ctx.identity_path)?;
+    // Group editor and identity editor use the same exclusive project lock.
+    // Check the saved group revision again *under the lock* before assigning.
+    if req.group_id.is_some() {
+        let group_raw = raw_file(&ctx.group_path)?;
+        if ident_revision(group_raw.as_deref())
+            != req.expected_group_revision.as_deref().unwrap_or("")
+        {
+            return Err(storage::conflict(
+                "ReID-группа уже изменена другой операцией; обновите список",
+            ));
+        }
+    }
     let current = ident_revision(old.as_deref());
     if current != expected {
         return Err(storage::conflict(
@@ -661,6 +740,9 @@ fn calculate(state: &AppState, req: IdentityRequest) -> Result<Value, ApiError> 
         ));
     }
     let mut data = parse_document(old.as_deref())?;
+    if req.action == "assign" && req.group_id.is_some() {
+        guard_group_assignment(&ctx, &data, &ids)?;
+    }
     apply(&mut data, &req, &ctx, &ids)?;
     storage::write_json_atomic(&ctx.identity_path, &data)?;
     let updated = raw_file(&ctx.identity_path)?
@@ -718,6 +800,7 @@ mod tests {
             action: action.into(),
             track_ids: vec!["5".into()],
             group_id: None,
+            expected_group_revision: None,
             player_id: player_id.map(str::to_owned),
             expected_revision: Some("absent".into()),
             allow_reassign,

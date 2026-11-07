@@ -9,6 +9,7 @@ mod player_identity;
 mod preparation;
 mod projects;
 mod rallies;
+mod reid_group_edits;
 mod reid_native;
 mod reid_npz;
 mod storage;
@@ -72,6 +73,7 @@ async fn rewrite_status(
             "POST /api/cpu/touch-preview (read-only RAVEL diagnostics)",
             "POST /api/players/continuity-preview (read-only geometry candidates)",
             "POST /api/players/reid-native/preview (saved embeddings, read-only)",
+            "POST /api/players/reid-native/groups (read, merge, split; isolated root)",
             "POST /api/players/identity/native (manual review/edit, isolated root)",
             "POST /api/montage/native/start-from-run (CPU-backed, isolated root)",
             "GET /api/montage/native/status",
@@ -116,6 +118,10 @@ fn app(state: Arc<AppState>) -> Router {
         .route(
             "/api/players/reid-native/preview",
             post(reid_native::preview),
+        )
+        .route(
+            "/api/players/reid-native/groups",
+            post(reid_group_edits::group_edits),
         )
         .route(
             "/api/players/continuity-preview",
