@@ -47,33 +47,7 @@ fn pixel_params(kind: ModelKind) -> (usize, usize, usize, &'static str) {
 }
 fn normalize_pixels(bytes: &[u8], kind: ModelKind) -> Result<Vec<f32>, String> {
     let (width, height, channels, _) = pixel_params(kind);
-    let pixels = width
-        .checked_mul(height)
-        .and_then(|v| v.checked_mul(channels))
-        .and_then(|v| v.checked_mul(CLIP))
-        .ok_or("Invalid model pixel dimensions")?;
-    if bytes.len() != pixels {
-        return Err(format!(
-            "FFmpeg decoded {} bytes, expected {} (9 whole frames)",
-            bytes.len(),
-            pixels
-        ));
-    }
-    if channels == 1 {
-        return Ok(bytes.iter().map(|&v| v as f32 / 255.0).collect());
-    }
-    let each = width * height;
-    let mut tensor = vec![0_f32; pixels];
-    for frame in 0..CLIP {
-        for pos in 0..each {
-            for ch in 0..channels {
-                let src = (frame * each + pos) * channels + ch;
-                let dst = (frame * channels + ch) * each + pos;
-                tensor[dst] = bytes[src] as f32 / 255.0;
-            }
-        }
-    }
-    Ok(tensor)
+    volley_media::frame_windows::normalized_model_window(bytes, width, height, channels)
 }
 async fn decode_nine(prepared: PathBuf, request: &ClipRequest) -> Result<Vec<f32>, ApiError> {
     let (w, h, _, format) = pixel_params(request.model);

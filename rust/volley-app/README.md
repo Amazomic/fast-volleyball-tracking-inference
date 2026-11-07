@@ -7,7 +7,7 @@
 The four maintained crates share `rust/Cargo.toml` and `rust/Cargo.lock`:
 
 - `volley-core`: deterministic geometry and motion kernels (historic S01/S02a).
-- `volley-media`: FFprobe metadata, rotation, target resolution, H.264/30 FPS readiness, schema-2 SHA256 prepared identities, JPEG preview rendering and original-quality montage planning.
+- `volley-media`: FFprobe metadata, rotation, target resolution, H.264/30 FPS readiness, schema-2 SHA256 prepared identities, JPEG preview rendering, bounded nine-frame raw-video windowing and original-quality montage planning.
 - `volley-app`: standalone HTTP server, JSON project/catalog/history APIs, isolated preparation and manual montage jobs, audio upload, FFmpeg orchestration and byte-range MP4 streaming.
 - `volley-inference`: native ONNX Runtime model sessions and one-clip execution; complete GPU streaming remains pending.
 
