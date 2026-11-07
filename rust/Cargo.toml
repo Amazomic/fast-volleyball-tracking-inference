@@ -4,6 +4,7 @@ members = [
     "volley-core",
     "volley-media",
     "volley-app",
+    "volley-inference",
 ]
 default-members = ["volley-app"]
 

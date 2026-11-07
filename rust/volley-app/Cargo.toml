@@ -16,6 +16,7 @@ uuid = { version = "1", features = ["v4"] }
 chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
 sha2 = "0.10"
 volley-media = { path = "../volley-media" }
+volley-inference = { path = "../volley-inference" }
 volley-core = { path = "../volley-core" }
 tokio-util = { version = "0.7", features = ["io"] }
 percent-encoding = "2"

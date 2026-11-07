@@ -65,6 +65,8 @@ POST /api/quick-reel/native/select   register chosen local video paths without c
 POST /api/quick-reel/native/start    start independent video preparation; GPU/CPU not yet available
 GET  /api/quick-reel/native/status   latest Quick Reel stage or ?id=uuid
 POST /api/quick-reel/native/cancel  cancel only the currently active Quick Reel
+POST /api/inference/native/preflight    inspect VballNet/RAVEL sidecars, optionally open ORT sessions
+POST /api/inference/native/clip-preview  one real 9-frame ONNX inference from a project prepared video
 POST /api/cpu/touch-preview          read-only RAVEL Touch proposals and motion-confirmed contacts for explicit run/video
 ```
 
@@ -300,3 +302,31 @@ The response returns new source selection IDs. Upload music first using `POST /a
 ~~~
 
 to `POST /api/quick-reel/native/start`. Track progress through `GET /api/quick-reel/native/status` or `?id=<reel_id>`; cancel through `POST /api/quick-reel/native/cancel` with `{"id":"<reel_id>"}`. Quick Reel reuses **prepared MP4s only** (or skips conversion for analysis-ready sources), then reports `awaiting_native_inference` with `output:null` because native RAVEL/VballNet inference + fresh CPU and MP4 render are not yet ported. This is a development API, not the existing one-click browser Quick Reel. Only the latest scratch run is retained; original project files and Python Quick Reel history are untouched.
+
+## Experimental native ONNX clip kernel
+
+The native `volley-inference` crate uses ONNX Runtime 1.22's **dynamic** C ABI. Deploy an actual matching `onnxruntime.dll` (Windows) or `libonnxruntime.so` (Linux) and set `ORT_DYLIB_PATH`, including working CUDA/CuDNN provider dependencies for GPU mode. The current WSL build does **not** have a validated ONNX Runtime/CUDA shared library; compilation is not evidence that GPU execution is operational. There is no Python inference fallback.
+
+To inspect the model contracts, call `POST /api/inference/native/preflight`:
+
+~~~json
+{"device":"cuda","gpu_device_id":0,"gpu_memory_limit_mb":0,"cpu_threads":8,"probe_runtime":false}
+~~~
+
+Setting `probe_runtime:true` additionally attempts to construct **real** VballNet and RAVEL sessions and returns provider-specific failures. It does not invoke GPU prediction.
+
+After native video preparation has finished for a selected project, the bounded single-window proof-of-inference path is `POST /api/inference/native/clip-preview`:
+
+~~~json
+{
+  "project_id":"1234abcdef01",
+  "video":"match.mp4",
+  "first_frame":600,
+  "model":"ball",
+  "device":"cuda",
+  "gpu_device_id":0,
+  "gpu_memory_limit_mb":0
+}
+~~~
+
+For RAVEL use `"model":"players"`. This reads exactly nine prepared video frames using FFmpeg, builds normalized float model input, executes the actual ONNX graph through Rust/ORT and returns **unconfirmed raw** ball candidates or RAVEL Touch query maxima. All outputs are read-only and are **not** a complete player/ball tracker, finished model run or analyzed montage. Quality/performance and pixel-level comparison to the original Python decoder remain to be performed in the deferred final testing phase.

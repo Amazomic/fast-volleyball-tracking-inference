@@ -2,6 +2,8 @@
 mod analysis_runs;
 mod catalog;
 mod history;
+mod inference_clip;
+mod inference_native;
 mod montage;
 mod playback;
 mod player_continuity;
@@ -40,6 +42,7 @@ struct AppState {
     statistics_limit: tokio::sync::Semaphore,
     marks_limit: tokio::sync::Semaphore,
     quick_reel: quick_reel::QuickReelManager,
+    inference_limit: tokio::sync::Semaphore,
 }
 
 #[derive(Serialize)]
@@ -82,6 +85,8 @@ async fn rewrite_status(
             "POST /api/quick-reel/native/start (preparation only; inference pending)",
             "GET /api/quick-reel/native/status",
             "POST /api/quick-reel/native/cancel",
+            "POST /api/inference/native/preflight (read-only model + optional ONNX sessions)",
+            "POST /api/inference/native/clip-preview (one actual 9-frame window, read-only)",
             "POST /api/cpu/touch-preview (read-only RAVEL diagnostics)",
             "POST /api/players/continuity-preview (read-only geometry candidates)",
             "POST /api/players/reid-native/preview (saved embeddings, read-only)",
@@ -131,6 +136,14 @@ fn app(state: Arc<AppState>) -> Router {
         .route("/api/quick-reel/native/start", post(quick_reel::start))
         .route("/api/quick-reel/native/status", get(quick_reel::status))
         .route("/api/quick-reel/native/cancel", post(quick_reel::cancel))
+        .route(
+            "/api/inference/native/preflight",
+            post(inference_native::preflight),
+        )
+        .route(
+            "/api/inference/native/clip-preview",
+            post(inference_clip::clip_preview),
+        )
         .route("/api/cpu/touch-preview", post(touch_preview::touch_preview))
         .route(
             "/api/players/statistics/native",
@@ -220,6 +233,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         statistics_limit: tokio::sync::Semaphore::new(1),
         marks_limit: tokio::sync::Semaphore::new(1),
         quick_reel: quick_reel::QuickReelManager::new(),
+        inference_limit: tokio::sync::Semaphore::new(1),
     });
     println!(
         "Volleyball Studio Rust rewrite (INCOMPLETE): http://{addr}/internal/rewrite-status (isolated writes={writes_enabled})"
