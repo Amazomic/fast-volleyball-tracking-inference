@@ -923,6 +923,8 @@ pub async fn start_native_from_run(
             "Слишком много розыгрышей для одного монтажа (максимум 80)",
         ));
     }
+    let focus = selection.player_filter.clone();
+    let selected_count = selection.selected.len();
     let clips = selection
         .selected
         .into_iter()
@@ -940,5 +942,12 @@ pub async fn start_native_from_run(
         audio_volume: request.audio_volume,
         encoder: request.encoder,
     };
-    start_native_montage(State(state), headers, Json(montage_request)).await
+    let Json(mut response) =
+        start_native_montage(State(state), headers, Json(montage_request)).await?;
+    response["selected_complete_rallies"] = json!(selected_count);
+    if let Some(focus) = focus {
+        response["player_filter"] = serde_json::to_value(focus)
+            .map_err(|e| storage::internal(format!("Player focus serialization failed: {e}")))?;
+    }
+    Ok(Json(response))
 }

@@ -71,7 +71,11 @@ fn digest(bytes: Option<&[u8]>) -> String {
         .map(|b| format!("{:x}", Sha256::digest(b)))
         .unwrap_or_else(|| "absent".into())
 }
-fn read_document(path: &Path, limit: u64, required: bool) -> Result<(Value, String), ApiError> {
+pub(crate) fn read_document(
+    path: &Path,
+    limit: u64,
+    required: bool,
+) -> Result<(Value, String), ApiError> {
     let data = read_raw(path, limit)?;
     if data.is_none() && required {
         return Err(storage::bad_request(format!(
@@ -123,7 +127,7 @@ fn optional_marker(path: &Path) -> Result<String, ApiError> {
         Ok(_) => marker(path),
     }
 }
-fn known_tracks(path: &Path) -> Result<HashMap<String, (i64, i64)>, ApiError> {
+pub(crate) fn known_tracks(path: &Path) -> Result<HashMap<String, (i64, i64)>, ApiError> {
     let ids = reid_native::track_statistics(path)?
         .into_iter()
         .map(|t| (t.id.to_string(), (t.first_frame, t.last_frame)))
@@ -133,7 +137,10 @@ fn known_tracks(path: &Path) -> Result<HashMap<String, (i64, i64)>, ApiError> {
     }
     Ok(ids)
 }
-fn roster(state: &AppState, project: &Value) -> Result<BTreeMap<String, String>, ApiError> {
+pub(crate) fn roster(
+    state: &AppState,
+    project: &Value,
+) -> Result<BTreeMap<String, String>, ApiError> {
     let selected = project["player_ids"]
         .as_array()
         .ok_or_else(|| storage::bad_request("Не настроен список игроков проекта"))?
@@ -157,7 +164,7 @@ fn roster(state: &AppState, project: &Value) -> Result<BTreeMap<String, String>,
     }
     Ok(players)
 }
-fn known_owners(
+pub(crate) fn known_owners(
     identity: &Value,
     groups: &Value,
     video: &str,
@@ -324,7 +331,7 @@ fn rally_ranges(
         .collect();
     Ok((ranges, groups.len()))
 }
-fn actions_from_events(
+pub(crate) fn actions_from_events(
     events: &Value,
     ranges: Option<&[(u64, u64, Option<u64>, bool)]>,
 ) -> Result<(Vec<Action>, u64), ApiError> {
@@ -387,6 +394,7 @@ fn actions_from_events(
             .or_else(|| integer(&event["id"]).map(|n| n.to_string()))
             .unwrap_or_else(|| format!("event-{index}"));
         actions.push(Action {
+            frame,
             id,
             contact_id,
             kind: kind.to_owned(),

@@ -20,6 +20,8 @@ pub const RECOGNIZED: [&str; 5] = ["attack", "block", "serve", "dig", "overhead_
 
 #[derive(Clone, Debug)]
 pub struct Action {
+    /// Original CPU frame; optional for independently injected contacts.
+    pub frame: Option<u64>,
     pub id: String,
     pub contact_id: Option<String>,
     pub kind: String,
@@ -272,6 +274,7 @@ mod tests {
 
     fn sample(id: &str, kind: &str, time_ms: i64, confidence: f64) -> Action {
         Action {
+            frame: Some((time_ms / 33).max(0) as u64),
             id: format!("evt-{kind}"),
             contact_id: None,
             kind: kind.into(),

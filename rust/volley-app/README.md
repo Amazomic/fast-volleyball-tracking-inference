@@ -58,14 +58,14 @@ POST /api/montage/native/cancel        cancel current montage (job_id)
 GET  /api/montage/native/library?project_id=...  saved versioned Rust MP4s
 GET  /api/montage/native/media?project_id=...&job_id=...  MP4 with HTTP Range
 POST /api/montage/native/audio         multipart file upload (field file, max 90 MiB)
-POST /api/montage/native/plan          read-only auto/manual full-rally selection from chosen CPU run
-POST /api/montage/native/start-from-run  isolated rendering of selected CPU-run rallies
+POST /api/montage/native/plan          read-only full-rally selection, optionally focused on one verified athlete/actions
+POST /api/montage/native/start-from-run  isolated full-rally rendering with optional verified-player focus
 POST /api/cpu/touch-preview          read-only RAVEL Touch proposals and motion-confirmed contacts for explicit run/video
 ```
 
 These routes are implementations of persisted formats, not a claim of complete API parity. Rust project creation/update now queues native preparation. Compatible original MP4s are reused without recoding; other sources are converted by native FFmpeg to H.264/30 FPS/YUV420P and stored in the separate content-addressed development cache. One converter runs at a time; file locks prevent duplicate publication, status tracks FFmpeg progress, and cancellation is persisted per project until an explicit retry. Existing projects may use legacy storage conventions not fully supported; player catalog loading does not yet run legacy photo/identity backfills.
 
-**Not implemented:** gold-marked episode filters, complete player/ball overlays or auto-follow/vertical crop, audio mixing with source sound, complete browser montage UI contract, cross-project adoption of old prepared results, general uploads, complete model/GPU inference and CPU touch inference, live ReID embedding extraction/manual photo operations, personal player statistics, on-demand fallback video segments, quick reel, full API, Rust/WASM browser UI and desktop packaging.
+**Not implemented:** gold-marked episode filters, complete player/ball overlays or auto-follow/vertical crop, audio mixing with source sound, complete browser montage UI contract, cross-project adoption of old prepared results, general uploads, complete model/GPU inference and CPU touch inference, live ReID embedding extraction/manual photo operations, native report UI, on-demand fallback video segments, quick reel, full API, Rust/WASM browser UI and desktop packaging.
 
 Development compilation/smoke probes are allowed. User-directed order: finish all Rust functionality **first**, then comprehensive tests/adaptation, then compare final Rust vs saved Python; rollback to `checkpoint/pre-rust-2026-11-07` if needed. See `docs/RUST_REWRITE_SCOPE.md` and `docs/RUST_MIGRATION.md`.
 
@@ -227,3 +227,21 @@ Call `POST /api/players/statistics/native`. The response provides `per_video` an
 To publish an immutable/versioned report **only in the isolated Rust development data root**, use `mode:"recalculate"`. The response includes `snapshot_file` and `snapshot_created`; repeated identical inputs reuse the prior report. The source CPU events, GPU player detection cache and original Python identity/photo store are not rewritten. A change in roster, assignments, ReID groups, source CPU evidence or the statistics algorithm invalidates the previous source fingerprint.
 
 Only explicit reviewed Track IDs and a single unambiguous owner inherited through a manually approved candidate group are counted for a named athlete. Automatic appearance or geometric suggestions remain unassigned. The report is not yet wired to the production Players/Preview UI. Real-match quality tests and final parity remain deferred.
+
+## Personalized whole-rally montage
+
+The existing Rust routes `POST /api/montage/native/plan` (read-only) and `POST /api/montage/native/start-from-run` (renders only to the isolated Rust root) now accept these optional fields:
+
+~~~json
+{
+  "project_id": "1234abcdef01",
+  "run_id": "run_20261107_123456_pp_example",
+  "selection_strategy": "attacks",
+  "player_id": "existing-project-player-id",
+  "player_action": "attack",
+  "min_player_actions": 1,
+  "duration": 120
+}
+~~~
+
+Choose an actual player ID from the project's existing roster, not a name or a Track ID. A candidate is eligible only if **that verified player** has at least one deduplicated saved CPU attack inside the detected boundaries (or the specifically recognized serve anchor) of a complete rally. A manual selected_rally_ids request uses this same player-focused candidate set and rejects mismatching IDs; it will never crop a rally to a single spike. The API reports `matching_player_rallies`, player-specific action counts and ranking on the scenes. Changing source CPU events or manual identity assignments requires planning again. Inference-only runs and unconfirmed candidates do not qualify. The legacy UI is not yet connected to these fields.

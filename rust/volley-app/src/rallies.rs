@@ -43,8 +43,21 @@ pub struct SelectionRequest {
     pub selected_rally_ids: Vec<String>,
     #[serde(default)]
     pub selected_videos: Option<Vec<String>>,
+    /// Only previously verified athlete IDs, never raw or predicted Track IDs.
+    #[serde(default)]
+    pub player_id: Option<String>,
+    #[serde(default = "default_player_action")]
+    pub player_action: String,
+    #[serde(default = "default_min_player_actions")]
+    pub min_player_actions: u64,
 }
 
+fn default_player_action() -> String {
+    "all".into()
+}
+fn default_min_player_actions() -> u64 {
+    1
+}
 fn default_duration() -> f64 {
     120.0
 }
@@ -74,6 +87,12 @@ pub struct Scene {
     pub analysis_offset_sec: f64,
     #[serde(flatten)]
     pub rally: Rally,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub player_action_counts: Option<BTreeMap<String, u64>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub player_actions_total: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub player_focus_matches: Option<u64>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -86,6 +105,18 @@ pub struct Selection {
     pub selected: Vec<Scene>,
     pub requested_duration: f64,
     pub selected_duration: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub player_filter: Option<PlayerFocus>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub matching_player_rallies: Option<usize>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct PlayerFocus {
+    pub player_id: String,
+    pub player_name: String,
+    pub player_action: String,
+    pub min_player_actions: u64,
 }
 
 pub(crate) fn cache_root(
@@ -295,6 +326,31 @@ fn validate_request(request: &SelectionRequest) -> Result<(), ApiError> {
     {
         return Err(storage::bad_request("Некорректный список ID розыгрышей"));
     }
+    if request.player_id.as_ref().is_some_and(|id| {
+        id.is_empty()
+            || id.len() > 128
+            || !id
+                .bytes()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'-' | b'_'))
+    }) || !matches!(
+        request.player_action.as_str(),
+        "all"
+            | "attack"
+            | "block"
+            | "serve"
+            | "dig"
+            | "overhead_pass"
+            | "low_touch"
+            | "unknown_touch"
+    ) || request.min_player_actions == 0
+        || request.min_player_actions > 100
+        || (request.player_id.is_none()
+            && (request.player_action != "all" || request.min_player_actions != 1))
+    {
+        return Err(storage::bad_request(
+            "Укажите игрока проекта и допустимый фильтр его игровых действий",
+        ));
+    }
     if request.min_action_counts.iter().any(|(key, value)| {
         !matches!(
             key.as_str(),
@@ -373,6 +429,9 @@ fn load_video_rallies(
             cache_id: cache_id.to_owned(),
             analysis_offset_sec: offset,
             rally: r,
+            player_action_counts: None,
+            player_actions_total: None,
+            player_focus_matches: None,
         })
         .collect())
 }
@@ -410,16 +469,39 @@ fn select(state: &AppState, request: &SelectionRequest) -> Result<Selection, Api
         ));
     }
     let mut all = Vec::new();
+    let mut focused_name = None;
     for video in chosen {
         let cache = run["videos"][video]
             .as_str()
             .ok_or_else(|| storage::bad_request(format!("Нет CPU-результата для {video}")))?;
-        all.extend(load_video_rallies(state, request, run, video, cache)?);
+        let mut scenes = load_video_rallies(state, request, run, video, cache)?;
+        if let Some(player_id) = request.player_id.as_deref() {
+            let player_name = crate::player_montage::annotate_rallies(
+                state,
+                &request.project_id,
+                &project,
+                video,
+                cache,
+                player_id,
+                &request.player_action,
+                &request.selection_strategy,
+                &mut scenes,
+            )?;
+            focused_name = Some(player_name);
+        }
+        all.extend(scenes);
     }
-    // load_video_rallies returns chronological groups; chosen video sources
-    // were already visited in the project's canonical order. Never reorder
-    // the montage catalogue alphabetically by filename.
-    let candidates = all;
+    // A player focus only admits rallies containing confirmed action evidence.
+    // ReID appearance and continuity suggestions are never accepted as proof.
+    // Stable rally IDs still refer to intact original source-frame intervals.
+    let candidates: Vec<Scene> = if request.player_id.is_some() {
+        all.into_iter()
+            .filter(|scene| scene.player_focus_matches.unwrap_or(0) >= request.min_player_actions)
+            .collect()
+    } else {
+        all
+    };
+    let matching_player_rallies = request.player_id.as_ref().map(|_| candidates.len());
     // Manual mode trusts only known stable IDs from the selected run, never
     // arbitrary client-provided offsets or frame ranges.
     let mut selected: Vec<Scene> = if request.rally_selection_mode == "manual" {
@@ -446,7 +528,11 @@ fn select(state: &AppState, request: &SelectionRequest) -> Result<Selection, Api
                     request.min_rally,
                     request.min_confidence,
                     &request.min_action_counts,
-                    &request.selection_strategy,
+                    if request.player_id.is_some() {
+                        "highlights" // focus-specific event evidence is checked above.
+                    } else {
+                        &request.selection_strategy
+                    },
                 )
             })
             .cloned()
@@ -505,6 +591,13 @@ fn select(state: &AppState, request: &SelectionRequest) -> Result<Selection, Api
         selected,
         requested_duration: request.duration,
         selected_duration: ((timeline as f64 / FPS) * 1000.0).round() / 1000.0,
+        player_filter: request.player_id.as_ref().map(|id| PlayerFocus {
+            player_id: id.clone(),
+            player_name: focused_name.unwrap_or_default(),
+            player_action: request.player_action.clone(),
+            min_player_actions: request.min_player_actions,
+        }),
+        matching_player_rallies,
     })
 }
 

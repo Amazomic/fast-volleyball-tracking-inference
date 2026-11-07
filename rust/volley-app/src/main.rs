@@ -6,6 +6,7 @@ mod montage;
 mod playback;
 mod player_continuity;
 mod player_identity;
+mod player_montage;
 mod player_statistics;
 mod preparation;
 mod projects;
