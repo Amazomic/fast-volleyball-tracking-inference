@@ -55,6 +55,7 @@ GET  /api/montage/native/media?project_id=...&job_id=...  MP4 with HTTP Range
 POST /api/montage/native/audio         multipart file upload (field file, max 90 MiB)
 POST /api/montage/native/plan          read-only auto/manual full-rally selection from chosen CPU run
 POST /api/montage/native/start-from-run  isolated rendering of selected CPU-run rallies
+POST /api/cpu/touch-preview          read-only RAVEL Touch proposals and motion-confirmed contacts for explicit run/video
 ```
 
 These routes are implementations of persisted formats, not a claim of complete API parity. Rust project creation/update now queues native preparation. Compatible original MP4s are reused without recoding; other sources are converted by native FFmpeg to H.264/30 FPS/YUV420P and stored in the separate content-addressed development cache. One converter runs at a time; file locks prevent duplicate publication, status tracks FFmpeg progress, and cancellation is persisted per project until an explicit retry. Existing projects may use legacy storage conventions not fully supported; player catalog loading does not yet run legacy photo/identity backfills.
@@ -105,3 +106,21 @@ One montage can render at once; clip extraction preserves native video resolutio
 Read-only planning works against existing project/CPU result files. The response contains `candidates`, `selected`, selected duration and stable `rally_id` values. For manually chosen groups, change `rally_selection_mode` to `manual` and pass the saved `selected_rally_ids` from the same current plan; stale/foreign IDs are rejected. The server rechecks the exact named CPU run and cache ownership on every request. Automatic selections never shorten a detected rally to fill the duration.
 
 `POST /api/montage/native/start-from-run` accepts the same selection fields plus optional `audio_file`, `audio_volume` and `encoder`, and performs video encoding **only** when `VOLLEY_RUST_DATA_ROOT` is an isolated sandbox that contains the relevant project/CPU snapshots. This route derives frames and time offsets server-side; no arbitrary timestamp override is accepted. The old manual `/start` route still trusts its explicit clip coordinates and should not be interpreted as CPU-verified. Both APIs are development-only. Full browser integrations, gold marking, player ReID and formal rendered-video tests remain outstanding.
+
+## Experimental RAVEL-013 Touch preview
+
+Read-only `POST /api/cpu/touch-preview` example:
+
+```json
+{
+  "project_id": "1234abcdef01",
+  "run_id": "run_20261107_123456",
+  "video": "match.mp4",
+  "threshold": 0.5,
+  "smooth": 5,
+  "min_gap": 10,
+  "max_reach_ratio": 0.35
+}
+```
+
+The route reads immutable RAVEL-013 probabilities from the exact run's inference cache and saves nothing. It returns time-smoothed `peaks` and `confirmed_contacts` from its chosen CPU game tracks if available; unverified player identities remain null. It requires the specific saved project/run/video mapping, not an arbitrary filesystem path. It does not use a Python subprocess or GPU. This is **only an algorithm diagnostic**, not a replacement for the complete CPU postprocessing command or final touch statistics.

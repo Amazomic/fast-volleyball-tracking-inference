@@ -7,6 +7,7 @@
 
 pub mod motion;
 pub mod rallies;
+pub mod touch;
 
 /// Must match the positive-area intersection-over-union operation used by
 /// `scripts/volleyball_studio/replay_player_tracking.py` for valid boxes.
