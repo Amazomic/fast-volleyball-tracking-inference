@@ -42,6 +42,7 @@ GET  /api/analysis-runs?project_id=...
 GET  /api/analysis-history?project_id=...
 GET  /api/analysis-resources     CPU thread count
 GET  /api/players/library       existing global athlete catalog
+POST /api/players/library/native  read/create/rename athlete, SHA revision guard (isolated edits)
 POST /api/players/continuity-preview  provisional Track ID groups and 4s gap suggestions for selected run
 POST /api/players/reid-native/preview   cached native ReID grouping and vetted references (read-only)
 POST /api/players/reid-native/groups    read/merge/split candidate groups with source/owner checks (isolated root)

@@ -6,6 +6,7 @@ mod inference_clip;
 mod inference_native;
 mod montage;
 mod playback;
+mod player_catalog;
 mod player_continuity;
 mod player_identity;
 mod player_montage;
@@ -75,6 +76,7 @@ async fn rewrite_status(
             "POST /api/project-preparation/cancel (isolated root)",
             "GET /api/analysis-profiles",
             "GET /api/players/library",
+            "POST /api/players/library/native (read, create, rename; isolated root)",
             "GET /api/analysis-resources",
             "POST /api/project-create (isolated data root only)",
             "POST /api/project-update (isolated data root only)",
@@ -120,6 +122,7 @@ fn app(state: Arc<AppState>) -> Router {
         .route("/api/analysis-history", get(history::get_history))
         .route("/api/analysis-runs", get(analysis_runs::get_runs))
         .route("/api/players/library", get(catalog::get_library))
+        .route("/api/players/library/native", post(player_catalog::edit))
         .route("/api/project-create", post(projects::create_project))
         .route("/api/project-update", post(projects::update_project))
         .route(
