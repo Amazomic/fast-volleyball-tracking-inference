@@ -5,6 +5,7 @@
 //! CPU routines are migrated.  No GPU inference, video I/O, or player
 //! identity state is handled here.
 
+pub mod continuity;
 pub mod motion;
 pub mod rallies;
 pub mod touch;

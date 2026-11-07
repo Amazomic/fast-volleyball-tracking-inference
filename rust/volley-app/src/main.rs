@@ -4,6 +4,7 @@ mod catalog;
 mod history;
 mod montage;
 mod playback;
+mod player_continuity;
 mod preparation;
 mod projects;
 mod rallies;
@@ -25,6 +26,7 @@ struct AppState {
     preparation: preparation::PreparationManager,
     preview_limit: tokio::sync::Semaphore,
     touch_limit: tokio::sync::Semaphore,
+    continuity_limit: tokio::sync::Semaphore,
 }
 
 #[derive(Serialize)]
@@ -63,6 +65,7 @@ async fn rewrite_status(
             "POST /api/montage/native/start (manual clips, isolated root)",
             "POST /api/montage/native/plan (CPU-based selection, read-only)",
             "POST /api/cpu/touch-preview (read-only RAVEL diagnostics)",
+            "POST /api/players/continuity-preview (read-only geometry candidates)",
             "POST /api/montage/native/start-from-run (CPU-backed, isolated root)",
             "GET /api/montage/native/status",
             "POST /api/montage/native/cancel (isolated root)",
@@ -99,6 +102,10 @@ fn app(state: Arc<AppState>) -> Router {
         .route("/api/montage/native/status", get(montage::native_status))
         .route("/api/montage/native/plan", post(rallies::preview_selection))
         .route("/api/cpu/touch-preview", post(touch_preview::touch_preview))
+        .route(
+            "/api/players/continuity-preview",
+            post(player_continuity::preview),
+        )
         .route(
             "/api/montage/native/start-from-run",
             post(montage::start_native_from_run),
@@ -161,6 +168,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         preparation: preparation::PreparationManager::new(),
         preview_limit: tokio::sync::Semaphore::new(2),
         touch_limit: tokio::sync::Semaphore::new(1),
+        continuity_limit: tokio::sync::Semaphore::new(1),
     });
     println!(
         "Volleyball Studio Rust rewrite (INCOMPLETE): http://{addr}/internal/rewrite-status (isolated writes={writes_enabled})"

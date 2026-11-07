@@ -1,7 +1,7 @@
 //! Non-mutating RAVEL-013 Touch diagnostics from a selected stored inference/CPU run.
 //! Verified project+run ownership; no Python process, no expensive GPU replay.
 use crate::{
-    analysis_runs, projects, rallies,
+    analysis_runs, player_continuity, projects, rallies,
     storage::{self, ApiResult},
     AppState,
 };
@@ -9,13 +9,14 @@ use axum::{extract::State, http::HeaderMap, Json};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
     fs::File,
     io::{BufRead, BufReader},
     path::{Path, PathBuf},
     sync::Arc,
 };
 use volley_core::{
+    continuity::{group_tracklets, ContinuityConfig, PlayerDetection},
     motion::BallObservation,
     touch::{
         associate_touch_players, confirm_ravel_contacts, select_touch_peaks, PeakConfig,
@@ -231,6 +232,7 @@ fn tracked_players(
             tracks.push(TrackedPlayer {
                 frame,
                 track_id: id,
+                score: number(&row["score"]).unwrap_or(0.0),
                 bbox,
             });
         }
@@ -342,7 +344,16 @@ fn preview(state: &AppState, request: TouchPreviewRequest) -> Result<Value, stor
     } else {
         base.join("players.json")
     };
-    let stable = tracked_players(&players, width, height)?;
+    let base_cache_id = base
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| storage::bad_request("Неверный идентификатор инференса"))?;
+    let excluded =
+        player_continuity::excluded_ids(state, &request.project_id, &request.video, base_cache_id)?;
+    let mut stable = tracked_players(&players, width, height)?;
+    // Rejected IDs may not be attributed to a player again. Contacts can
+    // still exist as unknown actors; this does not erase ball evidence.
+    stable.retain(|row| !excluded.contains(&row.track_id));
     associate_touch_players(&mut peaks, &stable);
     let attributed = peaks.iter().filter(|p| p.track_id.is_some()).count();
     let contacts = contact_tracks(
@@ -351,6 +362,41 @@ fn preview(state: &AppState, request: TouchPreviewRequest) -> Result<Value, stor
         request.threshold,
         request.max_reach_ratio,
     )?;
+    let mut candidate_touch_counts: BTreeMap<String, u64> = BTreeMap::new();
+    let mut unmatched_touches = 0_u64;
+    if !contacts.is_empty() {
+        let observations: Vec<PlayerDetection> = stable
+            .iter()
+            .map(|row| PlayerDetection {
+                frame: row.frame,
+                track_id: row.track_id,
+                score: row.score,
+                bbox: row.bbox,
+                interpolated: false,
+            })
+            .collect();
+        let groups = group_tracklets(
+            &observations,
+            ContinuityConfig {
+                width,
+                height,
+                fps: 30.0,
+                extended_gap_sec: 4.0,
+            },
+            &excluded,
+        )
+        .map_err(storage::bad_request)?;
+        for contact in &contacts {
+            let candidate = contact
+                .player_track_id
+                .and_then(|id| groups.track_to_candidate.get(&id.to_string()));
+            if let Some(candidate) = candidate {
+                *candidate_touch_counts.entry(candidate.clone()).or_insert(0) += 1;
+            } else {
+                unmatched_touches += 1;
+            }
+        }
+    }
     Ok(json!({
         "project_id":request.project_id,
         "run_id":request.run_id,
@@ -366,6 +412,10 @@ fn preview(state: &AppState, request: TouchPreviewRequest) -> Result<Value, stor
         "attributed_peaks":attributed,
         "confirmed_contacts":contacts,
         "confirmed_count":contacts.len(),
+        "unconfirmed_candidate_touch_counts":candidate_touch_counts,
+        "touches_without_candidate_id":unmatched_touches,
+        "excluded_track_ids":excluded.len(),
+        "candidate_id_status":"unconfirmed_geometry_only; not a real player identity",
         "peaks":peaks,
         "motion_evidence_available":selected.join("analysis/game-tracks.json").is_file(),
         "warning":"Diagnostic only: not persisted, no technique classes, no global geometry/CPU event merge"

@@ -20,6 +20,7 @@ pub struct TouchCandidate {
 pub struct TrackedPlayer {
     pub frame: u32,
     pub track_id: i64,
+    pub score: f64,
     pub bbox: [f64; 4],
 }
 
@@ -377,6 +378,7 @@ mod tests {
             &[TrackedPlayer {
                 frame: 50,
                 track_id: 999,
+                score: 0.9,
                 bbox: [5., 5., 9., 9.],
             }],
         );

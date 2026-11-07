@@ -42,6 +42,7 @@ GET  /api/analysis-runs?project_id=...
 GET  /api/analysis-history?project_id=...
 GET  /api/analysis-resources     CPU thread count
 GET  /api/players/library       existing global athlete catalog
+POST /api/players/continuity-preview  provisional Track ID groups and 4s gap suggestions for selected run
 POST /api/project-create        experimental isolated registry only
 POST /api/project-update        experimental isolated registry only
 GET  /api/project-preparation?project_id=...  preparation states, enqueue missing when isolated
@@ -124,3 +125,18 @@ Read-only `POST /api/cpu/touch-preview` example:
 ```
 
 The route reads immutable RAVEL-013 probabilities from the exact run's inference cache and saves nothing. It returns time-smoothed `peaks` and `confirmed_contacts` from its chosen CPU game tracks if available; unverified player identities remain null. It requires the specific saved project/run/video mapping, not an arbitrary filesystem path. It does not use a Python subprocess or GPU. This is **only an algorithm diagnostic**, not a replacement for the complete CPU postprocessing command or final touch statistics.
+
+## Experimental continuity preview
+
+Use `POST /api/players/continuity-preview` on the standalone Rust development server (currently port 8875 by default):
+
+```json
+{
+  "project_id": "1234abcdef01",
+  "run_id": "run_20261107_123456",
+  "video": "match.mp4",
+  "extended_gap_sec": 4.0
+}
+```
+
+It reads existing project-scoped inference/CPU player observations and exclusions. `continuity.proposed_links` are conservatively merged **candidate** groups for short gaps; `continuity.extended_suggestions` are unmerged proposals for longer gaps up to the chosen limit. Both remain `confirmed: false`; they are not personal identities or calibrated ReID percentages. No GPU work or writes occur. The Touch diagnostic also returns `unconfirmed_candidate_touch_counts` for physically validated touches, without modifying verified ID labels or persistent statistics. Cross-run identity consistency, ReID and manual confirmation UI remain outstanding.
