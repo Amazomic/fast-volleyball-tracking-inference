@@ -2,6 +2,7 @@
 mod analysis_runs;
 mod catalog;
 mod history;
+mod playback;
 mod preparation;
 mod projects;
 mod storage;
@@ -18,6 +19,7 @@ struct AppState {
     data_root: PathBuf,
     writes_enabled: bool,
     preparation: preparation::PreparationManager,
+    preview_limit: tokio::sync::Semaphore,
 }
 
 #[derive(Serialize)]
@@ -42,6 +44,12 @@ async fn rewrite_status(
             "GET /api/projects",
             "GET /api/videos",
             "GET /api/video-info",
+            "GET /api/video-view",
+            "GET /api/video-media (Range bytes)",
+            "GET /api/video-preview",
+            "GET /api/project-preparation",
+            "POST /api/project-preparation/retry (isolated root)",
+            "POST /api/project-preparation/cancel (isolated root)",
             "GET /api/analysis-profiles",
             "GET /api/players/library",
             "GET /api/analysis-resources",
@@ -60,6 +68,9 @@ fn app(state: Arc<AppState>) -> Router {
         .route("/api/projects", get(projects::get_projects))
         .route("/api/videos", get(catalog::get_videos))
         .route("/api/video-info", get(catalog::get_video_info))
+        .route("/api/video-view", get(playback::video_view))
+        .route("/api/video-media", get(playback::video_media))
+        .route("/api/video-preview", get(playback::video_preview))
         .route("/api/analysis-resources", get(catalog::get_resources))
         .route("/api/analysis-profiles", get(catalog::get_profiles))
         .route("/api/analysis-history", get(history::get_history))
@@ -114,6 +125,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         data_root,
         writes_enabled,
         preparation: preparation::PreparationManager::new(),
+        preview_limit: tokio::sync::Semaphore::new(2),
     });
     println!(
         "Volleyball Studio Rust rewrite (INCOMPLETE): http://{addr}/internal/rewrite-status (isolated writes={writes_enabled})"

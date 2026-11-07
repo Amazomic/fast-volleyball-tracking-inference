@@ -50,12 +50,12 @@ Progress can be committed in coherent batches and compilation checked, but **no 
 | Workstream | Original sources | New Rust ownership | Status |
 |---|---|---|---|
 | R00 — checkpoint and coverage | `scripts/`, `src/`, `ov/` | `docs/RUST_REWRITE_SCOPE.md` | BASELINE SAVED |
-| R01 — API/job/process management | `scripts/volleyball_ui/server.py`, service modules | `rust/volley-app/` | PARTIAL: native JSON API, isolated preparation queue, progress and cancellation; inference/montage jobs pending |
+| R01 — API/job/process management | `scripts/volleyball_ui/server.py`, service modules | `rust/volley-app/` | PARTIAL: native JSON API, preparation queue, MP4 byte-range responses and preview; inference/montage jobs pending |
 | R02 — projects, profiles, caches | `scripts/volleyball_ui/projects.py`, `analysis_runs.py`, `prepared_videos.py` | `rust/volley-app/` | PARTIAL: projects, profiles, runs/history and autoqueued isolated prepared-video cache; cleanup pending |
 | R03 — video preparation and model inference GPU | `src/inference*.py`, `scripts/volleyball_studio/analysis*.py` | `rust/volley-inference/`, `rust/volley-media/` | PARTIAL: native FFmpeg preparation and content-addressed cache; GPU inference pending |
 | R04 — trajectories/tracks/Touch/CPU | `src/player_contacts.py`, `scripts/volleyball_studio/reprocess.py` | `rust/volley-core/` | PARTIAL (S01 + S02a) |
 | R05 — ReID, players, rallies and statistics | `src/player_reid.py`, player services | `rust/volley-core/`, `rust/volley-app/` | PARTIAL: read-only player catalog; identification/statistics pending |
-| R06 — preview, montage, audio, quick reel | `src/make_reels.py`, `scripts/volleyball_ui/*montage*.py`, `quick_reel*.py` | `rust/volley-media/` | PARTIAL: FFprobe/video metadata/compatibility; FFmpeg rendering pending |
+| R06 — preview, montage, audio, quick reel | `src/make_reels.py`, `scripts/volleyball_ui/*montage*.py`, `quick_reel*.py` | `rust/volley-media/`, `rust/volley-app/` | PARTIAL: FFprobe/FFmpeg preview JPEGs, prepared-video playback; montage/reels rendering pending |
 | R07 — complete UI and localization | `scripts/volleyball_ui/static/` | `rust/volley-web/` (Rust/WASM and assets) | NOT STARTED |
 | R08 — packaging, launch and deployment | `start-volley-ui.cmd`, `Dockerfile` | standalone Rust launch/deployment | NOT STARTED |
 | R09 — **after R01–R08** full tests and adaptation | All E2E workflows | integrated Rust application | DEFERRED |
@@ -233,3 +233,15 @@ Detailed functional inventory, required file formats and parity targets: `docs/R
 - Rust modules use native FFprobe/FFmpeg commands, **not Python**. Cached source metadata/probe plans are reused while source size/mtime remain identical; no expensive GPU inference occurs during video normalization.
 - **Development diagnostics only:** `cargo fmt --all`, `cargo fmt --all -- --check`, `cargo check --workspace` and `cargo build --workspace` in WSL Ubuntu completed; formal functional, UI, GPU, cancellation under real FFmpeg load, cross-project historical-cache adoption and Python-vs-Rust comparisons remain **DEFERRED until whole rewrite** by the user's request.
 - Remaining: model inference, tracking, ReID, GPU/CPU job orchestration, old-project prepared-cache promotion, media streaming, preview/UI, montage/reels, packaging and full end-to-end verification.
+
+## 10. Rust-native HTTP preview and prepared MP4 streaming — 2026-11-07
+
+**Status: PARTIAL — independent Rust handlers exist; whole application remains INCOMPLETE.**
+
+- `rust/volley-media/src/preview.rs`: Rust-native frame request validation (source/analysis mode, selected width, 30 FPS frame index), ffmpeg image-to-pipe invocation with a 60-second timeout and bounded JPEG output. Original source video is never overwritten.
+- `rust/volley-app/src/playback.rs`: `GET /api/video-preview` returns JPEG directly and reads/writes a content-addressed preview cache. With the default read-only Rust mode it only reads preexisting cache and generates misses in memory; experimental writes go strictly to the isolated Rust data root.
+- `GET /api/video-view` reports prepared-media availability and player-compatible playback fields; `GET /api/video-media` streams the validated prepared source or cached MP4 from Rust/Tokio with `Accept-Ranges`, `Content-Range`, single-range HTTP 206 and unsatisfiable-range HTTP 416. Player/project membership is checked before serving media; unprepared videos are not silently replaced by the raw original.
+- Concurrent FFmpeg preview decodes are bounded by a two-request semaphore. Frame caches derive from original name, source size and nanosecond mtime; media requests never invoke Python.
+- Added direct dependencies on tokio-util and percent-encoding for bounded asynchronous stream I/O and safe URL construction; Rust media crate uses Tokio for FFmpeg timeout/process management.
+- Development compiler checks are permitted; integrated functional/API/browser tests and annotated Python-vs-Rust evaluation remain **DEFERRED until complete Rust rewrite**, as expressly requested.
+- **Not implemented:** original-project legacy prepared-cache migration, fallback segment encoding, player/rally overlays, other preview analysis endpoints, UI/WebAssembly, GPU models, final montage/reel pipeline, comprehensive API compatibility.

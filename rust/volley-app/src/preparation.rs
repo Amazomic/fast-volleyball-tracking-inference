@@ -71,7 +71,11 @@ impl PreparationManager {
     }
 }
 
-fn plan_for(state: &AppState, id: &str, video: &str) -> Result<PreparationPlan, ApiError> {
+pub(crate) fn plan_for(
+    state: &AppState,
+    id: &str,
+    video: &str,
+) -> Result<PreparationPlan, ApiError> {
     let project = projects::existing_project(state, id)?;
     storage::video_name(video)?;
     if !project["videos"]
@@ -499,7 +503,7 @@ pub async fn cancel_project(state: Arc<AppState>, id: &str) -> Result<usize, Api
     Ok(affected)
 }
 
-async fn collect_status(state: &AppState, id: &str) -> Result<Value, ApiError> {
+pub(crate) async fn collect_status(state: &AppState, id: &str) -> Result<Value, ApiError> {
     let project = projects::existing_project(state, id)?;
     let videos = project["videos"]
         .as_array()
