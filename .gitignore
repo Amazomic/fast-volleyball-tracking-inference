@@ -89,3 +89,7 @@ node_modules/
 /benchmarks/
 /tmp/
 /temp/
+
+# Compiled Rust artifacts are local build products
+/rust/**/target/
+/rust/target/

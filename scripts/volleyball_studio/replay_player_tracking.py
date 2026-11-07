@@ -10,6 +10,8 @@ import math
 from collections import Counter, defaultdict
 from pathlib import Path
 
+from scripts.volleyball_studio.rust_core import bbox_iou as core_bbox_iou
+
 
 def reconstruct_players(cache: Path, width: int, height: int,
                         threshold: float, original: list[dict],
@@ -39,12 +41,7 @@ def reconstruct_players(cache: Path, width: int, height: int,
             float(box[2])/width, float(box[3])/height]))
 
     def iou(a, b):
-        left, top = max(a[0],b[0]),max(a[1],b[1])
-        right, bottom = min(a[2],b[2]),min(a[3],b[3])
-        inter = max(0,right-left)*max(0,bottom-top)
-        aa = max(0,a[2]-a[0])*max(0,a[3]-a[1])
-        bb = max(0,b[2]-b[0])*max(0,b[3]-b[1])
-        return inter / max(1e-9,aa+bb-inter)
+        return core_bbox_iou(a, b)
 
     # Low-confidence boxes can extend a previously recognized player,
     # but do not start a new ID until they cross the user's open threshold.

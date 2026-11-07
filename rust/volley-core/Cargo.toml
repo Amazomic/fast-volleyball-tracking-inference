@@ -1,0 +1,13 @@
+[package]
+name = "volley-core"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Deterministic CPU kernels for Volleyball Studio; Python remains the default fallback"
+
+[lib]
+name = "volley_core"
+crate-type = ["cdylib", "rlib"]
+
+[profile.release]
+lto = "thin"

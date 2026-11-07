@@ -38,7 +38,7 @@ Keep the running Python implementation as the oracle and fallback. Start with **
 | Stage | Scope / source paths | Rust destination (proposed) | Acceptance gate | State |
 |---|---|---|---|---|
 | S00 | Freeze checkpoint, sync the latest `master`, document migration and baseline | `docs/RUST_MIGRATION.md` | clean tracked status, policy tests, reconciliation documented | LOCAL TEST GATE PASSED |
-| S01 | Toolchain, isolated Rust crate, deterministic data-contract kernel, fixtures & fallback adapter | `rust/volley-core/{Cargo.toml,src/lib.rs}`, `tests/test_rust_core_contract.py` | `cargo fmt --check`, `cargo test`, Python golden parity (no GPU) | NOT STARTED |
+| S01 | Toolchain, isolated Rust crate, deterministic data-contract kernel, fixtures & fallback adapter | `rust/volley-core/{Cargo.toml,src/lib.rs}`, `tests/test_rust_core_contract.py` | `cargo fmt --check`, `cargo test`, Python golden parity (no GPU) | VERIFIED LOCALLY — optional, NOT default |
 | S02 | Ball trajectory, acceleration and touch-peak candidates; preserve RAVEL-013 evidence | `rust/volley-core/src/touches.rs`; `src/player_contacts.py` adapter | same touch timestamps/IDs before switch; annotated-match quality >= current | NOT STARTED |
 | S03 | CPU player tracking and up-to-4s gap interpolation, occupancy conflicts | `rust/volley-core/src/tracking.rs`; `scripts/volleyball_studio/replay_player_tracking.py` | deterministic same-track tests; player ID fragmentation/recall not worse | NOT STARTED |
 | S04 | ReID similarity, reference photo grouping, manual precedence | `rust/volley-core/src/reid.rs`; `scripts/volleyball_ui/player_identity_groups.py` | match ordering, no simultaneous-identity merges, photo/test parity | NOT STARTED |
@@ -83,8 +83,19 @@ Keep the running Python implementation as the oracle and fallback. Start with **
 - `origin/master` / PR golden policy requires properly annotated evidence when changing the CPU golden manifest. The pre-migration checkpoint contains revision 4; do **not** fabricate evidence or weaken the gate to merge it. Check PR policy separately.
 
 
-### S01 Rust kernel and parity
-**Status:** NOT STARTED. Do not mark done until actual Rust compilation and parity test succeed.
+### S01 Rust kernel and parity — 2026-11-07
+**Status:** S01 local acceptance PASSED. Commit belongs to this stage; verify published remote SHA independently. No default behavior change.
+
+- New crate `rust/volley-core` (Rust 1.99.1; versioned ABI 1, `cdylib` plus `rlib`), implemented `bbox_iou` with the exact epsilon/degenerate-box semantics of CPU replay.
+- Added `scripts/volleyball_studio/rust_core.py` ctypes adapter, `tests/test_rust_core_contract.py` parity tests and optional call site in `scripts/volleyball_studio/replay_player_tracking.py`. Default `VOLLEY_RUST_IOU` unset uses Python. Set to `1` only after building. Missing DLL or incorrect ABI fails explicitly; never silently substitutes an algorithm.
+- Build: `cargo test --manifest-path rust/volley-core/Cargo.toml` — PASS (4 Rust tests); `cargo build --manifest-path rust/volley-core/Cargo.toml` — PASS; `cargo fmt --manifest-path rust/volley-core/Cargo.toml -- --check` — PASS.
+- `VOLLEY_RUST_REQUIRED=1 python -m unittest discover -s tests -p test_rust_core_contract.py` — PASS (3 Python tests, including 2,506 fixed and seeded random bbox pairs across compiled Rust and original Python).
+- `python -m unittest discover -s tests -p test_cpu_player_identities.py` — PASS (3); `python -m unittest discover -s tests -p test_ci_quality.py` — PASS (11); `python -m py_compile ...` and `git diff --check` — PASS.
+- Windows 32-bit Python 3.14 cannot load x86_64 Rust DLL: separately tested explicit diagnostic `Rust volley-core DLL requires 64-bit Python on Windows` — PASS. Parity was tested with `python` 3.11.9 **64-bit**. Keep 32-bit Python on Python fallback or install Python 3.14 x64, do not misrepresent this as production Python 3.14 testing.
+- Microbenchmark (same Windows host, 80,000 scalar calls, seeded inputs): Python IoU **0.0477 s**, cached Rust ctypes IoU **0.1264 s**, identical checksum **270.905997457**. An earlier uncached adapter took **15.3821 s** due to repeated file checks; caching fixed it. Scalar FFI is still slower than pure Python for this tiny operation, so do **not enable Rust by default**. Future stages should move whole loops/batches across the boundary and benchmark end-to-end CPU replay before opting in.
+- `tests/test_player_three_second_gap.py` — **NOT TESTED** on this Python 3.11 environment: import fails because `cv2` is missing. No runtime library installs, GPU jobs, media, or user caches were modified to force this test.
+- Full E2E project replay, annotated real-match accuracy, Docker and GPU — **NOT TESTED**. S01 implements only deterministic geometry/parity, not an overall faster tracker.
+- Rollback: leave `VOLLEY_RUST_IOU` unset; if necessary restore the entire branch to S00 remote `8ebca9f64f5a4fe57999e0c3af01880a34d13075` (retain user data and checkpoint).
 
 ## 5. Instructions for the next AI / engineer
 
