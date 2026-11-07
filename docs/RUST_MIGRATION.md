@@ -37,7 +37,7 @@ Keep the running Python implementation as the oracle and fallback. Start with **
 
 | Stage | Scope / source paths | Rust destination (proposed) | Acceptance gate | State |
 |---|---|---|---|---|
-| S00 | Freeze checkpoint, sync the latest `master`, document migration and baseline | `docs/RUST_MIGRATION.md` | clean tracked status, policy tests, reconciliation documented | LOCAL TEST GATE PASSED |
+| S00 | Freeze checkpoint, sync the latest `master`, document migration and baseline | `docs/RUST_MIGRATION.md` | clean tracked status, policy tests, reconciliation documented | PASSED + PUBLISHED (`8ebca9f`) |
 | S01 | Toolchain, isolated Rust crate, deterministic data-contract kernel, fixtures & fallback adapter | `rust/volley-core/{Cargo.toml,src/lib.rs}`, `tests/test_rust_core_contract.py` | `cargo fmt --check`, `cargo test`, Python golden parity (no GPU) | VERIFIED LOCALLY — optional, NOT default |
 | S02 | Ball trajectory, acceleration and touch-peak candidates; preserve RAVEL-013 evidence | `rust/volley-core/src/motion.rs` (S02a), later `touches.rs` and `src/player_contacts.py` | same touch timestamps/IDs before switch; annotated-match quality >= current | S02a TESTED; rest PENDING |
 | S03 | CPU player tracking and up-to-4s gap interpolation, occupancy conflicts | `rust/volley-core/src/tracking.rs`; `scripts/volleyball_studio/replay_player_tracking.py` | deterministic same-track tests; player ID fragmentation/recall not worse | NOT STARTED |
@@ -69,7 +69,7 @@ Keep the running Python implementation as the oracle and fallback. Start with **
 - Remote `master` contained seven newer commits; merge into the migration branch is being resolved, keeping the richer current contributor contract and the detailed local UI rules.
 
 ### S00 local tests and merge
-**Status:** Local targeted gate PASSED, full matrix NOT TESTED; stage commit and remote mirror pending.
+**Status:** Local targeted gate PASSED, full matrix NOT TESTED; stage GitHub commit `8ebca9f64f5a4fe57999e0c3af01880a34d13075` (same tree as local merge `04d6810190e9f8ed90e376b10d7b18f25c5d2126`).
 
 - Python policy: `python -m unittest discover -s tests -p test_ci_quality.py` — PASS (11 tests).
 - Layout: `python -m unittest discover -s tests -p test_ui_layout_contract.py` — PASS (6 tests).
@@ -99,7 +99,7 @@ Keep the running Python implementation as the oracle and fallback. Start with **
 
 
 ### S02a Rust batched motion validation — 2026-11-07
-**Status:** Local deterministic-parity gate PASSED; S02 overall remains INCOMPLETE pending annotated-match evaluation and other touch-peak logic.
+**Status:** Local deterministic-parity gate PASSED; S02a GitHub commit `4ccb60bbf907a586cfb8d6d88b1c0c4d2156e412` (same tree as local `0e45b46e97c24289e52e9391f0c66664c1fe3a46`). S02 overall remains INCOMPLETE pending annotated-match evaluation and other touch-peak logic.
 
 - Scope: move the gravity-corrected velocity fits and motion-break selection for RAVEL touch evidence to `rust/volley-core/src/motion.rs`. Safe C ABI `volley_ball_motion_batch_v1` consumes saved ball observations and all target peak frames in one call. No model, raw cache, golden thresholds, identity assignment or montage data is changed.
 - The existing `scripts/volleyball_studio/reprocess.py` preserves the Python path unless the explicit environment flag `VOLLEY_RUST_MOTION=1` is set. `_ravel_contacts` batches proposed peak frames for one Rust call rather than copying the ball track for each candidate.
@@ -115,7 +115,7 @@ Keep the running Python implementation as the oracle and fallback. Start with **
 
 1. Inspect `git status -sb`, `git log -5 --oneline`, and `git fetch origin`; never discard unstaged user modifications or personal data.
 2. Read this document, `AGENTS.md`, `docs/UI_LAYOUT_POLICY.md`, and `docs/ARCHITECTURE_INFERENCE_POSTPROCESSING.md`.
-3. Confirm stage log vs actual Git HEAD and GitHub branch; do not infer a stage was pushed from a local commit.
+3. Confirm stage log vs actual Git HEAD and GitHub branch; do not infer a stage was pushed from a local commit. Draft PR: https://github.com/Amazomic/fast-volleyball-tracking-inference/pull/7 (NOT ready to merge).
 4. Confirm host toolchain `cargo --version` / `rustc --version` before modifying the Rust crate.
 5. Run a Python/oracle regression test **before** changing any CPU algorithm, then write the Rust equivalent and compare real cached analysis evidence.
 6. Record actual tests, benchmarks, failures and precise rollback steps in the section above; commit the document together with the stage only once its gate passes.
