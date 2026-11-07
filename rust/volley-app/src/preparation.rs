@@ -31,14 +31,14 @@ use uuid::Uuid;
 use volley_media::preparation::{cache_id, PreparationPlan, PreparationReuse};
 
 #[derive(Clone, Debug)]
-struct Progress {
-    state: String,
-    progress: f64,
-    error: String,
+pub(crate) struct Progress {
+    pub(crate) state: String,
+    pub(crate) progress: f64,
+    pub(crate) error: String,
 }
 
 impl Progress {
-    fn queued() -> Self {
+    pub(crate) fn queued() -> Self {
         Self {
             state: "queued".into(),
             progress: 0.0,
@@ -640,4 +640,51 @@ mod tests {
         );
         assert_eq!(percent_from_ffmpeg("out_time=nope", 30.0), None);
     }
+}
+
+/// Run project-independent Quick Reel video preparation using the SAME
+/// content-addressed cache, exclusive file lock, FFmpeg encoder and global
+/// concurrency limit as ordinary Rust project preparation.
+///
+/// Quick Reel owns the orchestration and status, not the project's registry.
+/// The caller must verify the source file identity again before inference.
+pub(crate) async fn prepare_standalone(
+    state: Arc<AppState>,
+    plan: PreparationPlan,
+    mut cancel: watch::Receiver<bool>,
+    progress: Arc<Mutex<Progress>>,
+) -> Result<(), String> {
+    if !state.writes_enabled {
+        return Err("Standalone preparation requires an isolated Rust root".into());
+    }
+    if plan.reused().is_some() {
+        update(&progress, "ready", 100.0, "").await;
+        return Ok(());
+    }
+    let permit = tokio::select! {
+        acquired=state.preparation.concurrency.clone().acquire_owned()=>{
+            acquired.map_err(|_|"Preparation queue is stopped".to_owned())?
+        },
+        result=cancel.changed()=>{
+            if result.is_err() || *cancel.borrow() {
+                return Err("cancelled".into());
+            }
+            state.preparation.concurrency.clone().acquire_owned().await
+                .map_err(|_|"Preparation queue is stopped".to_owned())?
+        }
+    };
+    let result = run_one(&plan, cancel, &progress).await;
+    if let Err(error) = &result {
+        publish_failure_if_uncontended(
+            &plan,
+            if error == "cancelled" {
+                "cancelled"
+            } else {
+                "failed"
+            },
+            if error == "cancelled" { "" } else { error },
+        );
+    }
+    drop(permit);
+    result
 }

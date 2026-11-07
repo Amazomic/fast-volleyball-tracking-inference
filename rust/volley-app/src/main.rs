@@ -10,6 +10,7 @@ mod player_montage;
 mod player_statistics;
 mod preparation;
 mod projects;
+mod quick_reel;
 mod rallies;
 mod rally_marks;
 mod reid_group_edits;
@@ -38,6 +39,7 @@ struct AppState {
     identity_limit: tokio::sync::Semaphore,
     statistics_limit: tokio::sync::Semaphore,
     marks_limit: tokio::sync::Semaphore,
+    quick_reel: quick_reel::QuickReelManager,
 }
 
 #[derive(Serialize)]
@@ -76,6 +78,10 @@ async fn rewrite_status(
             "POST /api/montage/native/start (manual clips, isolated root)",
             "POST /api/montage/native/plan (CPU-based selection, read-only)",
             "POST /api/rallies/native/marks (read/set gold marks, isolated root)",
+            "POST /api/quick-reel/native/select (explicit local video refs, isolated root)",
+            "POST /api/quick-reel/native/start (preparation only; inference pending)",
+            "GET /api/quick-reel/native/status",
+            "POST /api/quick-reel/native/cancel",
             "POST /api/cpu/touch-preview (read-only RAVEL diagnostics)",
             "POST /api/players/continuity-preview (read-only geometry candidates)",
             "POST /api/players/reid-native/preview (saved embeddings, read-only)",
@@ -118,6 +124,13 @@ fn app(state: Arc<AppState>) -> Router {
         .route("/api/montage/native/status", get(montage::native_status))
         .route("/api/montage/native/plan", post(rallies::preview_selection))
         .route("/api/rallies/native/marks", post(rally_marks::marks))
+        .route(
+            "/api/quick-reel/native/select",
+            post(quick_reel::select_sources),
+        )
+        .route("/api/quick-reel/native/start", post(quick_reel::start))
+        .route("/api/quick-reel/native/status", get(quick_reel::status))
+        .route("/api/quick-reel/native/cancel", post(quick_reel::cancel))
         .route("/api/cpu/touch-preview", post(touch_preview::touch_preview))
         .route(
             "/api/players/statistics/native",
@@ -206,6 +219,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         identity_limit: tokio::sync::Semaphore::new(1),
         statistics_limit: tokio::sync::Semaphore::new(1),
         marks_limit: tokio::sync::Semaphore::new(1),
+        quick_reel: quick_reel::QuickReelManager::new(),
     });
     println!(
         "Volleyball Studio Rust rewrite (INCOMPLETE): http://{addr}/internal/rewrite-status (isolated writes={writes_enabled})"

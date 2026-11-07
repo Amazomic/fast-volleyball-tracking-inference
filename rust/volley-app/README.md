@@ -61,12 +61,16 @@ POST /api/montage/native/audio         multipart file upload (field file, max 90
 POST /api/montage/native/plan          read-only full-rally selection, athlete and gold marked/unmarked filters
 POST /api/montage/native/start-from-run  isolated full-rally rendering with verified-player/gold focus
 POST /api/rallies/native/marks       read/set gold rally flags (isolation + SHA revision required)
+POST /api/quick-reel/native/select   register chosen local video paths without copying (isolated)
+POST /api/quick-reel/native/start    start independent video preparation; GPU/CPU not yet available
+GET  /api/quick-reel/native/status   latest Quick Reel stage or ?id=uuid
+POST /api/quick-reel/native/cancel  cancel only the currently active Quick Reel
 POST /api/cpu/touch-preview          read-only RAVEL Touch proposals and motion-confirmed contacts for explicit run/video
 ```
 
 These routes are implementations of persisted formats, not a claim of complete API parity. Rust project creation/update now queues native preparation. Compatible original MP4s are reused without recoding; other sources are converted by native FFmpeg to H.264/30 FPS/YUV420P and stored in the separate content-addressed development cache. One converter runs at a time; file locks prevent duplicate publication, status tracks FFmpeg progress, and cancellation is persisted per project until an explicit retry. Existing projects may use legacy storage conventions not fully supported; player catalog loading does not yet run legacy photo/identity backfills.
 
-**Not implemented:** gold right-click context-menu UI, complete player/ball overlays or auto-follow/vertical crop, audio mixing with source sound, complete browser montage UI contract, cross-project adoption of old prepared results, general uploads, complete model/GPU inference and CPU touch inference, live ReID embedding extraction/manual photo operations, native report UI, on-demand fallback video segments, quick reel, full API, Rust/WASM browser UI and desktop packaging.
+**Not implemented:** gold right-click context-menu UI, complete player/ball overlays or auto-follow/vertical crop, audio mixing with source sound, complete browser montage UI contract, cross-project adoption of old prepared results, general uploads, complete model/GPU inference and CPU touch inference, live ReID embedding extraction/manual photo operations, native report UI, on-demand fallback video segments, Quick Reel GPU/CPU inference and final export, full API, Rust/WASM browser UI and desktop packaging.
 
 Development compilation/smoke probes are allowed. User-directed order: finish all Rust functionality **first**, then comprehensive tests/adaptation, then compare final Rust vs saved Python; rollback to `checkpoint/pre-rust-2026-11-07` if needed. See `docs/RUST_REWRITE_SCOPE.md` and `docs/RUST_MIGRATION.md`.
 
@@ -275,3 +279,24 @@ The response includes `marks` and `revision`, which is `absent` for an unsaved r
 Use `marked:false` to remove the gold flag and the freshly returned revision for any follow-up edits. If another tab changed marks, the server rejects the stale revision (HTTP 409). **Write mode is disabled without a separate, writable `VOLLEY_RUST_DATA_ROOT`; the original Python project cannot be modified through this route.**
 
 For `/api/montage/native/plan` or `/api/montage/native/start-from-run`, use `gold_filter:"marked"` to select only gold rallies, or `"unmarked"` to exclude them. Each candidate has `gold_marked` and retains its complete original source boundaries. The mark is bound to the selected CPU run and analysis version and survives harmless context padding changes. Player filters and manual selection work together with the gold filter; the client must refresh the candidate catalogue if an ID no longer matches.
+
+## Experimental standalone Quick Reel staging
+
+The isolated Rust quick-reel pipeline currently **prepares video only**. It does not reuse old GPU detections, trigger Python or pretend that a finished MP4 was created.
+
+Call `POST /api/quick-reel/native/select` after the eventual native desktop file picker chooses actual local files:
+
+~~~json
+{"paths":["/mnt/c/Users/username/Videos/match.mp4"]}
+~~~
+
+The response returns new source selection IDs. Upload music first using `POST /api/montage/native/audio` multipart field `file`, then call:
+
+~~~json
+{
+  "selection_ids":["32-character-hex-selection-id"],
+  "audio_file":"track_uuid32.mp3"
+}
+~~~
+
+to `POST /api/quick-reel/native/start`. Track progress through `GET /api/quick-reel/native/status` or `?id=<reel_id>`; cancel through `POST /api/quick-reel/native/cancel` with `{"id":"<reel_id>"}`. Quick Reel reuses **prepared MP4s only** (or skips conversion for analysis-ready sources), then reports `awaiting_native_inference` with `output:null` because native RAVEL/VballNet inference + fresh CPU and MP4 render are not yet ported. This is a development API, not the existing one-click browser Quick Reel. Only the latest scratch run is retained; original project files and Python Quick Reel history are untouched.
