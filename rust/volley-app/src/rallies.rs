@@ -3,7 +3,7 @@
 //! Never use a "latest" cache or silently promote a GPU-only run.
 
 use crate::{
-    analysis_runs, projects,
+    analysis_runs, projects, rally_marks,
     storage::{self, ApiError, ApiResult},
     AppState,
 };
@@ -50,8 +50,14 @@ pub struct SelectionRequest {
     pub player_action: String,
     #[serde(default = "default_min_player_actions")]
     pub min_player_actions: u64,
+    /// all: no gold filter; marked: gold only; unmarked: non-gold only.
+    #[serde(default = "default_gold_filter")]
+    pub gold_filter: String,
 }
 
+fn default_gold_filter() -> String {
+    "all".into()
+}
 fn default_player_action() -> String {
     "all".into()
 }
@@ -87,6 +93,8 @@ pub struct Scene {
     pub analysis_offset_sec: f64,
     #[serde(flatten)]
     pub rally: Rally,
+    /// UI renders the entire card gold when true.
+    pub gold_marked: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub player_action_counts: Option<BTreeMap<String, u64>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -105,6 +113,8 @@ pub struct Selection {
     pub selected: Vec<Scene>,
     pub requested_duration: f64,
     pub selected_duration: f64,
+    pub gold_filter: String,
+    pub gold_marked_count: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub player_filter: Option<PlayerFocus>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -351,6 +361,11 @@ fn validate_request(request: &SelectionRequest) -> Result<(), ApiError> {
             "Укажите игрока проекта и допустимый фильтр его игровых действий",
         ));
     }
+    if !matches!(request.gold_filter.as_str(), "all" | "marked" | "unmarked") {
+        return Err(storage::bad_request(
+            "Фильтр золотых розыгрышей должен быть all, marked или unmarked",
+        ));
+    }
     if request.min_action_counts.iter().any(|(key, value)| {
         !matches!(
             key.as_str(),
@@ -429,6 +444,7 @@ fn load_video_rallies(
             cache_id: cache_id.to_owned(),
             analysis_offset_sec: offset,
             rally: r,
+            gold_marked: false,
             player_action_counts: None,
             player_actions_total: None,
             player_focus_matches: None,
@@ -468,6 +484,7 @@ fn select(state: &AppState, request: &SelectionRequest) -> Result<Selection, Api
             "Нужны результаты CPU-обработки, а не только GPU-инференс",
         ));
     }
+    let marks = rally_marks::marked_anchors(state, &request.project_id, &request.run_id)?;
     let mut all = Vec::new();
     let mut focused_name = None;
     for video in chosen {
@@ -489,18 +506,27 @@ fn select(state: &AppState, request: &SelectionRequest) -> Result<Selection, Api
             )?;
             focused_name = Some(player_name);
         }
+        for scene in &mut scenes {
+            scene.gold_marked = marks.contains(&rally_marks::anchor(scene));
+        }
         all.extend(scenes);
     }
+    let gold_marked_count = all.iter().filter(|s| s.gold_marked).count();
     // A player focus only admits rallies containing confirmed action evidence.
     // ReID appearance and continuity suggestions are never accepted as proof.
     // Stable rally IDs still refer to intact original source-frame intervals.
-    let candidates: Vec<Scene> = if request.player_id.is_some() {
-        all.into_iter()
-            .filter(|scene| scene.player_focus_matches.unwrap_or(0) >= request.min_player_actions)
-            .collect()
-    } else {
-        all
-    };
+    let candidates: Vec<Scene> = all
+        .into_iter()
+        .filter(|scene| {
+            request.player_id.is_none()
+                || scene.player_focus_matches.unwrap_or(0) >= request.min_player_actions
+        })
+        .filter(|scene| match request.gold_filter.as_str() {
+            "marked" => scene.gold_marked,
+            "unmarked" => !scene.gold_marked,
+            _ => true,
+        })
+        .collect();
     let matching_player_rallies = request.player_id.as_ref().map(|_| candidates.len());
     // Manual mode trusts only known stable IDs from the selected run, never
     // arbitrary client-provided offsets or frame ranges.
@@ -523,8 +549,15 @@ fn select(state: &AppState, request: &SelectionRequest) -> Result<Selection, Api
         candidates
             .iter()
             .filter(|scene| {
+                // Explicit manual gold marking is sufficient eligibility
+                // evidence for an unranked rally. Duration/confidence/action
+                // thresholds still apply; no fragment is ever created.
+                let mut eligibility = scene.rally.clone();
+                if request.gold_filter == "marked" && scene.gold_marked {
+                    eligibility.ranked = true;
+                }
                 rallies::ranked_eligible(
-                    &scene.rally,
+                    &eligibility,
                     request.min_rally,
                     request.min_confidence,
                     &request.min_action_counts,
@@ -591,6 +624,8 @@ fn select(state: &AppState, request: &SelectionRequest) -> Result<Selection, Api
         selected,
         requested_duration: request.duration,
         selected_duration: ((timeline as f64 / FPS) * 1000.0).round() / 1000.0,
+        gold_filter: request.gold_filter.clone(),
+        gold_marked_count,
         player_filter: request.player_id.as_ref().map(|id| PlayerFocus {
             player_id: id.clone(),
             player_name: focused_name.unwrap_or_default(),

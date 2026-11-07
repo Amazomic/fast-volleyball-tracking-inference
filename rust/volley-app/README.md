@@ -58,14 +58,15 @@ POST /api/montage/native/cancel        cancel current montage (job_id)
 GET  /api/montage/native/library?project_id=...  saved versioned Rust MP4s
 GET  /api/montage/native/media?project_id=...&job_id=...  MP4 with HTTP Range
 POST /api/montage/native/audio         multipart file upload (field file, max 90 MiB)
-POST /api/montage/native/plan          read-only full-rally selection, optionally focused on one verified athlete/actions
-POST /api/montage/native/start-from-run  isolated full-rally rendering with optional verified-player focus
+POST /api/montage/native/plan          read-only full-rally selection, athlete and gold marked/unmarked filters
+POST /api/montage/native/start-from-run  isolated full-rally rendering with verified-player/gold focus
+POST /api/rallies/native/marks       read/set gold rally flags (isolation + SHA revision required)
 POST /api/cpu/touch-preview          read-only RAVEL Touch proposals and motion-confirmed contacts for explicit run/video
 ```
 
 These routes are implementations of persisted formats, not a claim of complete API parity. Rust project creation/update now queues native preparation. Compatible original MP4s are reused without recoding; other sources are converted by native FFmpeg to H.264/30 FPS/YUV420P and stored in the separate content-addressed development cache. One converter runs at a time; file locks prevent duplicate publication, status tracks FFmpeg progress, and cancellation is persisted per project until an explicit retry. Existing projects may use legacy storage conventions not fully supported; player catalog loading does not yet run legacy photo/identity backfills.
 
-**Not implemented:** gold-marked episode filters, complete player/ball overlays or auto-follow/vertical crop, audio mixing with source sound, complete browser montage UI contract, cross-project adoption of old prepared results, general uploads, complete model/GPU inference and CPU touch inference, live ReID embedding extraction/manual photo operations, native report UI, on-demand fallback video segments, quick reel, full API, Rust/WASM browser UI and desktop packaging.
+**Not implemented:** gold right-click context-menu UI, complete player/ball overlays or auto-follow/vertical crop, audio mixing with source sound, complete browser montage UI contract, cross-project adoption of old prepared results, general uploads, complete model/GPU inference and CPU touch inference, live ReID embedding extraction/manual photo operations, native report UI, on-demand fallback video segments, quick reel, full API, Rust/WASM browser UI and desktop packaging.
 
 Development compilation/smoke probes are allowed. User-directed order: finish all Rust functionality **first**, then comprehensive tests/adaptation, then compare final Rust vs saved Python; rollback to `checkpoint/pre-rust-2026-11-07` if needed. See `docs/RUST_REWRITE_SCOPE.md` and `docs/RUST_MIGRATION.md`.
 
@@ -245,3 +246,32 @@ The existing Rust routes `POST /api/montage/native/plan` (read-only) and `POST /
 ~~~
 
 Choose an actual player ID from the project's existing roster, not a name or a Track ID. A candidate is eligible only if **that verified player** has at least one deduplicated saved CPU attack inside the detected boundaries (or the specifically recognized serve anchor) of a complete rally. A manual selected_rally_ids request uses this same player-focused candidate set and rejects mismatching IDs; it will never crop a rally to a single spike. The API reports `matching_player_rallies`, player-specific action counts and ranking on the scenes. Changing source CPU events or manual identity assignments requires planning again. Inference-only runs and unconfirmed candidates do not qualify. The legacy UI is not yet connected to these fields.
+
+## Experimental gold rally bookmarks
+
+To list existing gold marks in a saved CPU run, call `POST /api/rallies/native/marks`:
+
+~~~json
+{"project_id":"1234abcdef01","run_id":"run_20261107_123456","action":"read"}
+~~~
+
+The response includes `marks` and `revision`, which is `absent` for an unsaved registry. Mark an existing complete rally by passing the **actual** `rally_id` from `POST /api/montage/native/plan` (or the forthcoming Results UI), the video name and the current revision:
+
+~~~json
+{
+  "project_id":"1234abcdef01",
+  "run_id":"run_20261107_123456",
+  "video":"match.mp4",
+  "action":"set",
+  "rally_id":"24-character-actual-hex-id",
+  "marked":true,
+  "expected_revision":"revision-from-read",
+  "gap_sec":3.0,
+  "context_sec":1.5,
+  "rally_min_sec":0
+}
+~~~
+
+Use `marked:false` to remove the gold flag and the freshly returned revision for any follow-up edits. If another tab changed marks, the server rejects the stale revision (HTTP 409). **Write mode is disabled without a separate, writable `VOLLEY_RUST_DATA_ROOT`; the original Python project cannot be modified through this route.**
+
+For `/api/montage/native/plan` or `/api/montage/native/start-from-run`, use `gold_filter:"marked"` to select only gold rallies, or `"unmarked"` to exclude them. Each candidate has `gold_marked` and retains its complete original source boundaries. The mark is bound to the selected CPU run and analysis version and survives harmless context padding changes. Player filters and manual selection work together with the gold filter; the client must refresh the candidate catalogue if an ID no longer matches.
