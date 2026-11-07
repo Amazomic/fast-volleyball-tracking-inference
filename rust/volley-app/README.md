@@ -7,8 +7,8 @@
 The three maintained crates share `rust/Cargo.toml` and `rust/Cargo.lock`:
 
 - `volley-core`: deterministic geometry and motion kernels (historic S01/S02a).
-- `volley-media`: FFprobe metadata, rotation, target resolution and analysis-ready classification (H.264, 30 FPS, AAC and geometry).
-- `volley-app`: standalone HTTP server, JSON project/catalog/history APIs, isolated development writes.
+- `volley-media`: FFprobe metadata, rotation, target resolution, H.264/30 FPS readiness and schema-2 SHA256 prepared-video identities.
+- `volley-app`: standalone HTTP server, JSON project/catalog/history APIs, isolated preparation queue and FFmpeg orchestration.
 
 From repository root in WSL Ubuntu-25.04:
 
@@ -25,7 +25,7 @@ VOLLEY_RUST_DATA_ROOT=/home/amazomic/.cache/volley-rust-sandbox \
 cargo run --manifest-path rust/Cargo.toml -p volley-app
 ```
 
-The dev server rejects writes without an isolated directory. It rejects the original `results/` directory and its ancestors/descendants as writable roots. Project source videos are only inspected; the source files are never changed.
+The dev server rejects writes without an isolated directory. It rejects writing anywhere inside (or above) the original repository, including `results/`, `project/`, and models. Project source videos are read only; the originals are never overwritten.
 
 ## Native endpoints implemented so far
 
@@ -41,10 +41,13 @@ GET  /api/analysis-resources     CPU thread count
 GET  /api/players/library       existing global athlete catalog
 POST /api/project-create        experimental isolated registry only
 POST /api/project-update        experimental isolated registry only
+GET  /api/project-preparation?project_id=...  preparation states, enqueue missing when isolated
+POST /api/project-preparation/retry    retry failed/preparation-paused jobs (isolated only)
+POST /api/project-preparation/cancel   pause and cancel this project's preparation jobs
 ```
 
-These routes are implementations of persisted formats, not a claim of complete API parity. In particular, project creation **does not yet queue video preparation** and existing projects may use legacy storage conventions not fully supported. Player catalog loading does not yet run legacy photo/identity backfills.
+These routes are implementations of persisted formats, not a claim of complete API parity. Rust project creation/update now queues native preparation. Compatible original MP4s are reused without recoding; other sources are converted by native FFmpeg to H.264/30 FPS/YUV420P and stored in the separate content-addressed development cache. One converter runs at a time; file locks prevent duplicate publication, status tracks FFmpeg progress, and cancellation is persisted per project until an explicit retry. Existing projects may use legacy storage conventions not fully supported; player catalog loading does not yet run legacy photo/identity backfills.
 
-**Not implemented:** video preparation jobs, uploads, complete model/GPU inference, complete CPU postprocessing, full ReID/manual players, previews and media streaming, player stats, rally detection, edit/montage, quick reel, full API, Rust/WASM browser UI and desktop packaging.
+**Not implemented:** cross-project migration of historical prepared outputs, uploads, complete model/GPU inference, complete CPU postprocessing, full ReID/manual players, previews and media streaming, player stats, rally detection, edit/montage, quick reel, full API, Rust/WASM browser UI and desktop packaging.
 
 Development compilation/smoke probes are allowed. User-directed order: finish all Rust functionality **first**, then comprehensive tests/adaptation, then compare final Rust vs saved Python; rollback to `checkpoint/pre-rust-2026-11-07` if needed. See `docs/RUST_REWRITE_SCOPE.md` and `docs/RUST_MIGRATION.md`.

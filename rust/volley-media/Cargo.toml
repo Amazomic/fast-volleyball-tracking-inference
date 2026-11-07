@@ -8,3 +8,4 @@ description = "Rust-native video metadata, compatibility and FFmpeg orchestratio
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+sha2 = "0.10"

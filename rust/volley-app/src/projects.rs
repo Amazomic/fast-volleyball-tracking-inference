@@ -594,9 +594,17 @@ pub async fn create_project(
     Json(request): Json<Value>,
 ) -> ApiResult<Value> {
     storage::validate_origin(&headers)?;
-    let project = tokio::task::spawn_blocking(move || create_record(&state, request))
+    let writing = state.clone();
+    let project = tokio::task::spawn_blocking(move || create_record(&writing, request))
         .await
         .map_err(|err| storage::internal(format!("Create task failed: {err}")))??;
+    // The project record is already durably committed: a preparation queue
+    // failure must not trigger an HTTP retry that creates another project.
+    if let Some(id) = project["id"].as_str() {
+        if let Err(error) = crate::preparation::enqueue_project(state, id, false).await {
+            eprintln!("Rust project created, but preparation queue failed: {error:?}");
+        }
+    }
     Ok(Json(json!({"project": project})))
 }
 
@@ -606,9 +614,15 @@ pub async fn update_project(
     Json(request): Json<Value>,
 ) -> ApiResult<Value> {
     storage::validate_origin(&headers)?;
-    let project = tokio::task::spawn_blocking(move || update_record(&state, request))
+    let writing = state.clone();
+    let project = tokio::task::spawn_blocking(move || update_record(&writing, request))
         .await
         .map_err(|err| storage::internal(format!("Update task failed: {err}")))??;
+    if let Some(id) = project["id"].as_str() {
+        if let Err(error) = crate::preparation::enqueue_project(state, id, false).await {
+            eprintln!("Rust project updated, but preparation queue failed: {error:?}");
+        }
+    }
     Ok(Json(json!({"project": project})))
 }
 

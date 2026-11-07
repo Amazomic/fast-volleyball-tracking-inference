@@ -138,20 +138,49 @@ pub fn writable_data_root(repository_root: &Path) -> Result<Option<PathBuf>, Api
     if !requested.is_absolute() {
         return Err(internal("VOLLEY_RUST_DATA_ROOT must be absolute"));
     }
-    fs::create_dir_all(&requested)
-        .map_err(|error| internal(format!("Cannot create dev data root: {error}")))?;
-    let requested = requested
-        .canonicalize()
-        .map_err(|error| internal(format!("Cannot canonicalize dev data root: {error}")))?;
-    let original = repository_root.join("results");
-    let original = original.canonicalize().unwrap_or(original);
-    if requested == original || requested.starts_with(&original) || original.starts_with(&requested)
+    // Validate the resolved destination BEFORE mkdir: creating even an empty
+    // directory within the original project would violate migration isolation.
+    if requested
+        .components()
+        .any(|component| matches!(component, std::path::Component::ParentDir))
     {
         return Err(internal(
-            "Rust dev writes must use an isolated data root outside the original results directory",
+            "VOLLEY_RUST_DATA_ROOT cannot contain parent traversal",
         ));
     }
-    Ok(Some(requested))
+    let mut existing = requested.as_path();
+    while !existing.exists() {
+        existing = existing
+            .parent()
+            .ok_or_else(|| internal("No existing parent for Rust data directory"))?;
+    }
+    let parent = existing
+        .canonicalize()
+        .map_err(|error| internal(format!("Cannot resolve dev data parent: {error}")))?;
+    let planned = parent.join(
+        requested
+            .strip_prefix(existing)
+            .map_err(|error| internal(format!("Invalid dev data root: {error}")))?,
+    );
+    // Never write inside the original checkout (project/, results/, models/,
+    // or .git), or an ancestor that contains the original checkout.
+    if planned == repository_root
+        || planned.starts_with(repository_root)
+        || repository_root.starts_with(&planned)
+    {
+        return Err(internal(
+            "Rust dev writes must stay outside the original repository",
+        ));
+    }
+    fs::create_dir_all(&planned)
+        .map_err(|error| internal(format!("Cannot create dev data root: {error}")))?;
+    let data_root = planned
+        .canonicalize()
+        .map_err(|error| internal(format!("Cannot canonicalize dev data root: {error}")))?;
+    if data_root.starts_with(repository_root) || repository_root.starts_with(&data_root) {
+        return Err(internal("Rust data root redirected into original checkout"));
+    }
+    Ok(Some(data_root))
 }
 
 #[cfg(test)]

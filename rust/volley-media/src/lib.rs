@@ -1,5 +1,7 @@
 //! Rust-native video probing and conservative analysis-ready classification.
 //! FFmpeg/FFprobe are external native codecs, not Python application code.
+pub mod preparation;
+
 use serde::Serialize;
 use serde_json::Value;
 use std::{path::Path, process::Command};

@@ -2,6 +2,7 @@
 mod analysis_runs;
 mod catalog;
 mod history;
+mod preparation;
 mod projects;
 mod storage;
 
@@ -12,11 +13,11 @@ use axum::{
 use serde::Serialize;
 use std::{env, error::Error, io, net::SocketAddr, path::PathBuf, sync::Arc};
 
-#[derive(Clone)]
 struct AppState {
     repository_root: PathBuf,
     data_root: PathBuf,
     writes_enabled: bool,
+    preparation: preparation::PreparationManager,
 }
 
 #[derive(Serialize)]
@@ -66,6 +67,18 @@ fn app(state: Arc<AppState>) -> Router {
         .route("/api/players/library", get(catalog::get_library))
         .route("/api/project-create", post(projects::create_project))
         .route("/api/project-update", post(projects::update_project))
+        .route(
+            "/api/project-preparation",
+            get(preparation::get_preparation),
+        )
+        .route(
+            "/api/project-preparation/retry",
+            post(preparation::retry_preparation),
+        )
+        .route(
+            "/api/project-preparation/cancel",
+            post(preparation::cancel_preparation),
+        )
         .with_state(state)
 }
 
@@ -100,6 +113,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         repository_root: root,
         data_root,
         writes_enabled,
+        preparation: preparation::PreparationManager::new(),
     });
     println!(
         "Volleyball Studio Rust rewrite (INCOMPLETE): http://{addr}/internal/rewrite-status (isolated writes={writes_enabled})"
