@@ -14,9 +14,9 @@ from urllib.parse import quote
 
 from . import data
 
-INDEX_VERSION = 1
-PHOTO_VERSION = 1
-SAMPLES = 3
+INDEX_VERSION = 2
+PHOTO_VERSION = 2
+SAMPLES = 6
 INDEX_LOCK = threading.Lock()
 DECODE_LIMIT = threading.BoundedSemaphore(2)
 _INDEX_MEMORY = {}
@@ -88,6 +88,8 @@ def _build_index(cache: Path, stamp: dict) -> dict:
     if not isinstance(predictions, list) and not hasattr(predictions, "__next__"):
         raise ValueError("Неверный формат players.json")
     buckets = {}
+    # Half-second windows retain candidates for six distinct moments on short tracks.
+    bucket_frames = max(1, int(round(float(fps or 30) / 2)))
     for record in predictions:
         if record.get("class_name") != "player" or record.get("track_id") is None:
             continue
@@ -103,8 +105,8 @@ def _build_index(cache: Path, stamp: dict) -> dict:
             tid = validate_track_id(record["track_id"])
         except ValueError:
             continue  # Unassigned/invalid tracker IDs have no stable identity.
-        # One best image from every 1-second interval of this track.
-        bucket_key = (tid, frame // 30)
+        # Keep the clearest detection in each half-second window.
+        bucket_key = (tid, frame // bucket_frames)
         score = _quality(record)
         old = buckets.get(bucket_key)
         if old is None or score > old["quality"]:
@@ -118,23 +120,26 @@ def _build_index(cache: Path, stamp: dict) -> dict:
     best = {}
     for tid, records in grouped.items():
         records.sort(key=lambda r: r["frame"])
-        # Choose representative images at different points over the observed track.
-        # Within each third, favor the clearest detections.
+        # Sample the full observed timespan, not six neighboring detection frames.
+        # If an interval has no observation, pick its nearest still-unused sample.
+        # Sparse tracks may legitimately have fewer than six distinct photos.
         start, end = records[0]["frame"], records[-1]["frame"]
+        if len(records) <= SAMPLES:
+            best[tid] = records
+            continue
+        available = records.copy()
         selected = []
         for index in range(SAMPLES):
-            low = start + (end-start)*index/SAMPLES
-            high = start + (end-start)*(index+1)/SAMPLES
-            in_zone = [r for r in records if low <= r["frame"] <= high]
-            if in_zone:
-                pick = max(in_zone, key=lambda r: r["quality"])
-            else:
-                target = start + (end-start)*(index+.5)/SAMPLES
-                pick = min(records, key=lambda r: abs(r["frame"]-target))
+            low = start + (end - start) * index / SAMPLES
+            high = start + (end - start) * (index + 1) / SAMPLES
+            target = (low + high) / 2
+            in_zone = [r for r in available if low <= r["frame"] <= high]
+            # Prefer temporal coverage; quality breaks ties at similar moments.
+            pick = min(in_zone or available,
+                       key=lambda r: (abs(r["frame"] - target), -r["quality"]))
             selected.append(pick)
-        # For very short tracks, 1-3 can be the same frame; de-duplicate.
-        best[tid] = [r for i, r in enumerate(selected) if i == 0 or r["frame"] not in {
-            q["frame"] for q in selected[:i]}]
+            available.remove(pick)
+        best[tid] = sorted(selected, key=lambda r: r["frame"])
     return {"stamp": stamp, "fps": float(fps),
             "source": str(video_source), "tracks": best}
 

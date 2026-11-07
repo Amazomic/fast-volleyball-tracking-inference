@@ -3,7 +3,7 @@
 (() => {
   const E=id=>document.getElementById(id);
   const files=new Map();
-  let music=null, busy=false, running=false, reelId="";
+  let music=null, busy=false, running=false, reelId="",serverBusy=false;
   let pollTimer=null, loadingStatus=false, cancelPending=false;
   const dismissKey="volley-quick-reel-dismissed-id";
   let dismissedReelId="";
@@ -142,7 +142,7 @@
     }
     E("quick-reel-duration").textContent=music?fmt(music.duration):"—";
     E("quick-reel-music-section").classList.toggle("is-ready",Boolean(music));
-    E("quick-reel-submit").disabled=busy||running||!files.size||!music;
+    E("quick-reel-submit").disabled=busy||running||serverBusy||!files.size||!music;
     E("quick-reel-cancel").hidden=!running;
     E("quick-reel-cancel").disabled=!running||cancelPending;
     for(const id of ["quick-reel-dropzone","quick-reel-music-dropzone"])
@@ -253,7 +253,7 @@
     else download.removeAttribute("href");
     // The sidebar action always starts a new quick reel. Readiness is merely
     // a dismissible notification in the header, not a persistent button state.
-    E("quick-reel-open").textContent="✦ Быстрый рилс";
+    E("quick-reel-open").textContent="✦ Рилс";
   }
   function progress(percent,stage){
     E("quick-reel-progress").hidden=false;
@@ -305,7 +305,7 @@
     pollTimer=setInterval(()=>poll().catch(console.warn),1450);
   }
   async function launch(){
-    if(busy||running||!files.size||!music)return;
+    if(busy||running||serverBusy||!files.size||!music)return;
     setBusy(true);
     try{
       await checkBackend();
@@ -413,6 +413,11 @@
       }catch(error){console.warn("Quick Reel recovery:",error)}
     })().catch(error=>console.warn(error));
   }
+  window.VolleyballQuickReelUI={setTask:info=>{
+    const next=info?.status==="running";
+    if(next===serverBusy)return;
+    serverBusy=next;render();
+  }};
   if(document.readyState==="loading")
     document.addEventListener("DOMContentLoaded",init,{once:true});
   else init();

@@ -27,7 +27,7 @@
     if(!started)return;
     for(const [kind,item] of menus){
       const {native,trigger,popup}=item;
-      const entries=Array.from(native.options||[]).filter(option=>option.value);
+      const entries=Array.from(native.options||[]).filter(option=>option.value&&!option.disabled);
       const selected=entries.find(option=>option.value===native.value);
       const oldScroll=popup.scrollTop;
       const focusedRow=document.activeElement?.closest?.(".header-chain-option-row");
@@ -63,14 +63,17 @@
         if(option.title)choose.title=option.title;
         choose.setAttribute("aria-selected",String(option.value===native.value));
         if(remove)remove.addEventListener("click",()=>{
+          if(native.disabled||option.disabled)return;
           // Keep the CPU list open for sequential one-click deletions.
           if(kind!=="postprocess")close();
           handlers.onAction(kind,"delete",option.value,text);
         });
         if(rename)rename.addEventListener("click",()=>{
+          if(native.disabled||option.disabled)return;
           close();handlers.onAction(kind,"rename",option.value,text);
         });
         choose.addEventListener("click",()=>{
+          if(native.disabled||option.disabled)return;
           close();
           if(native.value!==option.value)handlers.onSelect(kind,option.value);
         });

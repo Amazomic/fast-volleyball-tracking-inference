@@ -124,6 +124,10 @@ vm.runInNewContext(source,{
   await el("quick-reel-music-dropzone").click();
   assert.equal(pickers[1].startIn,"desktop");
   assert.equal(pickers[1].multiple,false);
+  browser.VolleyballQuickReelUI.setTask({status:"running",kind:"analyze"});
+  assert.equal(el("quick-reel-submit").disabled,true);
+  browser.VolleyballQuickReelUI.setTask({status:"complete"});
+  assert.equal(el("quick-reel-submit").disabled,false);
   assert.equal(el("quick-reel-duration").textContent,"00:45");
   await el("quick-reel-dropzone").handlers.drop({
     preventDefault(){},dataTransfer:{files:[second]},
@@ -156,7 +160,7 @@ vm.runInNewContext(source,{
   await new Promise(resolve=>setImmediate(resolve));
   assert.equal(el("quick-reel-header-download").hidden,false,
     "Download appears in header once the reel is ready");
-  assert.equal(el("quick-reel-open").textContent,"✦ Быстрый рилс",
+  assert.equal(el("quick-reel-open").textContent,"✦ Рилс",
     "Completing a reel is a notification, not a different create button");
   assert.match(el("quick-reel-header-download").href,/\/api\/quick-reel\/download\?id=/);
   assert.equal(el("quick-reel-activity").hidden,true,

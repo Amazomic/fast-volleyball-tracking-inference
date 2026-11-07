@@ -21,6 +21,7 @@ from .data import (RESULTS, ROOT, assign, create_player, rename_player, delete_p
                    players_for, global_players, attach_player, find_cache, list_videos,
                    report, unassign, video_path, video_renders)
 from .preview import preview_frame, target_width, video_info
+from .capabilities import analysis_capabilities
 from .playback import SEGMENT_SECONDS, get_segment
 from .court import get_court, save_context, project_context, reset_context
 from .timeline import timeline
@@ -30,7 +31,7 @@ from .projects import (all_projects, create_project, update_project, get_project
 from .photos import photo_path, photos_metadata
 from .player_library import (photo_counts, sync_photos, album_dir, collect_existing_player_photos,
                              album_photos, album_photo_path, remove_album_photo,
-                             save_player_photos)
+                             save_player_photos, pending_player_photos, filtered_album_photos)
 from .projects import assert_project_video
 from .data import read_json
 
@@ -42,6 +43,7 @@ _RESTART_PENDING = threading.Event()
 _SOURCE_FILES = [Path(__file__).with_name(name) for name in
                  ("server.py", "analysis_runs.py", "data.py", "projects.py", "player_identity_groups.py", "player_retracking.py", "player_library.py", "montage_runner.py", "montage_library.py", "analysis_profiles.py", "prepared_videos.py", "video_uploads.py", "local_sources.py", "montage_audio.py", "project_lifecycle.py", "montage_source.py", "montage_encoding.py", "trajectory.py", "player_overlay.py", "player_actions.py", "quick_reel_audio.py", "quick_reel_runner.py", "quick_reel_jobs.py", "quick_reel_prepare.py", "quick_reel_analyze.py", "quick_reel_render.py", "quick_reel_selection.py", "file_selection.py", "video_compat.py")]
 _SOURCE_FILES.append(Path(__file__).parents[1] / "volleyball_studio" / "advanced.py")
+_SOURCE_FILES.extend(Path(__file__).with_name(name) for name in ("capabilities.py", "diagnostics.py", "photos.py"))
 _SOURCE_FILES.append(Path(__file__).with_name("report_statistics.py"))
 _SOURCE_FILES.append(Path(__file__).with_name("timeline.py"))
 _SOURCE_STAMPS = {str(p): p.stat().st_mtime_ns for p in _SOURCE_FILES if p.is_file()}
@@ -359,7 +361,8 @@ def start_job(kind: str, options: dict) -> dict:
             video_name = options.get("video")
             if not project_id or not isinstance(video_name,str):
                 raise ValueError("Выберите проект и видео для диагностики")
-            diagnostic_paths(project_id,video_name)
+            cache_id=options.get("cache_id")
+            diagnostic_paths(project_id,video_name,cache_id)
             settings = diagnostic_settings(options)
             cmd = [sys.executable,"-m","scripts.volleyball_ui.diagnostics",
                    "--project-id",project_id,"--video",video_name,
@@ -370,6 +373,7 @@ def start_job(kind: str, options: dict) -> dict:
             if settings["tracks_debug"]:cmd += ["--tracks-debug"]
             if not settings["tracks_mark_ball"]:cmd += ["--no-tracks-mark-ball"]
             if settings["show_rally_snapshot"]:cmd += ["--show-rally-snapshot"]
+            if cache_id:cmd += ["--cache-id",cache_id]
         elif kind == "benchmark":
             if not project_id:
                 raise ValueError("Для бенчмарка сначала выберите проект")
@@ -692,11 +696,14 @@ class Handler(BaseHTTPRequestHandler):
             if route == "/api/players/photos":
                 return self._json({"counts": photo_counts(), "root": str(RESULTS / "players")})
             if route == "/api/players/album":
-                return self._json(album_photos(query.get("player_id", [""])[0]))
+                player_id = query.get("player_id", [""])[0]
+                return self._json(filtered_album_photos(player_id) if query.get("distinct", [""])[0] == "1"
+                                  else album_photos(player_id))
             if route == "/api/players/album-photo":
                 return self._file(album_photo_path(
                     query.get("player_id", [""])[0],
-                    query.get("filename", [""])[0]), "image/jpeg")
+                    query.get("filename", [""])[0]), "image/jpeg",
+                                  cache_control="private, max-age=120")
             if route == "/api/report":
                 return self._json(report(query.get("video", [""])[0], query.get("project_id", [None])[0], query.get("cache_id", [None])[0]))
             if route == "/api/players/actions":
@@ -780,6 +787,7 @@ class Handler(BaseHTTPRequestHandler):
                         return self._json({
                             "analyzed": False, "inference_ready": True,
                             "postprocessed": False,
+                            "capabilities":analysis_capabilities(cache),
                             "video": name, "rallies": [], "actions": [],
                             "analysis_offset_sec":float(manifest.get("analysis_offset_sec") or 0),
                             "coordinate_space":{"width":manifest.get("width"),
@@ -809,6 +817,7 @@ class Handler(BaseHTTPRequestHandler):
                 response["raw_ball_detection"] = ball_detection_capability(original)
                 from .player_overlay import player_detection_capability
                 response["player_detection"] = player_detection_capability(cache)
+                response["capabilities"] = analysis_capabilities(cache)
                 response["video"] = name
                 selected_cache_id = query.get("cache_id", [None])[0] or cache.name
                 response["media_url"] = "/api/analysis-media?project_id=" + quote(project_id) + "&video=" + quote(name) + "&cache_id=" + quote(selected_cache_id)
@@ -840,13 +849,15 @@ class Handler(BaseHTTPRequestHandler):
                 from .diagnostics import outputs
                 return self._json({"files":outputs(
                     query.get("project_id", [""])[0],
-                    query.get("video", [""])[0])})
+                    query.get("video", [""])[0],
+                    query.get("cache_id", [None])[0])})
             if route == "/api/diagnostic-file":
                 from .diagnostics import output_path
                 path = output_path(
                     query.get("project_id", [""])[0],
                     query.get("video", [""])[0],
-                    query.get("name", [""])[0])
+                    query.get("name", [""])[0],
+                    query.get("cache_id", [None])[0])
                 return self._file(path, "image/png" if path.suffix.lower()==".png" else "video/mp4",
                                   allow_ranges=True)
             if route == "/api/analysis-model-touches":
@@ -923,7 +934,8 @@ class Handler(BaseHTTPRequestHandler):
                 source = photo_path(query.get("video", [""])[0], query.get("id", [""])[0],
                                     int(query.get("sample", ["0"])[0]), query.get("project_id", [None])[0],
                                     query.get("cache_id", [None])[0])
-                return self._file(source, "image/jpeg")
+                return self._file(source, "image/jpeg",
+                                  cache_control="private, max-age=120")
             if route == "/api/renders":
                 return self._json({"videos": video_renders()})
             if route == "/api/job":
@@ -1003,8 +1015,11 @@ class Handler(BaseHTTPRequestHandler):
                     return self._error("Видео не найдено", 404)
                 return self._file(RESULTS / filename, "video/mp4", allow_ranges=True)
             static_files = {
+                "/shared-player.js": ("shared-player.js", "text/javascript; charset=utf-8"),
+                "/shared-player.css": ("shared-player.css", "text/css; charset=utf-8"),
                 "/": ("index.html", "text/html; charset=utf-8"),
                 "/app.js": ("app.js", "text/javascript; charset=utf-8"),
+                "/project-player-tracks.js": ("project-player-tracks.js", "text/javascript; charset=utf-8"),
                 "/data-cache.js": ("data-cache.js", "text/javascript; charset=utf-8"),
                 "/cpu-defaults.json": ("cpu-defaults.json", "application/json; charset=utf-8"),
                 "/player-photo-hover.js": ("player-photo-hover.js", "text/javascript; charset=utf-8"),
@@ -1244,6 +1259,16 @@ class Handler(BaseHTTPRequestHandler):
             if route == "/api/players/photos/remove":
                 return self._json(remove_album_photo(
                     body.get("player_id"), body.get("filename")))
+            if route == "/api/players/photos/pending":
+                project_id, video = body.get("project_id"), body.get("video")
+                assert_project_video(project_id, video)
+                counts, errors = {}, {}
+                for player in players_for(project_id):
+                    result = pending_player_photos(project_id, video, player["id"], body.get("cache_id"))
+                    counts[player["id"]] = result["count"]
+                    if result["errors"]:
+                        errors[player["id"]] = result["errors"]
+                return self._json({"counts": counts, "errors": errors})
             if route == "/api/players/photos/save":
                 project_id, video = body.get("project_id"), body.get("video")
                 assert_project_video(project_id, video)
@@ -1292,7 +1317,7 @@ class Handler(BaseHTTPRequestHandler):
                     threading.Thread(target=_sync_photos_safe,
                                      args=(body["project_id"], body["video"], body["ids"], body.get("cache_id")),
                                      daemon=True, name="player-photo-enrollment").start()
-                return self._json({"groups": groups, "photo_collection": "started"})
+                return self._json({"groups": groups, "photo_collection": "manual"})
             if route == "/api/players/exclude-tracks":
                 from .data import exclude_tracks
                 ids = exclude_tracks(body.get("video"), body.get("ids"),
@@ -1315,7 +1340,7 @@ class Handler(BaseHTTPRequestHandler):
 
 def _sync_photos_safe(project_id: str, video: str, ids: list, cache_id=None) -> None:
     try:
-        result = sync_photos(project_id, video, ids, cache_id)
+        result = sync_photos(project_id, video, ids, cache_id, allowed_filenames=set())
         if result["errors"]:
             print("Player-photo enrollment:", "; ".join(result["errors"][:5]),
                   file=sys.stderr, flush=True)

@@ -55,6 +55,7 @@ const run=code=>vm.runInContext(code,ctx);
     if(url.startsWith("/api/report?"))return {raw:[],groups:[],counts:{}};
     if(url.startsWith("/api/project-report?"))return {counts:{}};
     if(url.startsWith("/api/players?"))return {players:[]};
+    if(url.startsWith("/api/players/actions?"))return {players:[]};
     if(url==="/api/players/library")return {players:[]};
     if(url==="/api/players/photos")return {counts:{}};
     throw Error("Unexpected API: "+url);

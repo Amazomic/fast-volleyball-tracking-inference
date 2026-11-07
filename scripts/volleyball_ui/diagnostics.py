@@ -39,9 +39,13 @@ def validated(value: dict) -> dict:
     }
 
 
-def paths(project_id: str, video: str):
+def paths(project_id: str, video: str, cache_id: str | None = None):
     assert_project_video(project_id,video)
-    cache=find_cache(video,project_id)
+    if cache_id:
+        from .analysis_runs import cache_for
+        cache=cache_for(video,project_id,cache_id)
+    else:
+        cache=find_cache(video,project_id)
     if not cache:
         raise FileNotFoundError("Сначала проанализируйте это видео")
     proxy=cache/"analysis.mp4"
@@ -51,8 +55,8 @@ def paths(project_id: str, video: str):
     return cache,proxy,tracks,cache/"exports/diagnostics"
 
 
-def outputs(project_id: str, video: str) -> list[dict]:
-    *_,directory=paths(project_id,video)
+def outputs(project_id: str, video: str, cache_id: str | None = None) -> list[dict]:
+    *_,directory=paths(project_id,video,cache_id)
     results=[]
     if not directory.is_dir():
         return results
@@ -64,14 +68,15 @@ def outputs(project_id: str, video: str) -> list[dict]:
             "name":relative,
             "size_mb":round(file.stat().st_size/1e6,2),
             "url":"/api/diagnostic-file?project_id="+quote(project_id)+
-                  "&video="+quote(video)+"&name="+quote(relative),
+                  "&video="+quote(video)+"&name="+quote(relative)+
+                  ("&cache_id="+quote(cache_id) if cache_id else ""),
         })
     return results[:250]
 
 
-def output_path(project_id: str, video: str, name: str) -> Path:
-    *_,directory=paths(project_id,video)
-    allowed={p["name"] for p in outputs(project_id,video)}
+def output_path(project_id: str, video: str, name: str, cache_id: str | None = None) -> Path:
+    *_,directory=paths(project_id,video,cache_id)
+    allowed={p["name"] for p in outputs(project_id,video,cache_id)}
     if name not in allowed:
         raise FileNotFoundError("Диагностический файл не найден")
     target=(directory/name).resolve()
@@ -80,9 +85,9 @@ def output_path(project_id: str, video: str, name: str) -> Path:
     return target
 
 
-def generate(project_id: str, video: str, options: dict):
+def generate(project_id: str, video: str, options: dict, cache_id: str | None = None):
     options=validated(options)
-    cache,proxy,tracks,directory=paths(project_id,video)
+    cache,proxy,tracks,directory=paths(project_id,video,cache_id)
     directory.mkdir(parents=True,exist_ok=True)
     mode=options["tracks_export_mode"]
     base=[sys.executable,str(ROOT/"src/track_processor.py"),
@@ -117,6 +122,7 @@ def main():
     parser=argparse.ArgumentParser(description="Offline debug exports; no inference")
     parser.add_argument("--project-id",required=True)
     parser.add_argument("--video",required=True)
+    parser.add_argument("--cache-id")
     parser.add_argument("--tracks-export-mode",choices=MODES,default="combined")
     parser.add_argument("--tracks-padding",type=float,default=.33)
     parser.add_argument("--tracks-include-not-rally",action="store_true")
@@ -133,7 +139,7 @@ def main():
         "tracks_mark_ball":not a.no_tracks_mark_ball,
         "show_rally_snapshot":a.show_rally_snapshot,
         "show_rally_track":a.show_rally_track,
-    })
+    },cache_id=a.cache_id)
 
 
 if __name__=="__main__":

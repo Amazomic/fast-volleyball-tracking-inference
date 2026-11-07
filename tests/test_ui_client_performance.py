@@ -33,7 +33,7 @@ class ClientPerformanceTests(unittest.TestCase):
         self.assertEqual(APP.count("syncTrackSelection();\n    schedulePlayerPhotos();"),4)
 
     def test_rallies_and_video_overlays_use_indexed_events(self):
-        self.assertIn("const count=bound(r.end,true)-bound(r.start,false)",RESULTS)
+        self.assertIn("touches:bound(r.end,true)-bound(r.start,false)",RESULTS)
         self.assertIn("const stride=Math.max(1,Math.ceil(visibleActions.length/500))",RESULTS)
         self.assertIn("const near=closestVisibleAction(t)",RESULTS)
         self.assertIn('if(!data||!E("view-analysis-results").classList.contains("active"))return;',RESULTS)
@@ -46,8 +46,9 @@ class ClientPerformanceTests(unittest.TestCase):
     def test_new_profile_is_gpu_pair(self):
         self.assertIn('name:"Новый"',PRESETS)
         self.assertIn('player_model:"RAVEL-VB-013-9f"',PRESETS)
-        self.assertEqual(PRESETS.count('backend:"onnx",'),3)
-        self.assertEqual(PRESETS.count('player_backend:"onnx-cuda"'),3)
+        self.assertGreaterEqual(PRESETS.count('backend:"onnx",'),3)
+        self.assertEqual(PRESETS.count('backend:"onnx",'),
+                         PRESETS.count('player_backend:"onnx-cuda"'))
 
     def test_013_is_part_of_sequential_5x2_benchmark(self):
         from scripts.benchmark_project import MODELS,DEVICES

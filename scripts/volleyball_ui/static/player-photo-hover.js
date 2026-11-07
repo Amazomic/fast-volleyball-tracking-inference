@@ -1,221 +1,187 @@
-/* Lazy large multi-frame inspection for one RAVEL Track ID.
- *
- * The list holds only small thumbnails. Metadata and enlarged crops are
- * loaded on hover/focus, scoped to the exact project, video and neural cache.
- * Hover never selects, groups, or assigns a real player identity.
+/* Lazy per-track image cycling: no hover popups or broken-image flashes.
+ * Show the next photo only after it has been downloaded and decoded.
  */
 (function(){
   "use strict";
-
-  const SHOW_DELAY_MS=90;
-  const HIDE_DELAY_MS=160;
-  const MAX_CACHED_TRACKS=80;
   const SELECTOR=".photo-peek,[data-photo-track-id]";
-
+  const MAX_CACHED_TRACKS=80;
+  const MAX_SAMPLES=6;
   let activeController=null;
-  function init(root, getContext){
+
+  function init(root,getContext){
     if(!root||typeof getContext!=="function")return null;
-    const panel=document.createElement("aside");
-    panel.className="player-track-hover-preview";
-    panel.id="player-track-hover-preview";
-    panel.setAttribute("role","tooltip");
-    panel.setAttribute("aria-label","Увеличенные кадры Track ID");
-    panel.hidden=true;
-    document.body.appendChild(panel);
+    if(activeController?.root===root)return activeController;
+    const metadataCache=new Map();
+    const imageStates=new WeakMap();
+    let generation=0;
 
-    const cache=new Map();
-    let anchor=null,activeKey="",requestToken=0,showTimer=null,hideTimer=null;
-
-    function clearTimers(){
-      clearTimeout(showTimer);
-      clearTimeout(hideTimer);
-      showTimer=hideTimer=null;
-    }
-    function getTarget(event){
+    function findTarget(event){
       const node=event.target;
       if(!node||typeof node.closest!=="function")return null;
       const target=node.closest(SELECTOR);
       return target&&root.contains(target)?target:null;
     }
-    function getId(target){
-      return target?.dataset?.photoTrackId||target?.dataset?.id||"";
+    function contextFor(id){
+      const source=getContext(id);
+      if(!source||!source.project||!source.video||!source.cache)return null;
+      const track=String(source.id||id||"");
+      if(!/^[0-9]{1,12}$/.test(track))return null;
+      return {project:String(source.project),video:String(source.video),
+        cache:String(source.cache).split(".",1)[0],id:track};
     }
-    function current(){
-      const ctx=getContext();
-      if(!ctx||!ctx.project||!ctx.video||!ctx.cache)return null;
-      return {project:String(ctx.project),video:String(ctx.video),
-              cache:String(ctx.cache).split(".",1)[0]};
+    function keyFor(ctx){
+      return JSON.stringify([ctx.project,ctx.video,ctx.cache,ctx.id]);
     }
-    function keyFor(id,ctx){
-      return [ctx.project,ctx.video,ctx.cache,id].join("\u0000");
-    }
-    function photoUrl(id,index,ctx){
-      return "/api/player-photo?"+new URLSearchParams({
-        project_id:ctx.project,video:ctx.video,cache_id:ctx.cache,
-        id,sample:String(index)
+    function urlFor(ctx,route,sample){
+      const params=new URLSearchParams({
+        project_id:ctx.project,video:ctx.video,cache_id:ctx.cache,id:ctx.id
       });
+      if(sample!==undefined)params.set("sample",String(sample));
+      return route+"?"+params;
     }
-    function metadataUrl(id,ctx){
-      return "/api/player-photos?"+new URLSearchParams({
-        project_id:ctx.project,video:ctx.video,cache_id:ctx.cache,id
-      });
-    }
-    function element(tag,cls,text){
-      const node=document.createElement(tag);
-      if(cls)node.className=cls;
-      if(text!==undefined)node.textContent=text;
-      return node;
-    }
-    function place(){
-      if(!anchor||panel.hidden)return;
-      const a=anchor.getBoundingClientRect();
-      const viewportWidth=window.innerWidth||1200;
-      const viewportHeight=window.innerHeight||800;
-      const panelWidth=Math.min(736,viewportWidth-24);
-      panel.style.width=panelWidth+"px";
-      const panelHeight=panel.getBoundingClientRect().height;
-      let left=a.right+12;
-      if(left+panelWidth>viewportWidth-12)left=a.left-panelWidth-12;
-      if(left<12)left=Math.max(12,Math.min(a.left,viewportWidth-panelWidth-12));
-      const top=Math.max(12,Math.min(a.top-12,viewportHeight-panelHeight-12));
-      panel.style.left=left+"px";
-      panel.style.top=top+"px";
-    }
-    function showSkeleton(id){
-      panel.replaceChildren(
-        element("strong","player-track-hover-title","Track ID #"+id),
-        element("p","player-track-hover-message","Загрузка дополнительных кадров…")
-      );
-      panel.hidden=false;
-      place();
-    }
-    function render(id,ctx,metadata){
-      const samples=Array.isArray(metadata?.samples)
-        ?metadata.samples.filter(s=>Number.isInteger(s.index)&&s.index>=0&&s.index<10)
-          .slice(0,6):[];
-      const title=element("div","player-track-hover-heading");
-      title.appendChild(element("strong","player-track-hover-title","Track ID #"+id));
-      title.appendChild(element("small","player-track-hover-count",
-        samples.length+" кадр(а) · сохранённые обнаружения RAVEL"));
-      if(!samples.length){
-        panel.replaceChildren(title,element("p","player-track-hover-message",
-          "Для этого Track ID дополнительные фотографии отсутствуют."));
-        place();
-        return;
-      }
-      const strip=element("div","player-track-hover-images");
-      for(const sample of samples){
-        const photo=element("figure","player-track-hover-photo");
-        const img=document.createElement("img");
-        img.src=photoUrl(id,sample.index,ctx);
-        img.alt="Track ID #"+id+", кадр "+String(sample.frame??"—");
-        img.loading="eager";
-        img.decoding="async";
-        img.addEventListener("error",()=>{
-          photo.classList.add("is-unavailable");
-          img.alt="Кадр недоступен";
-        });
-        const time=Number(sample.time_sec);
-        const score=Number(sample.confidence);
-        const label=element("figcaption","",
-          (Number.isFinite(time)?time.toFixed(1)+" с":"Кадр "+String(sample.frame??"—"))+
-          (Number.isFinite(score)?" · "+Math.round(score*100)+"%":""));
-        photo.append(img,label);
-        strip.appendChild(photo);
-      }
-      panel.replaceChildren(title,strip,
-        element("small","player-track-hover-hint",
-          "Кадры одного технического ID. Это не подтверждение личности."));
-      place();
-    }
-    function dismiss(){
-      clearTimers();
-      requestToken++;
-      if(anchor)anchor.removeAttribute("aria-describedby");
-      anchor=null;activeKey="";
-      panel.hidden=true;
-    }
-    function scheduleDismiss(){
-      clearTimeout(hideTimer);
-      hideTimer=setTimeout(dismiss,HIDE_DELAY_MS);
-    }
-    async function show(trigger){
-      const ctx=current(),id=getId(trigger);
-      if(!ctx||!/^[0-9]{1,12}$/.test(id))return;
-      const key=keyFor(id,ctx);
-      clearTimers();
-      if(anchor&&anchor!==trigger)anchor.removeAttribute("aria-describedby");
-      anchor=trigger;
-      anchor.setAttribute("aria-describedby",panel.id);
-      const token=++requestToken;
-      activeKey=key;
-      showSkeleton(id);
-      try{
-        let meta=cache.get(key);
-        if(!meta){
-          const response=await fetch(metadataUrl(id,ctx),{cache:"default"});
+    function metadataFor(ctx,key){
+      if(metadataCache.has(key))return metadataCache.get(key);
+      const request=fetch(urlFor(ctx,"/api/player-photos"),{cache:"default"})
+        .then(response=>{
           if(!response.ok)throw Error("HTTP "+response.status);
-          meta=await response.json();
-          cache.set(key,meta);
-          if(cache.size>MAX_CACHED_TRACKS)cache.delete(cache.keys().next().value);
+          return response.json();
+        }).catch(error=>{metadataCache.delete(key);throw error;});
+      metadataCache.set(key,request);
+      if(metadataCache.size>MAX_CACHED_TRACKS)
+        metadataCache.delete(metadataCache.keys().next().value);
+      return request;
+    }
+    function preload(url){
+      return new Promise((resolve,reject)=>{
+        const candidate=new Image();
+        candidate.decoding="async";
+        candidate.onload=()=>{
+          candidate.onload=candidate.onerror=null;
+          resolve();
+        };
+        candidate.onerror=()=>{
+          candidate.onload=candidate.onerror=null;
+          reject(Error("Photo unavailable"));
+        };
+        candidate.src=url;
+      });
+    }
+    function imageIndex(img){
+      const direct=Number(img.dataset.photoSample);
+      if(img.dataset.photoSample!==undefined&&Number.isInteger(direct)&&direct>0)
+        return direct-1;
+      const match=String(img.currentSrc||img.src||"").match(/[?&]sample=(\d+)/);
+      return match?Number(match[1]):0;
+    }
+    function isCurrent(target,img,state,ctx,token){
+      const now=contextFor(state.id);
+      return token===generation&&root.contains(target)&&
+        imageStates.get(img)===state&&now&&keyFor(now)===state.key;
+    }
+    function setBusy(target,img,busy){
+      target.classList.toggle("is-photo-loading",busy);
+      if(target!==img)img.classList.toggle("is-photo-loading",busy);
+    }
+    async function cycle(target,img,state,ctx){
+      if(state.busy)return;
+      state.busy=true;
+      const token=generation;
+      setBusy(target,img,true);
+      target.title="\u0417\u0430\u0433\u0440\u0443\u0436\u0430\u0435\u043c \u043a\u0430\u0434\u0440\u2026";
+      try{
+        const meta=await metadataFor(ctx,state.key);
+        if(!isCurrent(target,img,state,ctx,token))return;
+        const samples=Array.isArray(meta?.samples)
+          ?meta.samples.filter(sample=>Number.isInteger(sample.index)&&
+              sample.index>=0&&sample.index<MAX_SAMPLES).sort((a,b)=>a.index-b.index):[];
+        if(samples.length<2){
+          state.pending=0;
+          target.title=samples.length
+            ?"\u0414\u043b\u044f \u044d\u0442\u043e\u0433\u043e ID \u0435\u0441\u0442\u044c \u0442\u043e\u043b\u044c\u043a\u043e \u043e\u0434\u0438\u043d \u043a\u0430\u0434\u0440"
+            :"\u0414\u043b\u044f \u044d\u0442\u043e\u0433\u043e ID \u043d\u0435\u0442 \u043a\u0430\u0434\u0440\u043e\u0432";
+          return;
         }
-        const latest=current();
-        if(token!==requestToken||activeKey!==key||!latest||
-           keyFor(id,latest)!==key||panel.hidden||!root.contains(trigger))return;
-        render(id,ctx,meta);
+        // Keep every click, including those made while metadata or JPEG loads.
+        while(state.pending>0){
+          const steps=state.pending;
+          state.pending=0;
+          const current=Math.max(0,samples.findIndex(sample=>sample.index===state.index));
+          const wanted=(current+steps)%samples.length;
+          if(wanted===current){
+            target.title="\u041a\u0430\u0434\u0440 "+(current+1)+"/"+samples.length+
+              " \u00b7 \u043d\u0430\u0436\u043c\u0438\u0442\u0435 \u0434\u043b\u044f \u0441\u043b\u0435\u0434\u0443\u044e\u0449\u0435\u0433\u043e";
+            continue; // A complete cycle returns to the same frame.
+          }
+          let loaded=null;
+          // Skip a damaged/unavailable sample instead of leaving a broken photo.
+          for(let offset=0;offset<samples.length-1;offset++){
+            const sample=samples[(wanted+offset)%samples.length];
+            if(sample.index===state.index)continue;
+            const url=urlFor(ctx,"/api/player-photo",sample.index);
+            try{
+              await preload(url);
+              if(!isCurrent(target,img,state,ctx,token))return;
+              loaded={sample,url,position:(wanted+offset)%samples.length};
+              break;
+            }catch{
+              if(!isCurrent(target,img,state,ctx,token))return;
+            }
+          }
+          if(!loaded){
+            state.pending=0;
+            target.title="\u0414\u0440\u0443\u0433\u0438\u0435 \u043a\u0430\u0434\u0440\u044b \u043f\u043e\u043a\u0430 \u043d\u0435\u0434\u043e\u0441\u0442\u0443\u043f\u043d\u044b";
+            break;
+          }
+          img.src=loaded.url;
+          img.style.opacity="";
+          state.index=loaded.sample.index;
+          img.dataset.photoSample=String(loaded.sample.index+1);
+          const label="\u041a\u0430\u0434\u0440 "+(loaded.position+1)+"/"+samples.length+
+            (Number.isFinite(Number(loaded.sample.time_sec))
+              ?" \u00b7 "+Number(loaded.sample.time_sec).toFixed(1)+" \u0441":"")+
+            " \u00b7 \u043d\u0430\u0436\u043c\u0438\u0442\u0435 \u0434\u043b\u044f \u0441\u043b\u0435\u0434\u0443\u044e\u0449\u0435\u0433\u043e";
+          target.title=label;
+          img.title=label;
+          img.alt="Track ID #"+ctx.id+" \u00b7 "+label;
+        }
       }catch(error){
-        if(token!==requestToken||panel.hidden)return;
-        panel.replaceChildren(
-          element("strong","player-track-hover-title","Track ID #"+id),
-          element("p","player-track-hover-message",
-            "Не удалось загрузить фотографии: "+error.message)
-        );
-        place();
+        if(isCurrent(target,img,state,ctx,token)){
+          state.pending=0;
+          target.title="\u041a\u0430\u0434\u0440\u044b \u043d\u0435 \u0437\u0430\u0433\u0440\u0443\u0437\u0438\u043b\u0438\u0441\u044c \u2014 \u043d\u0430\u0436\u043c\u0438\u0442\u0435 \u0435\u0449\u0451 \u0440\u0430\u0437";
+          console.warn("Track photos",error);
+        }
+      }finally{
+        state.busy=false;
+        if(imageStates.get(img)===state)setBusy(target,img,false);
       }
     }
-    function scheduleShow(target){
-      clearTimeout(showTimer);
-      clearTimeout(hideTimer);
-      if(anchor===target&&!panel.hidden)return;
-      // The pointer can traverse many rows quickly: only the last triggers
-      // a request, rather than decoding crops for every passed-over row.
-      showTimer=setTimeout(()=>{showTimer=null;show(target);},SHOW_DELAY_MS);
+    function advance(target){
+      const id=target.dataset.photoTrackId||target.dataset.id;
+      const img=target.tagName==="IMG"?target:target.querySelector("img");
+      const ctx=contextFor(id);
+      if(!img||!ctx)return;
+      const key=keyFor(ctx);
+      let state=imageStates.get(img);
+      if(!state||state.key!==key){
+        state={key,id,index:imageIndex(img),pending:0,busy:false};
+        imageStates.set(img,state);
+      }
+      state.pending++;
+      if(!state.busy)void cycle(target,img,state,ctx);
     }
-    root.addEventListener("pointerover",event=>{
-      const target=getTarget(event);
-      if(!target||target.contains(event.relatedTarget))return;
-      scheduleShow(target);
-    });
-    root.addEventListener("pointerout",event=>{
-      const target=getTarget(event);
-      if(!target||target.contains(event.relatedTarget))return;
-      clearTimeout(showTimer);
-      if(anchor===target)scheduleDismiss();
-    });
-    root.addEventListener("focusin",event=>{
-      const target=getTarget(event);
-      if(target)scheduleShow(target);
-    });
-    root.addEventListener("focusout",event=>{
-      const target=getTarget(event);
-      if(target&&!target.contains(event.relatedTarget))scheduleDismiss();
-    });
     root.addEventListener("click",event=>{
-      if(getTarget(event))dismiss();
+      const target=findTarget(event);
+      if(!target)return;
+      if(target.tagName==="A")event.preventDefault();
+      advance(target);
     });
-    panel.addEventListener("pointerenter",()=>clearTimeout(hideTimer));
-    panel.addEventListener("pointerleave",scheduleDismiss);
-    panel.addEventListener("focusin",()=>clearTimeout(hideTimer));
-    panel.addEventListener("focusout",scheduleDismiss);
-    document.addEventListener("keydown",event=>{
-      if(event.key==="Escape")dismiss();
+    root.addEventListener("keydown",event=>{
+      const target=findTarget(event);
+      if(target?.tagName!=="IMG"||!["Enter"," "].includes(event.key))return;
+      event.preventDefault();
+      advance(target);
     });
-    document.addEventListener("scroll",event=>{
-      if(panel.hidden||panel.contains(event.target))return;
-      dismiss();
-    },true);
-    window.addEventListener("resize",place);
-    activeController={dismiss};
+    activeController={root,dismiss(){generation++;}};
     return activeController;
   }
   window.VolleyballPlayerPhotoHover={

@@ -64,7 +64,7 @@ window.VolleyballResultsUI=(()=>{
   let rawFilterTimer=null;
   // Raw GPU predictions are mutually exclusive by model; never combine sources.
   let rawSource="vballnet";
-  const rawEnabled=kind=>rawOverlays[kind]&&
+  const rawEnabled=kind=>rawOverlays[kind]&&!(kind==="touch"&&data?.capabilities?.model_touch===false)&&
     (kind==="vballnet"?rawSource==="vballnet":rawSource==="ravel");
   const rawWindows={vballnet:null,ravelBall:null};
   const rawRequests={vballnet:false,ravelBall:false};
@@ -98,11 +98,15 @@ window.VolleyballResultsUI=(()=>{
   }
   function updateSourceMode(){
     const raw=inRawMode();
+    const sources=data?.capabilities?.raw_sources;
+    if(sources&&!sources[rawSource])rawSource=Object.keys(sources).find(key=>sources[key])||"vballnet";
     const rawControls=E("result-raw-controls");
     if(rawControls)rawControls.hidden=!raw;
     E("result-raw-source-switch").hidden=!raw;
-    for(const input of document.querySelectorAll('[name="result-raw-source"]'))
+    for(const input of document.querySelectorAll('[name="result-raw-source"]')){
       input.checked=input.value===rawSource;
+      input.disabled=!data||(sources&&!sources[input.value]);
+    }
     for(const group of document.querySelectorAll("[data-result-raw-group]"))
       group.hidden=group.dataset.resultRawGroup!==rawSource;
     const description=E("result-source-explainer");
@@ -117,7 +121,10 @@ window.VolleyballResultsUI=(()=>{
       :"События CPU";
     for(const key of Object.keys(rawOverlays)){
       const box=document.querySelector('[data-result-raw="'+key+'"]');
-      if(box)box.checked=rawOverlays[key];
+      if(box){
+        box.checked=rawOverlays[key]&&!(key==="touch"&&data?.capabilities?.model_touch===false);
+        box.disabled=!data||(key==="touch"&&data?.capabilities?.model_touch===false);
+      }
     }
     E("result-raw-trail-seconds").disabled=!rawOverlays[rawSource==="vballnet"?"vballnet":"ravelBall"];
     modelTouches.setTouchVisible?.(raw&&rawEnabled("touch"));
@@ -147,9 +154,8 @@ window.VolleyballResultsUI=(()=>{
     if(next.length===previous.length&&next.every((id,i)=>id===previous[i]))return;
     try{localStorage.setItem(montageSelectionKey(pid,runId),JSON.stringify(next))}catch{}
     if(project===pid&&montageRunId===runId){
-      E("result-rally-list").querySelectorAll("[data-montage-rally]").forEach(input=>{
-        input.checked=next.includes(input.dataset.montageRally);
-        input.closest(".result-rally-entry")?.classList.toggle("is-selected",input.checked);
+      E("result-rally-list").querySelectorAll("[data-rally-mark]").forEach(entry=>{
+        entry.classList.toggle("is-selected",next.includes(entry.dataset.rallyMark));
       });
     }
     window.dispatchEvent(new CustomEvent("volley:montage-rallies-change",{
@@ -418,21 +424,47 @@ window.VolleyballResultsUI=(()=>{
     combined:"Мяч: VballNet. Касания: геометрия + пики Touch RAVEL-013 с проверкой близости к мячу и игроку."
   };
   function syncReprocessControls(){
+    E("analysis-postprocessing").hidden=!project;
     const button=E("result-reprocess-start");
+    const ready=Boolean(project&&source&&data&&montageRunId);
+    const modes=data?.capabilities?.reprocess_modes||["baseline","ravel-touch","ravel-geometry","combined"];
+    const canReplay=ready&&modes.length>0;
+    const modeSelect=E("result-reprocess-mode");
+    for(const option of Array.from(modeSelect.options||[]))option.disabled=!modes.includes(option.value);
+    if(ready&&!modes.includes(modeSelect.value))modeSelect.value=modes[0]||"";
+    for(const id of ["result-reprocess-mode","result-track-min-duration","result-track-max-distance",
+      "result-player-hold-frames","result-player-match-distance","result-track-player-threshold",
+      "result-track-ball-threshold","result-track-no-ball-fill","result-track-beach","result-reprocess-reset"])
+      E(id).disabled=!canReplay;
+    for(const id of rallyFields)E(id).disabled=!ready||!data?.analyzed;
+    for(const id of ["result-rally-sort","result-playback-mode"])
+      E(id).disabled=!ready||!data?.analyzed||!data.rallies?.length;
+    for(const control of document.querySelectorAll('[name="result-preview-mode"]'))
+      control.disabled=!ready||(control.value==="events"&&!data?.analyzed)||
+        (control.value==="model"&&data?.capabilities&&!Object.values(data.capabilities.raw_sources).some(Boolean));
+    for(const control of document.querySelectorAll("[data-result-overlay]"))
+      control.disabled=!ready||!data?.analyzed;
     const mode=E("result-reprocess-mode")?.value||"combined";
     const usesTouch=mode==="combined"||mode==="ravel-touch";
     const usesVball=mode==="baseline"||mode==="combined";
+    E("result-track-no-ball-fill").disabled=!canReplay||mode==="combined";
     const touchInput=E("result-reprocess-touch-threshold");
     E("result-touch-validation-settings").hidden=!usesTouch;
-    E("result-touch-min-interval").disabled=!usesTouch;
-    E("result-touch-max-reach").disabled=!usesTouch;
-    touchInput.disabled=!usesTouch;
+    const floor=Number(data?.capabilities?.touch_floor)||0;
+    touchInput.min=String(floor);
+    if(ready&&usesTouch&&Number(touchInput.value)<floor)touchInput.value=String(floor);
+    E("result-touch-min-interval").disabled=!canReplay||!usesTouch;
+    E("result-touch-max-reach").disabled=!canReplay||!usesTouch;
+    touchInput.disabled=!canReplay||!usesTouch;
+    E("result-ball-threshold").disabled=!canReplay||!usesVball||!replayBallCapability()?.available;
+    E("result-ball-threshold-reset").disabled=E("result-ball-threshold").disabled||ballThreshold===null;
     touchInput.closest(".field")?.classList.toggle("is-irrelevant",!usesTouch);
     E("result-reprocess-mode-hint").textContent=replayModes[mode]||"";
-    if(button)button.disabled=reprocessBusy||!project||!source||!data||!montageRunId;
+    if(button)button.disabled=reprocessBusy||!canReplay;
     const target=E("result-reprocess-status");
     if(!target||!data||reprocessBusy)return;
-    const baselineBall=Number(data.ball_detection?.analysis_threshold)||.5;
+    if(!canReplay){target.textContent="В выбранной версии нет полного кэша нейросетей для пересчёта. Выполните первичный анализ.";return;}
+    const baselineBall=Number(replayBallCapability()?.analysis_threshold)||.5;
     const baselinePlayer=Number(data.player_detection?.analysis_threshold)||.5;
     const notes=[
       "Мяч: "+(usesVball?"VballNet "+Math.round((ballThreshold??baselineBall)*100)+"%":"RAVEL (исходные предсказания)"),
@@ -447,13 +479,13 @@ window.VolleyballResultsUI=(()=>{
       ". Нажмите «Пересчитать проект», чтобы сохранить отдельную версию со всеми розыгрышами.";
   }
   function setReprocessTask(info){
-    reprocessBusy=info?.kind==="reprocess"&&info.status==="running";
-    const button=E("result-reprocess-start");
-    if(button)button.disabled=reprocessBusy||!project||!data;
+    reprocessBusy=info?.status==="running";
+    syncReprocessControls();
   }
+  const replayBallCapability=()=>data?.raw_ball_detection||data?.ball_detection;
   function restoreBallThreshold(){
-    const available=Boolean(data?.ball_detection?.available);
-    const baseline=Number(data?.ball_detection?.analysis_threshold)||.5;
+    const available=Boolean(replayBallCapability()?.available);
+    const baseline=Number(replayBallCapability()?.analysis_threshold)||.5;
     let saved=null;
     try{
       const raw=localStorage.getItem(ballThresholdKey());
@@ -481,7 +513,7 @@ window.VolleyballResultsUI=(()=>{
   }
   function setBallThreshold(value){
     if(ballThresholdTimer!==null){clearTimeout(ballThresholdTimer);ballThresholdTimer=null;}
-    if(!data?.ball_detection?.available)return;
+    if(!replayBallCapability()?.available)return;
     if(value!==null){
       value=Number(value);
       if(!Number.isFinite(value)||value<.05||value>.95)return;
@@ -489,7 +521,7 @@ window.VolleyballResultsUI=(()=>{
     }
     if(value!==null&&ballThreshold===value)return;
     ballThreshold=value;
-    const baseline=Number(data.ball_detection.analysis_threshold)||.5;
+    const baseline=Number(replayBallCapability().analysis_threshold)||.5;
     E("result-ball-threshold").value=String(value??baseline);
     E("result-ball-threshold-value").textContent=Math.round((value??baseline)*100)+"%";
     E("result-ball-threshold-reset").disabled=value===null;
@@ -506,7 +538,7 @@ window.VolleyballResultsUI=(()=>{
     // event/trajectory view when adjusting the VballNet detector threshold.
     if(modelTouches.active()){
       const eventsMode=document.querySelector('[name="result-preview-mode"][value="events"]');
-      if(eventsMode&&!eventsMode.checked){
+      if(eventsMode&&!eventsMode.disabled&&!eventsMode.checked){
         eventsMode.checked=true;
         eventsMode.dispatchEvent(new Event("change",{bubbles:true}));
       }
@@ -516,7 +548,7 @@ window.VolleyballResultsUI=(()=>{
       ?"Исходные детекции анализа восстановлены. События и розыгрыши не пересчитываются."
       :"Порог "+Math.round(value*100)+"%: показываем сохранённые кандидаты. События и розыгрыши не пересчитываются.";
     updateOverlay();
-    if(data)requestTrail(v().currentTime||0);
+    if(data?.ball_detection?.available)requestTrail(v().currentTime||0);
     syncReprocessControls();
   }
   const playerThresholdKey=()=>"volley-player-threshold:"+project+":"+montageRunId;
@@ -584,7 +616,7 @@ window.VolleyballResultsUI=(()=>{
     }
     if(modelTouches.active()){
       const events=document.querySelector('[name="result-preview-mode"][value="events"]');
-      if(events&&!events.checked){
+      if(events&&!events.disabled&&!events.checked){
         events.checked=true;
         events.dispatchEvent(new Event("change",{bubbles:true}));
       }
@@ -1031,6 +1063,7 @@ window.VolleyballResultsUI=(()=>{
     invalidateTrail();
     resetPlayerBoxes();
     renderEventCounts();
+    syncReprocessControls();
   }
   // Each block shows its own waiting state; no page-wide overlay.
   function showLoading(){
@@ -1081,23 +1114,22 @@ window.VolleyballResultsUI=(()=>{
     const selectedForMontage=new Set(montageRallies());
     E("result-rally-list").innerHTML=rallyOrder.length?rallyOrder.map(({index,duration,touches})=>{
       const r=rallies[index];
+      const people=(r.player_rows||[]).map(p=>(p.name||'Не привязан')+(Number.isFinite(p.similarity)?' · '+(100*p.similarity).toFixed(1)+'%':'')+' · '+({automatic:'авто',confirmed:'подтверждён',suggested:'подтвердить',unknown:'выбрать вручную'}[p.status]||'')).join('; ');
       const evidence=r.start_evidence==="detected_serve"?" · подача найдена":"";
       const joined=r.joined_parts>1?" · "+r.joined_parts+" трека":"";
       const chosen=selectedForMontage.has(r.rally_id);
-      return '<div class="result-rally-entry'+(chosen?' is-selected':'')+'">'+
+      return '<div class="result-rally-entry'+(chosen?' is-selected':'')+'"'+
+        (r.rally_id?' data-rally-mark="'+esc(r.rally_id)+'"':'')+
+        ' title="Правая кнопка мыши — отметить розыгрыш">'+
         '<button type="button" class="result-rally-item" data-rally="'+index+
         '" title="Воспроизвести розыгрыш" aria-current="false"><span class="result-rally-number">№ '+(index+1)+'</span>'+
         '<span class="result-rally-details"><b>'+clock(r.start)+' – '+clock(r.end)+'</b>'+
-        '<small>'+duration.toFixed(1)+' с · '+touches+' касаний'+
-        ' · игроков в кадре '+(r.player_count==null?'—':Number(r.player_count))+
-        ((r.linked_players||[]).length?' · привязаны: '+
-          esc(r.linked_players.map(p=>p.name).join(', ')):'')+evidence+joined+
-        '</small>'+rallyPlayersHtml(r)+'</span>'+
-        '<span class="result-rally-play">▶</span></button>'+
-        (r.rally_id?'<label class="result-rally-montage" title="Добавить этот розыгрыш в ручной монтаж">'+
-        '<input type="checkbox" data-montage-rally="'+esc(r.rally_id)+'"'+
-        (chosen?' checked':'')+' aria-label="Розыгрыш №'+(index+1)+' в ручной монтаж">'+
-        '<span>В монтаж</span></label>':'')+'</div>';
+        '<span class="result-rally-metrics"><span><strong>'+duration.toFixed(1)+'</strong> с</span>'+
+        '<span aria-label="'+touches+' касаний"><strong>'+touches+'</strong> касаний</span>'+
+        '<span aria-label="игроков в кадре '+(r.player_count==null?'—':Number(r.player_count))+'"><strong>'+(r.player_count==null?'—':Number(r.player_count))+'</strong> игроков</span></span>'+
+        '<span class="result-rally-people" title="'+esc(people+evidence+joined)+'">'+
+        esc((r.linked_players||[]).map(p=>p.name).join(', '))+'</span></span>'+
+        '<span class="result-rally-play">▶</span></button></div>';
     }).join(""):'<div class="empty">В выбранном видео модель не нашла завершённых розыгрышей.</div>';
     renderTimeline();
   }
@@ -1186,6 +1218,13 @@ window.VolleyballResultsUI=(()=>{
   async function setProject(projectId,videos=[],selected=null){
     const previousProject=project;
     project=projectId||"";
+    const picker=E("result-video-select");
+    if(picker){
+      const choices=videos.filter(name=>Boolean(selectedCaches[name]));
+      picker.innerHTML=choices.map(name=>'<option value="'+esc(name)+'">'+esc(name)+'</option>').join("");
+      picker.hidden=choices.length<2;
+      picker.value=selected||source||videos[0]||"";
+    }
     if(previousProject!==project){
       restoreRallyConfig();
       restoreOverlays();
@@ -1208,6 +1247,7 @@ window.VolleyballResultsUI=(()=>{
     const selectionAtStart=selectionFingerprint;
     const seq=++loadId;
     source=name;
+    if(E("result-video-select"))E("result-video-select").value=name;
     clear();
     setAvailable(true);
     const diagnostic=E("result-upstream-touch-video");
@@ -1268,6 +1308,7 @@ window.VolleyballResultsUI=(()=>{
           }
           E("result-rally-summary").textContent=message;
           renderEventCounts();
+          updateSourceMode();
           updateOverlay();
         }
         syncReprocessControls();
@@ -1468,6 +1509,9 @@ window.VolleyballResultsUI=(()=>{
     }
   }
   function init(){
+    E("result-video-select")?.addEventListener("change",event=>{
+      window.dispatchEvent(new CustomEvent("volley:select-video",{detail:{video:event.target.value}}));
+    });
     E("result-player-toggle")?.addEventListener("click",()=>{
       const player=v();
       if(player.paused){const promise=player.play();if(promise?.catch)promise.catch(()=>{});}
@@ -1624,8 +1668,9 @@ window.VolleyballResultsUI=(()=>{
       const mode=E("result-reprocess-mode").value;
       const touch=["combined","ravel-touch"].includes(mode)
         ?Number(E("result-reprocess-touch-threshold").value):0.5;
-      const touchGap=Number(E("result-touch-min-interval").value);
-      const touchReach=Number(E("result-touch-max-reach").value);
+      const usesTouch=["combined","ravel-touch"].includes(mode);
+      const touchGap=usesTouch?Number(E("result-touch-min-interval").value):.35;
+      const touchReach=usesTouch?Number(E("result-touch-max-reach").value):.35;
       const track={
         track_min_duration:Number(E("result-track-min-duration").value),
         track_max_distance:Number(E("result-track-max-distance").value),
@@ -1633,7 +1678,7 @@ window.VolleyballResultsUI=(()=>{
         player_match_distance:Number(E("result-player-match-distance").value),
         track_player_threshold:Number(E("result-track-player-threshold").value),
         track_ball_threshold:Number(E("result-track-ball-threshold").value),
-        track_no_ball_fill:E("result-track-no-ball-fill").checked,
+        track_no_ball_fill:mode!=="combined"&&E("result-track-no-ball-fill").checked,
         beach:E("result-track-beach").checked,
       };
       const bounds=[
@@ -1689,14 +1734,41 @@ window.VolleyballResultsUI=(()=>{
       E(id).addEventListener("input",()=>scheduleRallyRefresh());
       E(id).addEventListener("change",()=>scheduleRallyRefresh(true));
     });
-    E("result-rally-list").addEventListener("change",e=>{
-      const input=e.target.closest("[data-montage-rally]");
-      if(!input)return;
-      const selected=new Set(montageRallies());
-      if(input.checked)selected.add(input.dataset.montageRally);
-      else selected.delete(input.dataset.montageRally);
-      setMontageRallies([...selected]);
+    const rallyMenu=document.createElement("div");
+    rallyMenu.className="result-rally-context-menu";
+    rallyMenu.hidden=true;
+    rallyMenu.setAttribute("role","menu");
+    rallyMenu.innerHTML='<button type="button" role="menuitem" data-rally-toggle></button>';
+    document.body.appendChild(rallyMenu);
+    let contextRallyId=null;
+    const closeRallyMenu=()=>{rallyMenu.hidden=true;contextRallyId=null;};
+    E("result-rally-list").addEventListener("contextmenu",e=>{
+      const entry=e.target.closest("[data-rally-mark]");
+      if(!entry)return;
+      e.preventDefault();
+      contextRallyId=entry.dataset.rallyMark;
+      const selected=montageRallies().includes(contextRallyId);
+      rallyMenu.querySelector("button").textContent=selected?"Снять отметку":"★ Отметить";
+      rallyMenu.hidden=false;
+      rallyMenu.style.left=Math.max(4,Math.min(e.clientX,window.innerWidth-rallyMenu.offsetWidth-8))+"px";
+      rallyMenu.style.top=Math.max(4,Math.min(e.clientY,window.innerHeight-rallyMenu.offsetHeight-8))+"px";
+      rallyMenu.querySelector("button").focus();
     });
+    rallyMenu.addEventListener("click",()=>{
+      if(!contextRallyId)return;
+      const selected=new Set(montageRallies());
+      if(selected.has(contextRallyId))selected.delete(contextRallyId);
+      else selected.add(contextRallyId);
+      setMontageRallies([...selected]);
+      closeRallyMenu();
+    });
+    document.addEventListener("pointerdown",e=>{
+      if(!rallyMenu.hidden&&!rallyMenu.contains(e.target))closeRallyMenu();
+    });
+    document.addEventListener("keydown",e=>{
+      if(e.key==="Escape"&&!rallyMenu.hidden)closeRallyMenu();
+    });
+    E("result-rally-list").addEventListener("scroll",closeRallyMenu,{passive:true});
     E("result-rally-list").addEventListener("click",e=>{
       const b=e.target.closest("[data-rally]");
       if(b)selectRally(Number(b.dataset.rally));
@@ -1764,8 +1836,15 @@ window.VolleyballResultsUI=(()=>{
       }
     });
     startFrameMonitor();
+    syncReprocessControls();
   }
   function activeRally(){return segment?{...segment}:null}
   return {init,setProject,setVideo,showLoading,setCacheSelection,setReprocessTask,
-          selectRally,activeRally,montageRallies,setMontageRallies};
+          selectRally,activeRally,montageRallies,setMontageRallies,
+          currentPosition:()=>sourceTime(v().currentTime||0),
+          playbackBounds:()=>({start:offset,end:offset+totalDuration}),fps:()=>30,
+          seek:time=>{
+            segment=null;syncRallySelection();E("result-overlay-rally").hidden=true;
+            v().currentTime=Math.max(0,Math.min(totalDuration,mediaTime(time)));updateOverlay();
+          }};
 })();

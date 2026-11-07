@@ -153,42 +153,11 @@
 .player-reid-guess.is-likely{color:#b3e8be}
 .player-guess-cell .track-subline{white-space:normal;line-height:1.4}
 
-/* Enlarged multi-frame Track ID gallery. A fixed portal avoids clipping by
-   the horizontally/vertically scrollable players table. */
-.player-track-hover-preview{
-  position:fixed;
-  z-index:2300;
-  box-sizing:border-box;
-  max-width:calc(100vw - 24px);
-  max-height:calc(100dvh - 24px);
-  overflow:auto;
-  border:1px solid #7ab18b;
-  border-radius:14px;
-  background:#13271f;
-  color:#e9f7e8;
-  box-shadow:0 18px 55px #030d0ccc;
-  padding:15px;
-}
-.player-track-hover-preview[hidden]{display:none!important}
-.player-track-hover-heading{display:flex;align-items:baseline;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:12px}
-.player-track-hover-title{font-size:15px;font-weight:800}
-.player-track-hover-count{font-size:11px;color:#b3d4ba}
-.player-track-hover-message{font-size:12px;line-height:1.5;color:#bad6bf;margin:8px 0}
-.player-track-hover-images{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
-.player-track-hover-photo{display:flex;flex-direction:column;justify-content:center;gap:6px;min-width:0;margin:0;border:1px solid #3f6d50;border-radius:10px;overflow:hidden;background:#1a3028}
-.player-track-hover-photo img{display:block;width:100%;height:260px;object-fit:contain;background:#091711}
-.player-track-hover-photo figcaption{color:#d1eacd;font-size:11px;padding:0 8px 8px;text-align:center;font-variant-numeric:tabular-nums}
-.player-track-hover-photo.is-unavailable img{opacity:.2}
-.player-track-hover-hint{display:block;color:#a3c0ac;font-size:11px;margin-top:10px}
-.player-track-row .photo-peek:hover,.player-track-row .photo-peek:focus-visible{border-color:#bbefa0;outline:2px solid #80cc8b;outline-offset:2px}
-.player-appearance-card>img[data-photo-track-id],.player-suggestion>img[data-photo-track-id]{cursor:zoom-in}
-@media(max-width:570px){
-  .player-track-hover-preview{padding:10px}
-  .player-track-hover-images{grid-template-columns:repeat(3,minmax(0,1fr));gap:5px}
-  .player-track-hover-photo img{height:170px}
-  .player-track-hover-photo figcaption{font-size:9px;padding:0 2px 6px}
-}
-
+/* Inline photo cycling; no overlay on hover. */
+#view-players .photo-peek,
+#view-players [data-photo-track-id]{cursor:pointer}
+#view-players [data-photo-track-id]:focus-visible,
+#view-players .photo-peek:focus-visible{outline:2px solid #a4ee92;outline-offset:2px}
 /* Unified players workspace: roster, album and two assignment modes. */
 .players-unified{padding:20px;display:flex;flex-direction:column;gap:18px;min-width:0}
 .players-unified .player-overview-main{align-items:center}
@@ -278,7 +247,7 @@
 .players-manager [data-player-table-pane]>h3,.players-manager [data-player-table-pane]>.player-panel-hint,.players-manager [data-player-table-pane=photos]>.panel-heading h3{display:none}
 .players-manager [data-player-pane=manual]>.player-panel-hint,.players-manager #players-filter-note,.players-manager .player-select-tools small{display:none}
 .players-manager .player-filter-bar{grid-template-columns:minmax(140px,220px) minmax(180px,320px)}
-.players-manager .table-scroll{max-height:none;overflow:visible;border:0;background:transparent}
+.players-manager .table-scroll{flex:1 1 auto;min-height:0;max-height:none;overflow:auto;border:0;background:transparent;scrollbar-width:thin;scrollbar-color:#40564e transparent;scrollbar-gutter:stable}
 .players-manager .table-scroll table{display:block;min-width:0;width:100%;background:transparent}
 .players-manager .table-scroll thead{display:none}
 .players-manager #raw-players,.players-manager #player-linked-tracks,.players-manager #player-album-gallery{display:grid;grid-template-columns:repeat(auto-fill,minmax(172px,1fr));gap:14px}
@@ -289,7 +258,7 @@
 .players-manager .table-scroll .photo-peek{display:block;width:100%;height:180px;border:0;padding:0;border-radius:6px;overflow:hidden;background:#0c1713;cursor:pointer}
 .players-manager .table-scroll .photo-peek img,.players-manager .player-album-card img{display:block;width:100%;height:180px;object-fit:contain;background:#0c1713;border-radius:6px}
 .players-manager #raw-players td:first-child{position:absolute;top:16px;left:16px;z-index:1;background:#14211ecc;border-radius:5px;padding:3px}
-.players-manager #raw-players td:nth-child(3) .track-subline,.players-manager #raw-players td:nth-child(3)>button,.players-manager #raw-players td:nth-child(4) .track-subline,.players-manager #raw-players td:nth-child(5),.players-manager #raw-players td:nth-child(6),.players-manager #raw-players td:nth-child(7){display:none}
+.players-manager #raw-players td:nth-child(3) .track-subline,.players-manager #raw-players td:nth-child(3)>button,.players-manager #raw-players td:nth-child(4) .track-subline,.players-manager #raw-players td:nth-child(5){display:none}
 .players-manager #raw-players td:nth-child(4){color:#98afa2;font-size:11px}
 .players-manager #player-linked-tracks td:last-child{color:#9bb4a3;font-size:11px}
 .players-manager .player-album-card td:nth-child(2){font-size:10px;color:#9bb4a3;line-height:1.5;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
@@ -299,3 +268,297 @@
 .players-manager .players-review-columns{display:none}
 .players-manager .table-scroll td.empty,.players-manager .table-scroll td.muted{padding:16px;line-height:1.6}
 @media(max-width:700px){.players-manager .players-unified{padding:14px;gap:14px}.players-manager .player-gallery-toolbar{flex-wrap:wrap}.player-workspace-settings[open]{min-width:100%;max-width:100%}.players-manager .player-filter-bar{grid-template-columns:1fr}.players-manager #raw-players,.players-manager #player-linked-tracks,.players-manager #player-album-gallery{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.player-gallery-tabs button{padding:9px 10px}.players-manager .table-scroll .photo-peek,.players-manager .table-scroll .photo-peek img,.players-manager .player-album-card img{height:155px}}
+
+.players-manager .players-unified{display:grid;grid-template-columns:minmax(210px,.382fr) minmax(0,1fr);gap:28px;align-items:stretch;padding:24px;grid-template-rows:minmax(0,1fr);height:clamp(560px,calc(100dvh - 200px),1000px);box-sizing:border-box}
+.players-manager .players-identity-panel{display:flex;flex-direction:column;gap:14px;padding-right:24px;border-right:1px solid #304136;position:relative;align-self:stretch;height:100%;min-height:0;max-height:none;overflow:hidden;min-width:0;box-sizing:border-box}
+.players-manager .players-identity-panel>.panel-heading{flex-basis:auto;width:100%;font-size:14px}
+.players-manager .players-identity-panel .named-list{display:flex;flex-direction:column;flex-wrap:nowrap;width:100%;gap:8px;order:0;overflow:visible;padding:0;flex:0 0 auto}
+.players-manager .players-identity-panel .player-roster-item{width:100%;flex:0 0 auto}
+.players-manager .players-identity-panel .player-identity-slot{min-height:70px;border-radius:9px;padding:12px;background:#14211a;border-color:transparent}
+.players-manager .players-identity-panel .player-identity-slot.is-active{background:#283c2c;border-color:#6e9065;box-shadow:none}
+.players-manager .players-identity-panel .player-add-disclosure,.players-manager .players-identity-panel .player-manage{width:100%;flex-basis:auto;padding-top:8px;border-top:1px solid #304136}
+.players-manager .player-library-add{flex-wrap:wrap}
+.players-manager .player-library-add .field{min-width:0;width:100%}
+.players-detail-workspace{min-width:0;min-height:0;height:100%;display:flex;flex-direction:column;gap:18px;overflow:hidden}
+.players-detail-workspace .player-gallery-toolbar{margin:0;padding-bottom:14px;gap:8px;align-items:center;flex-wrap:wrap}
+.players-detail-workspace .player-gallery-tabs{gap:2px;flex:1}
+.players-detail-workspace .player-gallery-tabs button{font-size:12px;padding:9px 11px}
+.players-detail-workspace .player-workspace-settings{max-width:100%}
+.players-detail-workspace .player-workspace-settings[open]{flex-basis:100%}
+.players-manager #raw-players,.players-manager #player-linked-tracks,.players-manager #player-album-gallery{grid-template-columns:repeat(auto-fill,minmax(170px,1fr));align-items:start;gap:12px}
+.players-manager .table-scroll tbody>tr{gap:9px;padding:10px;background:#14211a;border-color:#304136}
+.players-manager .table-scroll tbody>tr:has(td.empty){grid-column:1/-1}
+.players-manager .table-scroll .photo-peek,.players-manager .table-scroll .photo-peek img,.players-manager .player-album-card img{height:190px}
+.players-manager .table-scroll td{line-height:1.5}
+.players-manager .player-bulk-bar{position:sticky;bottom:12px;z-index:4;margin:0;box-shadow:0 8px 24px #080f0b55}
+@media(min-width:1500px){.players-manager .players-unified{grid-template-columns:minmax(230px,300px) minmax(0,1fr)}}
+@media(max-width:900px){.players-manager .players-unified{grid-template-columns:1fr;grid-template-rows:460px 640px;height:auto;gap:20px;padding:16px}.players-manager .players-identity-panel{position:static;max-height:none;border:0;border-bottom:1px solid #304136;padding:0 0 18px}.players-manager .players-identity-panel .named-list{flex-direction:row;overflow-x:auto;max-width:100%;padding-bottom:6px}.players-manager .players-identity-panel .player-roster-item{width:180px;flex:0 0 180px}.players-manager .player-add-disclosure,.players-manager .player-manage{max-width:480px}}
+
+.players-manager #raw-players .player-track-assign{display:flex;flex-direction:column;gap:6px;min-width:0}
+.players-manager #raw-players .track-player-picker{width:100%;min-width:0;max-width:100%}
+.players-manager #raw-players .player-guess-cell{min-width:0;max-width:none}
+.players-manager #raw-players .player-track-row{cursor:pointer}
+
+.players-manager .players-identity-panel{flex-wrap:nowrap;align-items:stretch}
+.players-manager .players-identity-panel>.panel-heading{flex:0 0 auto;order:0}
+.players-manager .players-identity-panel>.player-manage{flex:0 0 auto;order:1;max-height:150px;overflow:auto}
+.players-manager .player-roster-scroll{display:flex;flex-direction:column;gap:8px;order:2;flex:1 1 auto;min-height:0;overflow-y:auto;overflow-x:hidden;padding-right:6px;scrollbar-width:thin;scrollbar-color:#40564e transparent}
+.players-manager .players-identity-panel .player-roster-scroll .named-list{flex-direction:column;flex:0 0 auto;order:0;overflow:visible;padding:0}
+.players-manager .players-identity-panel .player-add-disclosure{order:3;max-height:50%;overflow-y:auto;flex:0 0 auto;width:100%;padding:0;border:1px dashed #4a6553;border-radius:9px;background:#14211a;box-sizing:border-box}
+.players-manager .player-add-disclosure>summary{display:flex;align-items:center;gap:10px;min-height:70px;padding:12px;box-sizing:border-box;list-style:none;color:#b3c9b7;font-size:12px}
+.players-manager .player-add-disclosure>summary::-webkit-details-marker{display:none}
+.players-manager .player-add-disclosure>summary:hover{background:#203326;border-radius:9px;color:#e1eddc}
+.players-manager .player-add-disclosure>summary:focus-visible{outline:2px solid #b4dd8b;outline-offset:-3px;border-radius:9px}
+.player-add-icon{display:grid;place-items:center;width:32px;height:32px;flex:0 0 32px;border:1px solid #49674c;border-radius:50%;font-size:24px;line-height:1;font-weight:400;color:#b4dd8b}
+.players-manager .player-add-disclosure[open]{border-style:solid}
+.players-manager .player-add-disclosure>.player-library-add,.players-manager .player-add-disclosure>.player-create-disclosure{margin:10px 12px 12px}
+@media(max-width:900px){.players-manager .players-identity-panel{height:100%;min-height:0;max-height:none;overflow:hidden}.players-manager .player-roster-scroll{flex:1 1 auto;overflow-y:auto;padding:0 6px 0 0}.players-manager .players-identity-panel .player-roster-item{width:100%;flex:0 0 auto}.players-manager .players-identity-panel .player-add-disclosure{max-width:none}}
+
+.players-manager .player-roster-save{width:100%;margin:5px 0 0;padding:8px 10px;border-color:#486345;background:#203220;color:#c4dda9;font-size:11px;white-space:normal}
+.players-manager .player-roster-save[hidden]{display:none}
+.player-album-tools{display:flex;align-items:center;flex-wrap:wrap;gap:8px}
+#filter-player-album[aria-pressed="true"]{background:#30452a;border-color:#9dcc7d;color:#e1efcf}
+#player-album-filter-status:empty{display:none}
+
+.players-manager .player-mode-pane:not([hidden]){display:flex;flex-direction:column;flex:1 1 auto;min-height:0;overflow:hidden}
+.players-manager [data-player-table-pane]:not([hidden]){display:flex;flex-direction:column;flex:1 1 auto;min-height:0;overflow:hidden}
+.players-manager .players-detail-workspace .player-gallery-toolbar{flex:0 0 auto;max-height:180px;overflow:auto}
+.players-manager .player-mode-pane>.panel-heading,.players-manager .player-mode-pane>.player-filter-bar,.players-manager .player-mode-pane>.player-select-tools,.players-manager .player-mode-pane>.table-footer,.players-manager .player-bulk-bar{flex:0 0 auto}
+.players-manager .player-groups-list{flex:1 1 auto;min-height:0;max-height:none;overflow:auto;align-content:start}
+.players-manager .player-action-feedback{flex:0 0 auto;max-height:54px;overflow-y:auto;overflow-wrap:anywhere}
+.players-manager .player-roster-item .player-slot-text{max-height:84px;overflow-y:auto;overflow-wrap:anywhere}
+.players-manager .table-scroll td:not(:has(.photo-peek)):not(:has(img)){max-height:96px;overflow-y:auto}
+.players-manager .player-album-card td:nth-child(2){display:block;-webkit-line-clamp:unset;max-height:64px;overflow-y:auto}
+
+@media(min-width:901px){
+  /* Shell stays viewport-sized; short screens scroll the workspace rather than collapse the roster. */
+  #view-players.active{display:flex;flex-direction:column;flex:1 1 0;min-height:0;overflow-y:auto;overflow-x:hidden}
+  #view-players>.players-stack{display:flex;flex-direction:column;flex:1 1 0;min-height:0;overflow:hidden}
+  .players-manager .players-unified{flex:1 1 auto;height:100%;max-height:100%;min-height:0;overflow:hidden;gap:20px;padding:16px}
+  .players-manager .players-identity-panel>.player-manage{max-height:min(25%,110px);overflow:auto}
+  .players-manager .players-identity-panel>.player-add-disclosure{max-height:min(35%,150px)}
+  .players-manager .player-roster-scroll{min-height:64px}
+}
+.players-manager>.players-project-health{flex:0 0 auto;margin:0 0 16px;gap:10px}
+.players-project-health .player-health-metric{padding:12px 16px;min-width:0;background:var(--panel);border:1px solid var(--border);border-radius:10px}
+.players-project-health .player-health-metric strong{display:block;font-size:24px;line-height:1.2;color:var(--text)}
+.players-project-health .player-health-metric span{display:block;margin-top:5px;font-size:11px;color:var(--muted)}
+.players-manager .player-recalculate-bar{flex:0 0 auto;margin:0;gap:10px}
+.players-manager .player-action-statistics:empty{display:none}
+.players-manager .player-action-statistics{flex:0 0 auto;max-height:140px;overflow:auto}
+
+
+/* Compact sizing is scoped to the Players tab; keep shell geometry unchanged. */
+#view-players .section-intro{margin-bottom:8px}
+#view-players .section-intro h2{font-size:19px;margin-bottom:4px}
+#view-players .section-intro p{font-size:12px;line-height:1.4}
+.players-manager>.players-project-health{margin-bottom:9px;gap:7px}
+.players-manager .players-project-health .player-health-metric{padding:7px 10px;border-radius:8px}
+.players-manager .players-project-health .player-health-metric strong{font-size:19px;line-height:1.1}
+.players-manager .players-project-health .player-health-metric span{font-size:10px;margin-top:3px}
+.players-manager .players-unified{gap:13px;padding:12px}
+.players-manager .players-identity-panel{gap:8px;padding-right:13px}
+.players-manager .players-identity-panel>.panel-heading{font-size:12px}
+#view-players .panel-heading{margin-bottom:8px;gap:7px}
+#view-players .panel-heading h3{font-size:13px}
+.players-manager .player-roster-scroll,.players-manager .players-identity-panel .named-list{gap:6px}
+.players-manager .players-identity-panel .player-identity-slot{min-height:56px;padding:8px;gap:8px;border-radius:7px}
+.players-manager .player-slot-avatar{width:27px;height:27px;flex-basis:27px;font-size:12px}
+.players-manager .player-slot-text{gap:2px}
+.players-manager .player-slot-text strong{font-size:12px}
+.players-manager .player-slot-text small,.players-manager .player-slot-actions{font-size:10px}
+.players-manager .player-roster-item .player-slot-text{max-height:68px}
+.players-manager .player-add-disclosure>summary{min-height:54px;padding:8px;gap:8px;font-size:11px}
+.players-manager .player-add-icon{width:25px;height:25px;flex-basis:25px;font-size:19px}
+.players-manager .player-add-disclosure>.player-library-add,.players-manager .player-add-disclosure>.player-create-disclosure{margin:7px 9px 9px}
+#view-players .field{gap:5px;margin-bottom:10px}
+#view-players .field>span{font-size:11px}
+#view-players input:not([type="checkbox"]):not([type="range"]):not([type="radio"]),#view-players select{min-height:34px;padding:6px 9px;border-radius:7px;font-size:12px}
+#view-players button.primary,#view-players button.secondary{min-height:31px;padding:6px 10px;font-size:11px;border-radius:7px;white-space:normal}
+.players-manager .players-detail-workspace{gap:10px}
+.players-manager .players-detail-workspace .player-gallery-toolbar{padding-bottom:7px;gap:6px}
+.players-manager .players-detail-workspace .player-gallery-tabs button{font-size:11px;padding:7px 9px;border-radius:6px}
+.players-manager .player-recalculate-bar{gap:7px}
+.players-manager .player-recalculate-bar span{font-size:11px;line-height:1.35}
+.players-manager .player-action-statistics{margin:0 0 6px;font-size:11px}
+.players-manager .player-filter-bar{gap:7px;margin:6px 0}
+.players-manager .player-select-tools{gap:6px;margin-bottom:7px}
+.players-manager .player-panel-hint{font-size:11px;line-height:1.35;margin-bottom:7px}
+.players-manager #raw-players,.players-manager #player-linked-tracks,.players-manager #player-album-gallery{grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px}
+.players-manager .table-scroll tbody>tr{padding:7px;gap:5px;border-radius:8px}
+.players-manager .table-scroll td{font-size:11px;line-height:1.35}
+.players-manager .table-scroll .photo-peek,.players-manager .table-scroll .photo-peek img,.players-manager .player-album-card img{height:145px}
+.players-manager .player-album-card td:nth-child(2){max-height:45px}
+.players-manager .player-album-actions{gap:4px;margin-top:3px}
+.players-manager .player-album-actions button,.players-manager .player-track-assign button{min-height:29px;padding:5px 6px;white-space:normal;font-size:11px}
+.players-manager .player-reid-controls{gap:7px 10px;margin:6px 0 9px;padding:8px 10px}
+.players-manager .player-reid-controls label{font-size:11px}
+.players-manager .player-reid-controls small{font-size:10px}
+.players-manager .player-groups-status{font-size:11px;margin:5px 0 8px}
+.players-manager .player-groups-list{grid-template-columns:repeat(auto-fit,minmax(255px,1fr));gap:8px}
+.players-manager .player-appearance-card{padding:7px;gap:7px;border-radius:8px}
+.players-manager .player-appearance-card>img{width:51px;height:66px;flex-basis:51px}
+.players-manager .player-appearance-info strong{font-size:12px}
+.players-manager .player-appearance-info small{font-size:10px}
+.players-manager .player-appearance-actions{max-width:135px;gap:5px}
+.players-manager .player-bulk-bar{padding:9px;gap:8px;border-radius:9px}
+.players-manager .player-bulk-bar strong{font-size:12px}
+@media(min-width:901px){
+  .players-manager .players-unified{padding:12px;gap:13px}
+}
+@media(max-width:700px){
+  .players-manager .players-unified{padding:10px;gap:12px}
+  .players-manager .players-identity-panel{padding-right:0}
+}
+
+
+/* ReID group cards: photo and suggested player are the primary controls. */
+.players-manager .player-groups-list{
+  grid-template-columns:repeat(auto-fill,minmax(min(100%,260px),1fr));
+  gap:10px;
+  align-items:start;
+}
+.players-manager .player-appearance-card{
+  display:flex;
+  flex-direction:column;
+  align-items:stretch;
+  gap:8px;
+  min-width:0;
+  padding:10px;
+  overflow:hidden;
+}
+.players-manager .player-appearance-card>img{
+  display:block;
+  width:100%;
+  height:190px;
+  flex:none;
+  object-fit:contain;
+  border:1px solid #355441;
+  border-radius:7px;
+  background:#0b1913;
+}
+.players-manager .player-appearance-info{
+  width:100%;
+  min-width:0;
+  gap:5px;
+  overflow-wrap:break-word;
+}
+.players-manager .player-appearance-main-id{
+  display:block;
+  font-size:14px;
+  line-height:1.3;
+}
+.players-manager .player-appearance-meta{
+  font-size:11px;
+  line-height:1.3;
+}
+.players-manager .player-appearance-members{font-size:11px;color:#bfd7c4;min-width:0}
+.players-manager .player-appearance-members summary{cursor:pointer;padding:3px 0;color:#b0cfb8}
+.players-manager .player-appearance-members ul{
+  list-style:none;
+  margin:4px 0 0;
+  padding:6px 8px;
+  max-height:92px;
+  overflow-y:auto;
+  overflow-x:hidden;
+  border:1px solid #355441;
+  border-radius:7px;
+  background:#0f211a;
+  scrollbar-width:thin;
+}
+.players-manager .player-appearance-members li{
+  padding:2px 0;
+  font-size:11px;
+  line-height:1.4;
+  overflow-wrap:anywhere;
+}
+.players-manager .player-appearance-info .player-reid-pick-hint{
+  display:block;
+  font-size:11px;
+  line-height:1.4;
+}
+.players-manager .player-appearance-actions{
+  display:flex;
+  flex-direction:column;
+  width:100%;
+  max-width:none;
+  min-width:0;
+  margin-top:auto;
+  gap:6px;
+}
+.players-manager .player-appearance-pick-caption{font-size:11px;font-weight:700;color:#bfd7c4}
+.players-manager .player-appearance-actions select{
+  width:100%;
+  max-width:100%;
+  min-width:0;
+  min-height:36px;
+  font-size:12px;
+  text-overflow:ellipsis;
+}
+#view-players .player-appearance-actions button.primary{
+  display:block;
+  width:100%;
+  min-height:36px;
+  font-size:12px;
+  white-space:normal;
+}
+@media(max-width:700px){
+  .players-manager .player-appearance-card>img{height:165px}
+}
+
+/* Prevent ReID cards from painting into adjacent grid rows when many groups are shown. */
+.players-manager .player-groups-list{
+  grid-auto-flow:row;
+  grid-auto-rows:max-content;
+  align-content:start;
+  align-items:stretch;
+}
+.players-manager .player-appearance-card{
+  height:auto;
+  min-height:max-content;
+  align-self:stretch;
+}
+/* The grouping threshold belongs below the scrollable ReID groups list. */
+.players-manager [data-player-pane="auto"] > .player-reid-controls{
+  flex:0 0 auto;
+  margin:8px 0 0;
+}
+/* Move recalculation controls below the ReID card gallery without affecting other player tabs. */
+.players-manager .player-auto-footer-actions{
+  display:flex;
+  flex:0 0 auto;
+  justify-content:flex-end;
+  gap:8px;
+  padding-top:2px;
+}
+.players-manager .players-detail-workspace:has(> [data-player-pane="auto"]:not([hidden])) > .player-recalculate-bar{
+  order:3;
+  margin-top:3px;
+}
+.players-manager .players-detail-workspace:has(> [data-player-pane="auto"]:not([hidden])) > .player-action-statistics{
+  order:4;
+}
+/* Six compact ReID cards per row on desktop; fall back on narrow screens. */
+.players-manager .player-groups-list{
+  grid-template-columns:repeat(auto-fit,minmax(min(100%,175px),1fr));
+  gap:8px;
+}
+@media(min-width:1300px){
+  .players-manager .player-groups-list{
+    grid-template-columns:repeat(6,minmax(0,1fr));
+  }
+  .players-manager .player-appearance-card>img{height:160px}
+  .players-manager .player-appearance-card{gap:6px;padding:8px}
+  .players-manager .player-appearance-info .player-reid-pick-hint{
+    display:-webkit-box;
+    -webkit-box-orient:vertical;
+    -webkit-line-clamp:2;
+    overflow:hidden;
+  }
+}
+.players-manager .player-groups-status:empty{display:none}
+
+/* Indicate an in-flight photo change without hiding the current working frame. */
+#view-players .is-photo-loading{cursor:progress}
+#view-players .is-photo-loading img,
+#view-players img.is-photo-loading{filter:brightness(.75);transition:filter 120ms}

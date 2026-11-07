@@ -581,7 +581,8 @@
   overflow-x:hidden;
   overflow-y:auto;
   scrollbar-gutter:stable;
-  overscroll-behavior:contain;
+  /* Let the main Analysis page continue scrolling at the list boundaries. */
+  overscroll-behavior-y:auto;
   padding:0 5px 2px 0;
 }
 @media(max-width:900px){

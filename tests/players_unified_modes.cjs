@@ -35,7 +35,7 @@ vm.runInContext([
   'renderPlayerGroups();'
 ].join("\n"),ctx);
 assert(el("#player-groups-list").innerHTML.includes("#102"));
-assert(el("#player-groups-list").innerHTML.includes("#104"));
+assert(el("#player-groups-list").innerHTML.includes("2 ID в группе"),"Group should include both unassigned tracks without listing every ID");
 assert(!el("#player-groups-list").innerHTML.includes("#103"),"unmatched ID belongs only to manual binding");
 assert(!el("#player-groups-list").innerHTML.includes("Track #101"),
   "confirmed track is removed from automatic unassigned candidates");

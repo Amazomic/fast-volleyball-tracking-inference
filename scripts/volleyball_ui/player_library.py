@@ -6,13 +6,16 @@ provenance in index.json. This module does not train or identify people.
 from __future__ import annotations
 
 import hashlib
+from pathlib import Path
 import re
 import shutil
 import threading
+from functools import lru_cache
 from datetime import datetime, timezone
 
 from . import data
 from .photos import photo_path, photos_metadata
+from .photo_diversity import signature, similar
 
 _ALBUM_LOCK = threading.RLock()
 
@@ -72,11 +75,14 @@ def save_player_photos(project_id: str, video: str, player_id: str, cache_id=Non
     ids = [str(tid) for group in data.groups_for(video, project_id, cache_id)
            if group["id"] == player_id for tid in group.get("track_ids", [])
            if group.get("link_meta", {}).get(str(tid), {}).get("reviewed", True)]
-    result = sync_photos(project_id, video, ids, cache_id)
-    return {**result, "count": album_photos(player_id)["count"]}
+    with _ALBUM_LOCK:
+        pending = pending_player_photos(project_id, video, player_id, cache_id)
+        result = sync_photos(project_id, video, ids, cache_id, set(pending["filenames"]))
+        result["errors"] = pending["errors"] + result["errors"]
+        return {**result, "count": album_photos(player_id)["count"]}
 
 
-def sync_photos(project_id: str, video: str, track_ids: list[str], cache_id=None) -> dict:
+def sync_photos(project_id: str, video: str, track_ids: list[str], cache_id=None, allowed_filenames=None) -> dict:
     """Refresh photos for selected IDs based on their *current* manual labels.
 
     Removes stale photos when an ID is moved or unassigned. The analysis is
@@ -111,6 +117,8 @@ def sync_photos(project_id: str, video: str, track_ids: list[str], cache_id=None
                     kept.append(row)
             if len(kept) != len(rows):
                 data.save_json(manifest, {**index, "schema": 1, "photos": kept})
+        if allowed_filenames is not None and not allowed_filenames:
+            return {"copied": 0, "errors": []}
         for tid in track_ids:
             player_id = current.get(tid)
             if player_id is None:
@@ -128,6 +136,8 @@ def sync_photos(project_id: str, video: str, track_ids: list[str], cache_id=None
             for sample in samples:
                 frame = int(sample["frame"])
                 filename = _key(project_id, video, tid, frame, cache_id) + ".jpg"
+                if allowed_filenames is not None and filename not in allowed_filenames:
+                    continue
                 if filename in existing or filename in set(index.get("rejected", [])):
                     continue
                 try:
@@ -166,38 +176,54 @@ def _album_index(player_id: str):
 
 
 def album_photos(player_id: str) -> dict:
-    """Read only saved photo rows, not project-scoped temporary crops."""
-    with _ALBUM_LOCK:
-        folder = album_dir(player_id)
-        rows = _album_index(player_id).get("photos", [])
-        photos = []
-        for row in rows if isinstance(rows, list) else []:
-            filename = row.get("filename") if isinstance(row, dict) else None
-            if (not isinstance(filename, str) or not _SAFE_PHOTO.fullmatch(filename)
-                    or not (folder / "photos" / filename).is_file()):
-                continue
-            photos.append({
-                "filename": filename, "frame": row.get("frame"),
-                "track_id": row.get("track_id"), "video": row.get("video"),
-                "project_id": row.get("project_id"), "saved_at": row.get("saved_at"),
-            })
-        photos.sort(key=lambda row: (str(row.get("saved_at") or ""), row["filename"]), reverse=True)
-        return {"player_id": player_id, "photos": photos, "count": len(photos)}
+    """Read a consistent manifest snapshot without waiting for photo backfill.
 
+    JSON manifests are written via os.replace, so readers can safely inspect
+    the previous complete version while sync_photos holds _ALBUM_LOCK.
+    """
+    folder = album_dir(player_id)
+    rows = _album_index(player_id).get("photos", [])
+    photos = []
+    for row in rows if isinstance(rows, list) else []:
+        filename = row.get("filename") if isinstance(row, dict) else None
+        if (not isinstance(filename, str) or not _SAFE_PHOTO.fullmatch(filename)
+                or not (folder / "photos" / filename).is_file()):
+            continue
+        photos.append({
+            "filename": filename, "frame": row.get("frame"),
+            "track_id": row.get("track_id"), "video": row.get("video"),
+            "project_id": row.get("project_id"), "saved_at": row.get("saved_at"),
+        })
+    photos.sort(key=lambda row: (str(row.get("saved_at") or ""), row["filename"]), reverse=True)
+    return {"player_id": player_id, "photos": photos, "count": len(photos)}
+
+
+@lru_cache(maxsize=256)
+def _album_filenames(manifest: str, mtime_ns: int, size: int) -> frozenset[str]:
+    """Cache validated manifest membership, invalidated by atomic JSON replacement."""
+    rows = data.read_json(Path(manifest), {"photos": []}).get("photos", [])
+    return frozenset(
+        row["filename"] for row in rows
+        if isinstance(row, dict) and isinstance(row.get("filename"), str)
+        and _SAFE_PHOTO.fullmatch(row["filename"])
+    )
 
 def album_photo_path(player_id: str, filename: str):
-    with _ALBUM_LOCK:
-        folder = album_dir(player_id)
-        if not isinstance(filename, str) or not _SAFE_PHOTO.fullmatch(filename):
-            raise ValueError("Некорректный файл фотографии")
-        if not any(isinstance(r, dict) and r.get("filename") == filename
-                   for r in _album_index(player_id).get("photos", [])):
-            raise FileNotFoundError("Фотография не найдена в базе игрока")
-        path = folder / "photos" / filename
-        if not path.is_file():
-            raise FileNotFoundError("Файл фотографии не найден")
-        return path
-
+    """Resolve a saved photo without competing with ongoing enrollment work."""
+    folder = album_dir(player_id)
+    if not isinstance(filename, str) or not _SAFE_PHOTO.fullmatch(filename):
+        raise ValueError("Некорректный файл фотографии")
+    manifest = folder / "index.json"
+    try:
+        stamp = manifest.stat()
+    except FileNotFoundError:
+        raise FileNotFoundError("Фотография не найдена в базе игрока") from None
+    if filename not in _album_filenames(str(manifest), stamp.st_mtime_ns, stamp.st_size):
+        raise FileNotFoundError("Фотография не найдена в базе игрока")
+    path = folder / "photos" / filename
+    if not path.is_file():
+        raise FileNotFoundError("Файл фотографии не найден")
+    return path
 
 def remove_album_photo(player_id: str, filename: str) -> dict:
     """Reject this sample permanently, including after future photo sync."""
@@ -215,3 +241,56 @@ def remove_album_photo(player_id: str, filename: str) -> dict:
         data.save_json(folder / "index.json", index)
         (folder / "photos" / filename).unlink(missing_ok=True)
         return {"player_id": player_id, "removed": filename, "count": len(index["photos"])}
+
+
+def pending_player_photos(project_id: str, video: str, player_id: str, cache_id=None) -> dict:
+    cache_id = data.neural_cache_id(cache_id)
+    with _ALBUM_LOCK:
+        folder = album_dir(player_id)
+        index = _album_index(player_id)
+        existing = set(index.get("rejected", []))
+        references, filenames, errors = [], [], []
+        for row in album_photos(player_id)["photos"]:
+            existing.add(row["filename"])
+            try:
+                references.append(signature(folder / "photos" / row["filename"]))
+            except OSError:
+                continue
+        ids = [str(tid) for group in data.groups_for(video, project_id, cache_id)
+               if group["id"] == player_id for tid in group.get("track_ids", [])
+               if group.get("link_meta", {}).get(str(tid), {}).get("reviewed", True)]
+        for tid in ids:
+            try:
+                samples = photos_metadata(video, tid, project_id, cache_id)["samples"]
+                for sample in samples:
+                    filename = _key(project_id, video, tid, int(sample["frame"]), cache_id) + ".jpg"
+                    if filename in existing:
+                        continue
+                    source = photo_path(video, tid, sample["index"], project_id, cache_id)
+                    candidate = signature(source)
+                    if not any(similar(candidate, reference) for reference in references):
+                        references.append(candidate)
+                        filenames.append(filename)
+                    existing.add(filename)
+            except (RuntimeError, FileNotFoundError, ValueError, OSError) as error:
+                errors.append(f"Track #{tid}: {error}")
+        return {"count": len(filenames), "filenames": filenames, "errors": errors}
+
+
+def filtered_album_photos(player_id: str) -> dict:
+    with _ALBUM_LOCK:
+        album = album_photos(player_id)
+        folder = album_dir(player_id)
+        kept, references = [], []
+        for row in album["photos"]:
+            try:
+                candidate = signature(folder / "photos" / row["filename"])
+            except OSError:
+                kept.append(row)
+                continue
+            if any(similar(candidate, reference) for reference in references):
+                continue
+            kept.append(row)
+            references.append(candidate)
+        return {**album, "photos": kept, "count": len(kept),
+                "total_count": album["count"], "hidden_count": album["count"] - len(kept)}

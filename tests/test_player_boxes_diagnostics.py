@@ -32,6 +32,7 @@ class PlayerOverlayTests(unittest.TestCase):
                 ]
             }),encoding="utf-8")
             with patch("scripts.volleyball_ui.player_overlay.assert_project_video"),\
+                 patch("scripts.volleyball_ui.data.excluded_track_ids",return_value=set()),\
                  patch("scripts.volleyball_ui.player_overlay.find_cache",return_value=base):
                 out=player_boxes_window("project","file.mp4",0.95,1)
             self.assertEqual(out["width"],1080)

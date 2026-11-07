@@ -39,8 +39,8 @@ class VersionedAnalysisTests(unittest.TestCase):
             (cache / "analysis").mkdir(parents=True)
             (cache / "analysis" / "events.json").write_text(json.dumps({
                 "source": str(videos / "match.mp4"),
-                "events": [{"type": "attack", "frame": 4, "player_track_id": n + 1}
-                           for _ in range(score)],
+                "events": [{"type": "attack", "frame": 4 + 40 * i, "player_track_id": n + 1}
+                           for i in range(score)],
             }), encoding="utf-8")
             self.caches.append(cache)
         self.history = projects.project_run_root(self.pid) / "analysis_timings"
@@ -55,6 +55,7 @@ class VersionedAnalysisTests(unittest.TestCase):
             }), encoding="utf-8")
         runs = list_runs(self.pid)
         self.assertEqual(len(runs), 2)
+        self.assertEqual(runs[0]["postprocessed_videos"], ["match.mp4"])
         self.assertEqual([r["profile"] for r in runs], ["Точный", "Базовый"])
         self.assertEqual(runs[0]["videos"]["match.mp4"], self.caches[1].name)
         self.assertEqual(data.report("match.mp4", self.pid, self.caches[0].name)["counts"]["attack"], 2)

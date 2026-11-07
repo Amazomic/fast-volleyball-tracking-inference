@@ -15,7 +15,8 @@ class AnalysisExperimentTests(unittest.TestCase):
         self.video="VID_20261031_190829.mp4"
         self.options={"project_id":self.project,"video":self.video,"start":24.5,
                       "seconds":30,"mode":"players","backend":"onnx-cpu",
-                      "threads":6,"ball_threshold":.5,"analysis_width":"auto"}
+                      "threads":6,"ball_threshold":.5,"analysis_width":"auto",
+                      "profile_id":"new","profile_name":"Новый"}
         self.video_info={"duration_sec":3600,"auto_width":1080,"width":1080,
                          "height":1920}
 
@@ -81,6 +82,7 @@ class AnalysisExperimentTests(unittest.TestCase):
             with patch.object(exp,"validate_config",side_effect=lambda c:c),\
                  patch.object(exp,"experiment_root",return_value=base),\
                  patch.object(exp,"video_path",return_value=source),\
+                 patch("scripts.volleyball_ui.prepared_videos.ready_path",return_value=source),\
                  patch.object(exp,"run_checked",side_effect=fake_run):
                 exp.execute(opts,run_id="20261101_145001_a")
                 exp.execute({**opts,"advanced":{**opts["advanced"],"player_hysteresis_frames":8}},
@@ -116,6 +118,7 @@ class AnalysisExperimentTests(unittest.TestCase):
             with patch.object(exp,"validate_config",side_effect=lambda cfg:cfg),\
                  patch.object(exp,"experiment_root",return_value=base),\
                  patch.object(exp,"video_path",return_value=source),\
+                 patch("scripts.volleyball_ui.prepared_videos.ready_path",return_value=source),\
                  patch.object(exp,"run_checked",side_effect=fake_run),\
                  patch("scripts.volleyball_ui.court.court_path",return_value=base/"no_court.json"),\
                  patch("scripts.volleyball_studio.analysis.analyze",side_effect=fake_analyze):

@@ -4,7 +4,7 @@
   padding:6px 12px;background:rgba(8,18,15,.94);color:#e3f2e8;
 }
 .result-player-controls>input{display:block;width:100%;margin:0 0 4px;accent-color:#a5df80}
-.result-player-buttons{display:flex;align-items:center;gap:8px;min-height:30px}
+.result-player-buttons{display:flex;align-items:center;flex-wrap:wrap;gap:8px;min-height:30px}
 .result-player-buttons button,.result-player-buttons select{
   background:#1b3428;color:#e3f2e8;border:1px solid #48664e;border-radius:5px;
   padding:4px 8px;cursor:pointer;
@@ -24,7 +24,7 @@
 }
 .result-media-panel .result-video-layout{
   display:grid;
-  grid-template-columns:minmax(0,1fr) 304px;
+  grid-template-columns:minmax(0,1fr) 274px;
   gap:18px;
   align-items:stretch;
   margin:0;
@@ -276,7 +276,7 @@
 }
 @media(max-width:1100px){
   .result-media-panel .result-video-layout{
-    grid-template-columns:minmax(0,1fr) 266px;
+    grid-template-columns:minmax(0,1fr) 240px;
   }
 }
 @media(max-width:780px){
@@ -748,8 +748,8 @@
 /* Playback mode switch in the bottom-right corner of the video.
    Keep native video controls and the next-ball action unobstructed. */
 #result-playback-mode{
-  position:static;flex-shrink:0;
-  display:inline-flex;align-items:center;gap:8px;max-width:calc(100% - 28px);
+  position:static;flex:0 0 auto;
+  display:inline-flex;align-items:center;gap:8px;max-width:none;min-width:max-content;
   padding:8px 11px;min-height:36px;width:auto;
   border:1px solid #85ad92;border-radius:8px;
   background:rgba(9,28,24,.88);color:#effff0;
@@ -765,7 +765,7 @@
   color:#b4efa5;white-space:nowrap;
 }
 #result-playback-mode-name{
-  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  overflow:visible;text-overflow:clip;white-space:nowrap;
 }
 @media(max-width:680px){
   #result-playback-mode{right:10px;bottom:57px;padding:7px 9px;min-height:32px}
@@ -824,3 +824,79 @@
 .result-rally-person>span{min-width:0}
 .result-rally-person b{font-size:10px}
 .result-rally-person small{display:block;overflow-wrap:anywhere}
+
+.result-display-options{margin:0 0 12px;border-bottom:1px solid #304136;padding:0 0 10px}
+.result-display-options>summary{cursor:pointer;font-size:12px;color:#a6b9a9;padding:4px 0}
+.result-display-options[open]>summary{margin-bottom:10px}
+.result-media-panel .result-video-head{display:flex;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:12px}
+.result-video-head>div:first-child{flex:1;min-width:120px}
+.result-video-head h3{margin:0 0 4px;font-size:15px}
+.result-video-head #result-meta{font-size:11px}
+.result-video-head .result-preview-mode-bar{display:flex;flex:0 0 auto;margin:0;padding:3px;border:1px solid #34483c;border-radius:8px;background:#101c16;gap:2px}
+.result-preview-mode-bar label{position:relative;display:flex;align-items:center;cursor:pointer;padding:0!important;background:transparent!important;border:0!important}
+.result-preview-mode-bar input{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
+.result-preview-mode-bar label span{padding:8px 11px;border-radius:5px;font-size:11px;color:#a7b7ac;white-space:nowrap}
+.result-preview-mode-bar label:has(input:checked) span{background:#2b4030;color:#ecf4e6}
+.result-preview-mode-bar label:focus-within{outline:2px solid #b9da9e;outline-offset:3px;border-radius:5px}
+#result-video-select{max-width:230px;min-width:0;font-size:12px;padding:8px;border:1px solid #34483c;border-radius:7px;background:#14211a;color:#e0ebdf;text-overflow:ellipsis}
+.result-video-head .result-touch-diagnostic-actions{display:none}
+/* Compact preview: ~20% less space per rally without changing selection or metrics. */
+.result-media-panel .result-rally-sidebar-head{display:flex;flex-direction:column;align-items:stretch;gap:10px;margin-bottom:10px;min-width:0}
+.result-rally-title{align-items:center;gap:8px}
+.result-rally-title h3{font-size:14px;line-height:1.3;font-weight:700}
+.result-rally-title .muted{font-size:10px;color:#9aada7;background:#1a2927;border-radius:16px;padding:3px 6px}
+.result-rally-sort-label{display:flex;align-items:center;gap:8px;margin:0;font-size:10px;color:#91a69e}
+#result-rally-sort{flex:1;width:auto;min-width:0;padding:6px 22px 6px 8px;border-color:#30413c;background:#15211f;border-radius:6px;font-size:10px}
+.result-media-panel .result-rallies-panel .result-rally-list{gap:4px;padding-right:4px;scrollbar-width:thin;scrollbar-color:#40564e transparent;scrollbar-gutter:stable}
+.result-rally-list::-webkit-scrollbar{width:5px}
+.result-rally-list::-webkit-scrollbar-thumb{background:#40564e;border-radius:10px}
+.result-rally-list::-webkit-scrollbar-track{background:transparent}
+.result-rally-list .result-rally-entry{position:relative;display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:stretch;gap:0;flex:0 0 auto;height:auto;min-height:0;max-height:none;border:1px solid #2c403a;border-radius:6px;background:#15221f;overflow:hidden;transition:border-color .15s,background .15s}
+.result-rally-list .result-rally-entry:hover{border-color:#526c5f;background:#192a23}
+.result-media-panel .result-rallies-panel .result-rally-entry .result-rally-item{height:auto;min-height:0;display:flex;align-items:center;padding:4px 6px;gap:5px;border:0;border-radius:0;background:transparent;box-shadow:none;text-align:left}
+.result-rally-list .result-rally-entry:has(.result-rally-item.active){border-color:#9dcc7d;background:#1c3024;box-shadow:inset 3px 0 #9dcc7d}
+.result-rally-entry .result-rally-details{min-width:0;flex:1;display:flex;flex-direction:column;gap:2px;overflow:hidden}
+.result-rally-entry .result-rally-details b{font-size:11px;line-height:1.2;font-weight:700;white-space:nowrap;font-variant-numeric:tabular-nums;letter-spacing:-.2px;color:#e4ede8}
+.result-rally-entry .result-rally-number{font-size:9px;line-height:14px;min-width:20px;color:#81988d;font-weight:600}
+.result-rally-metrics{display:flex;flex-wrap:wrap;gap:1px 5px;color:#8fa79a;font-size:9px;line-height:1.2}
+.result-rally-metrics>span{white-space:nowrap}
+.result-rally-metrics strong{font-size:10px;font-weight:600;color:#ccdcd1;font-variant-numeric:tabular-nums}
+/* Emphasize total rally duration and touch count without adding vertical padding. */
+.result-rally-metrics>span:nth-child(1),.result-rally-metrics>span:nth-child(2){padding:0 3px;border-radius:3px;font-weight:700}
+.result-rally-metrics>span:nth-child(1){background:#254532;color:#cce6b7}
+.result-rally-metrics>span:nth-child(1) strong{color:#c6f8a2;font-size:11px;line-height:1}
+.result-rally-metrics>span:nth-child(2){background:#493c24;color:#ebd5a7}
+.result-rally-metrics>span:nth-child(2) strong{color:#ffe0a0;font-size:11px;line-height:1}
+.result-rally-people{height:auto;min-height:0;font-size:9px;line-height:1.2;color:#9bafa2;white-space:nowrap;text-overflow:ellipsis;overflow:hidden}
+.result-rally-people:empty{display:none}
+.result-rally-entry .result-rally-play{display:none}
+.result-rally-entry .result-rally-montage{align-self:stretch;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;width:58px;min-width:0;padding:4px 3px;border:0;border-left:1px solid #283b32;border-radius:0;background:transparent;color:#93aa9b;font-size:9px;line-height:12px}
+.result-rally-entry .result-rally-montage input{appearance:none;display:grid;place-content:center;flex:0 0 auto;width:13px;height:13px;min-height:13px;margin:0;border:1px solid #597363;border-radius:3px;background:#101c17;cursor:pointer}
+.result-rally-entry .result-rally-montage input:checked{background:#b4dd8b;border-color:#b4dd8b}
+.result-rally-entry .result-rally-montage input:checked::after{content:"";width:5px;height:3px;border-left:2px solid #20331d;border-bottom:2px solid #20331d;transform:rotate(-45deg) translateY(-1px)}
+.result-rally-list .result-rally-entry.is-selected{border-color:#57754d;background:#1b2b20}
+.result-rally-entry.is-selected .result-rally-montage{border-color:#344b36;background:#213423;color:#c0d8b0}
+.result-rally-entry .result-rally-item:focus-visible,.result-rally-entry .result-rally-montage:focus-within{outline:2px solid #b4dd8b;outline-offset:-3px}
+.result-rally-list{align-content:start;justify-content:flex-start}
+#analysis-postprocessing{margin-top:20px;padding:24px;border:1px solid #3b4b3b;border-radius:12px;background:#14211b}
+#analysis-postprocessing .result-cpu-head{display:grid;grid-template-columns:1fr auto;align-items:center;gap:8px 20px;margin-bottom:20px}
+#analysis-postprocessing .result-cpu-head h3{margin:0;font-size:18px}
+#analysis-postprocessing .result-cpu-head p{grid-column:1;max-width:800px;margin:0;font-size:12px;line-height:1.7;color:#a9baac}
+#analysis-postprocessing .result-cpu-head button{grid-column:2;grid-row:1/3}
+#analysis-postprocessing .result-cpu-params{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+#analysis-postprocessing .result-reprocess-panel{margin-top:20px;padding-top:20px;border-top:1px solid #354636}
+@media(max-width:800px){#analysis-postprocessing .result-cpu-params{grid-template-columns:1fr}#analysis-postprocessing .result-cpu-head{display:block}#analysis-postprocessing .result-cpu-head p{margin:10px 0}.result-video-head #result-video-select{max-width:100%;flex:1}.result-video-head .result-preview-mode-bar{margin-left:auto}}
+
+
+/* Golden rally bookmarks; context menu replaces the wide montage control. */
+.result-rally-list .result-rally-entry.is-selected,
+.result-rally-list .result-rally-entry.is-selected:hover,
+.result-rally-list .result-rally-entry.is-selected:has(.result-rally-item.active){
+  border-color:#d9ab39;background:#493916;box-shadow:inset 3px 0 #f5cc61;
+}
+.result-rally-entry.is-selected .result-rally-number,
+.result-rally-entry.is-selected .result-rally-details b{color:#ffe49b}
+.result-rally-context-menu{position:fixed;z-index:10000;min-width:148px;padding:4px;background:#242419;border:1px solid #b38c37;border-radius:8px;box-shadow:0 8px 26px #0009}
+.result-rally-context-menu[hidden]{display:none}
+.result-rally-context-menu button{width:100%;padding:9px 12px;text-align:left;color:#ffe49b;background:transparent;border:0;border-radius:5px;cursor:pointer}
+.result-rally-context-menu button:hover,.result-rally-context-menu button:focus-visible{background:#59451e}

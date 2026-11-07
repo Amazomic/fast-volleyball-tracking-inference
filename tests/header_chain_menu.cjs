@@ -92,7 +92,7 @@ for(const id of Object.keys(elements)){
   editable[2].fire("click");
   assert.equal(actions.at(-1).op,"delete");
   assert.equal(actions.at(-1).kind, id.replace("chain-",""));
-  assert.equal(popup.hidden,true,"destructive action closes the list");
+  assert.equal(popup.hidden,id!=="chain-postprocess","CPU list stays open for sequential deletions");
   trigger.fire("click");
   popup.children[1].children[1].fire("click");
   assert.equal(actions.at(-1).op,"rename");
@@ -105,6 +105,14 @@ for(const id of Object.keys(elements)){
       "CPU list never opens destructive actions on primary inference");
   }
 }
+elements["chain-postprocess"].options=[
+  {value:"blocked",text:"Unavailable",disabled:true},
+  {value:"ready",text:"Available",cpuVersion:true}
+];
+elements["chain-postprocess"].value="ready";
+menu.render();
+assert.equal(elements["chain-postprocess"].next.children[1].children.length,1,
+  "disabled native choices must not become clickable custom rows");
 elements["chain-postprocess"].options=[{value:"",text:"Нет версий"}];
 elements["chain-postprocess"].value="";
 elements["chain-postprocess"].disabled=true;

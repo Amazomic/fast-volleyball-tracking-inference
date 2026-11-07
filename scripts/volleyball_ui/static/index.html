@@ -16,14 +16,15 @@
       catch { document.documentElement.dataset.lang="ru"; }
     })();
   </script>
-  <link rel="stylesheet" href="/style.css?v=9">
+  <link rel="stylesheet" href="/style.css?v=15">
   <link rel="stylesheet" href="/pipeline-settings.css">
 <link rel="stylesheet" href="/montage-player.css">
-  <link rel="stylesheet" href="/result-media.css?v=17">
+  <link rel="stylesheet" href="/result-media.css?v=22">
   <link rel="stylesheet" href="/settings-tooltips.css?v=2">
-  <link rel="stylesheet" href="/analysis-presets.css?v=2">
-  <link rel="stylesheet" href="/players-workspace.css?v=4">
+  <link rel="stylesheet" href="/analysis-presets.css?v=3">
+  <link rel="stylesheet" href="/players-workspace.css?v=20">
   <link rel="stylesheet" href="/quick-reel.css?v=11">
+  <link rel="stylesheet" href="/shared-player.css?v=1">
 </head>
 <body>
 <div id="workspace-loading-overlay" class="workspace-loading-overlay" role="status" aria-live="polite" aria-label="Загрузка данных" hidden>
@@ -34,7 +35,7 @@
     <div class="brand"><span class="brand-logo">V</span><span><b>VOLLEY<span class="accent">STUDIO</span></b><small>AI Match Workspace</small></span></div>
     <div class="sidebar-project">
       <div class="topbar-controls">
-        <button class="quick-reel-trigger" id="quick-reel-open" type="button">✦ Быстрый рилс</button>
+        <button class="quick-reel-trigger" id="quick-reel-open" type="button">✦ Рилс</button>
         <button class="primary" id="create-project" type="button">+ Создать проект</button>
       </div>
     </div>
@@ -93,10 +94,11 @@
           </button>
         </details>
       </section>
-      <button class="nav-button" data-view="benchmark"><span class="nav-icon">g</span> Бенчмарк</button>
-      <button id="server-restart" type="button" class="sidebar-restart" title="Полный перезапуск сервера и обновление интерфейса без второго экземпляра">↻ Перезапустить студию</button>
+      <button class="nav-button" data-view="benchmark"><span class="nav-icon" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19h16M6 15v-4m6 4V5m6 10V8"/></svg></span> Бенчмарк</button>
+      <button id="server-restart" type="button" class="sidebar-restart" title="Полный перезапуск сервера и обновление интерфейса без второго экземпляра"><span aria-hidden="true">↻</span> Перезапустить студию</button>
       <small id="server-restart-status" class="sidebar-restart-status" role="status" aria-live="polite"></small>
       <div class="sidebar-language" data-language-switch role="group" aria-label="Язык интерфейса">
+        <span class="sidebar-language-label">Язык интерфейса</span>
         <div class="sidebar-language-buttons">
           <button type="button" data-language-choice="ru" aria-pressed="true">RU</button>
           <button type="button" data-language-choice="en" aria-pressed="false">EN</button>
@@ -110,7 +112,7 @@
       <div class="quick-reel-head">
         <div>
           <p class="quick-reel-eyebrow">БЫСТРЫЙ МОНТАЖ</p>
-          <h2 id="quick-reel-heading">Быстрый рилс</h2>
+          <h2 id="quick-reel-heading">Рилс</h2>
           <p class="quick-reel-lede">Добавьте записи матчей и музыку. Мы соберём лучшие целые розыгрыши в один вертикальный ролик.</p>
         </div>
         <button class="quick-reel-close" type="button" id="quick-reel-close" aria-label="Закрыть окно">×</button>
@@ -247,9 +249,9 @@
       </form>
     </dialog>
     <div class="content">
-      <section id="quick-reel-activity" class="quick-reel-activity" aria-label="Быстрый рилс — ход обработки" hidden>
+      <section id="quick-reel-activity" class="quick-reel-activity" aria-label="Рилс — ход обработки" hidden>
         <div class="quick-reel-activity-top">
-          <div class="quick-reel-activity-title"><strong>Быстрый рилс</strong><span id="quick-reel-header-state">Обработка</span></div>
+          <div class="quick-reel-activity-title"><strong>Рилс</strong><span id="quick-reel-header-state">Обработка</span></div>
           <div class="quick-reel-activity-actions">
             <button type="button" class="quick-reel-header-cancel" id="quick-reel-header-cancel" hidden>Отменить</button>
             <a id="quick-reel-header-download" download="quick_reel.mp4" hidden>Скачать MP4</a>
@@ -372,7 +374,7 @@
           </section>
           <article class="panel analysis-settings-panel">
             <div class="panel-heading"><h3>1 · Первичный анализ · только нейросети</h3></div>
-            <p class="analysis-workflow-note">Здесь настраивается только <strong>инференс VballNet и RAVEL</strong>: модели, пороги сохранения предсказаний, декодирование и ресурсы. Траектории мяча, проверка касаний и границы розыгрышей рассчитываются <strong>отдельно на CPU во вкладке «Предпросмотр»</strong>. Существующие результаты не изменяются.</p>
+            <p class="analysis-workflow-note">Здесь настраивается только <strong>инференс VballNet и RAVEL</strong>: модели, пороги сохранения предсказаний, декодирование и ресурсы. Траектории мяча, проверка касаний и границы розыгрышей рассчитываются <strong>отдельно в блоке «Постобработка» ниже</strong>. Существующие результаты не изменяются.</p>
             <form id="analysis-form">
               <div class="analysis-profiles-layout">
                 <div class="analysis-profile-choose">
@@ -461,7 +463,7 @@
                   <label class="field"><span>Игроки: порог детекции</span><input name="player_score_threshold" type="number" min="0" max="1" step="0.01" value="0.42" required></label>
                   <label class="field"><span>RAVEL: порог головы</span><input name="player_head_threshold" type="number" min="0" max="1" step="0.01" value="0.3" required></label>
                   <label class="field"><span>RAVEL-013: порог сохранения Touch (GPU)</span><input name="player_action_threshold" type="number" min="0" max="1" step="0.05" value="0.5" required></label>
-                  <label class="field"><span>RAVEL: порог мяча</span><input name="player_ball_threshold" type="number" min="0.5" max="1" step="0.01" value="0.5" required></label>
+                  <label class="field"><span>RAVEL: порог мяча</span><input name="player_ball_threshold" type="number" min="0" max="1" step="0.01" value="0.5" required></label>
                   <label class="field"><span>NMS IoU игроков</span><input name="player_nms_iou" type="number" min="0" max="1" step="0.01" value="0.5" required></label>
                 </div>
                 <p class="analysis-stage-note">Здесь сохраняются предсказания моделей. Порог Touch — минимальная вероятность, попадающая в сохранённые действия RAVEL; порог итоговых касаний и их объединение настраиваются позже, на CPU. Слишком высокий порог GPU нельзя понизить задним числом, если сырые вероятности не сохранены.</p>
@@ -603,225 +605,10 @@
             </div>
           </details>
         </div>
-        <details id="results-diagnostics" class="panel result-diagnostics-panel">
-          <summary>Диагностика сохранённого анализа</summary>
-          <p class="footnote">Не влияет на распознавание. При необходимости отдельно запускает штатные track_processor.py и show_rally.py по уже сохранённым трекам текущего видео. Для обычного просмотра достаточно разметки поверх плеера, экспорт не нужен.</p>
-          <label class="field"><span>Видео для диагностики</span><select id="diagnostics-source-select" aria-label="Видео для диагностического экспорта"></select></label>
-          <form id="diagnostics-form">
-            <section class="pipeline-settings-group"><h4>Экспорт и диагностика (по запросу)</h4><div class="pipeline-settings-grid"><label class="field"><span>Клипы из track_processor.py</span><select name="tracks_export_mode"><option value="none">Не создавать</option><option value="combined">Один общий MP4</option><option value="split">Отдельные MP4 по розыгрышам</option><option value="both">Общий и отдельные MP4</option></select></label>
-<label class="field"><span>Запас до/после розыгрыша, с</span><input name="tracks_padding" type="number" min="0" max="10" step="0.01" value="0.33" required></label>
-<label class="checkbox-field"><input data-advanced-check name="tracks_include_not_rally" type="checkbox" ><span>Включить неигровые и нераспознанные треки</span></label>
-<label class="checkbox-field"><input data-advanced-check name="tracks_mark_ball" type="checkbox" checked><span>Показывать маркер мяча на диагностическом видео</span></label>
-<label class="checkbox-field"><input data-advanced-check name="tracks_debug" type="checkbox" ><span>Наложить отладочные признаки на MP4</span></label>
-<label class="checkbox-field"><input data-advanced-check name="show_rally_snapshot" type="checkbox" ><span>Создать снимок show_rally.py (без GUI)</span></label>
-<label class="field"><span>Номер трека для снимка</span><input name="show_rally_track" type="number" min="0" max="99999" step="1" value="0" required></label></div></section>
-            <div class="form-row"><button type="submit" class="secondary" id="diagnostics-submit">Создать диагностические файлы</button>
-              <span id="diagnostics-status" class="muted" role="status">Выберите формат и запустите при необходимости.</span></div>
-          </form>
-          <div id="diagnostics-files" class="diagnostics-files" aria-live="polite"></div>
-          <pre id="diagnostics-log" class="diagnostics-log" hidden></pre>
-        </details>
-      </section>
-      <section id="view-analysis-results" class="view">
-        <div id="result-unavailable" class="panel result-unavailable" hidden>
-          <h3>Результаты ещё не готовы</h3>
-          <p>Ход обработки и журнал находятся во вкладке «Анализ». Видео с разметкой и розыгрыши появятся здесь после завершения анализа.</p>
-          <button class="secondary" data-go="analysis" type="button">Вернуться к анализу</button>
-        </div>
-        <section class="panel result-media-panel" aria-label="Просмотр результата, источники и временная шкала">
-          <div class="result-video-layout">
-          <div class="result-video-main">
-            <div class="result-video-head">
-              <div><h3 id="result-video-name">Предпросмотр</h3><span id="result-meta" class="muted">Выберите проанализированное видео</span></div>
-              <div class="result-touch-diagnostic-actions">
-                <a id="result-upstream-touch-video" href="#" target="_blank" rel="noopener"
-                  download="ravel-touch-upstream.mp4" hidden title="Диагностический MP4 RAVEL-013: пики Touch, исполнитель, временная лента">
-                  <span>Скачать Touch MP4 · upstream</span>
-                </a>
-                <span class="result-annotation-badge">Разметка событий</span>
-              </div>
-            </div>
-            <div class="result-preview-mode-bar" role="group" aria-label="Источник данных предпросмотра">
-              <label><input type="radio" name="result-preview-mode" value="model"> Нейросети · сохранённые обнаружения</label>
-              <label><input type="radio" name="result-preview-mode" value="events" checked> Постобработка · результаты CPU</label>
-            </div>
-            <p class="result-source-explainer" id="result-source-explainer" role="status">
-              CPU: события и розыгрыши выбранной версии. Сырые ответы моделей смотрите в соседнем режиме.
-            </p>
-            <div id="result-raw-source-switch" class="result-raw-source-switch" role="radiogroup" aria-label="Нейросеть для предпросмотра" hidden>
-              <span class="result-raw-source-label">Сохранённые обнаружения:</span>
-              <label><input type="radio" name="result-raw-source" value="vballnet" checked> VballNetV4c</label>
-              <label><input type="radio" name="result-raw-source" value="ravel"> RAVEL-013</label>
-            </div>
-            <fieldset class="result-raw-controls result-overlay-controls" id="result-raw-controls"
-                      aria-label="Исходные обнаружения нейросетей" hidden>
-              <legend>Нейросети · сохранённые предсказания, без расчёта касаний и розыгрышей</legend>
-              <div class="result-overlay-options" data-result-raw-group="vballnet">
-                <label><input type="checkbox" data-result-raw="vballnet" checked>
-                  <span>Мяч + траектория · VballNetV4c</span></label>
-              </div>
-              <div class="result-overlay-options" data-result-raw-group="ravel" hidden>
-                <label><input type="checkbox" data-result-raw="ravelBall" checked>
-                  <span>Мяч + траектория · RAVEL-013</span></label>
-                <label><input type="checkbox" data-result-raw="players" checked>
-                  <span>Рамки игроков · RAVEL-013 / Track ID</span></label>
-                <label><input type="checkbox" data-result-raw="touch" checked>
-                  <span>Касания Touch · RAVEL-013 (по кадрам)</span></label>
-              </div>
-              <div class="result-raw-filters" data-result-raw-group="vballnet">
-                <label for="result-raw-vball-threshold">Уверенность мяча VballNetV4c ≥ <output id="result-raw-vball-value">35%</output>
-                  <input id="result-raw-vball-threshold" type="range" min="0.05" max="0.95" step="0.05" value="0.35">
-                </label>
-              </div>
-              <div class="result-raw-filters" data-result-raw-group="ravel" hidden>
-                <label for="result-raw-ravel-threshold">Уверенность мяча RAVEL ≥ <output id="result-raw-ravel-value">35%</output>
-                  <input id="result-raw-ravel-threshold" type="range" min="0.05" max="0.95" step="0.05" value="0.35">
-                </label>
-                <label for="result-raw-player-threshold">Уверенность игроков RAVEL ≥ <output id="result-raw-player-value">30%</output>
-                  <input id="result-raw-player-threshold" type="range" min="0.02" max="0.95" step="0.01" value="0.30">
-                </label>
-              </div>
-              <div class="result-raw-trail-controls">
-                <label for="result-raw-trail-seconds">Длина траектории мяча
-                  <select id="result-raw-trail-seconds">
-                    <option value="0.5">0,5 с</option>
-                    <option value="1">1 с</option>
-                    <option value="2" selected>2 с</option>
-                    <option value="3">3 с</option>
-                  </select>
-                </label>
-              </div>
-              <small id="result-raw-filter-status" class="result-raw-note" role="status"></small>
-              <small class="result-raw-note" id="result-raw-note">
-                В новых GPU-анализах сохраняются слабые кандидаты игроков (от 2%)
-                до CPU-фильтрации. В старых версиях минимальный порог может быть выше.
-                Отметки здесь не означают подтверждённое касание.
-              </small>
-            </fieldset>
-            <fieldset class="result-overlay-controls result-cpu-overlays" aria-label="Фильтры отображения игровых событий на видео">
-              <legend>События выбранной CPU-версии · только отображение</legend>
-              <div class="result-overlay-options">
-                <label data-kind="touches"><input type="checkbox" data-result-overlay="touches" checked> <span>Касания · CPU</span><small data-result-count="touches"></small></label>
-                <label data-kind="attacks"><input type="checkbox" data-result-overlay="attacks" checked> <span>Атаки</span><small data-result-count="attacks"></small></label>
-                <label data-kind="blocks"><input type="checkbox" data-result-overlay="blocks" checked> <span>Блоки</span><small data-result-count="blocks"></small></label>
-                <label data-kind="serves"><input type="checkbox" data-result-overlay="serves" checked> <span>Подачи</span><small data-result-count="serves"></small></label>
-                <label data-kind="digs"><input type="checkbox" data-result-overlay="digs" checked> <span>Приёмы</span><small data-result-count="digs"></small></label>
-                <label data-kind="passes"><input type="checkbox" data-result-overlay="passes" checked> <span>Верхние передачи</span><small data-result-count="passes"></small></label>
-                <label data-kind="trajectory"><input type="checkbox" data-result-overlay="trajectory"> <span>След VballNet · только отображение</span></label>
-                <label data-kind="players"><input type="checkbox" data-result-overlay="players"> <span>Рамки игроков · RAVEL / ID</span></label>
-              </div>
-            </fieldset>
-            <div class="result-model-touch-controls" id="result-model-touch-controls" hidden>
-              <label for="result-model-touch-threshold">Фильтр отображения Touch
-                <select id="result-model-touch-threshold">
-                  <option value="0.5">50%</option>
-                  <option value="0.65">65%</option>
-                  <option value="0.8">80%</option>
-                  <option value="0.9">90%</option>
-                </select>
-              </label>
-              <span id="result-model-touch-summary" aria-live="polite"></span>
-            </div>
-            <div class="result-player-wrap">
-              <video id="result-video-player" playsinline preload="metadata"></video>
-              <div class="result-player-controls" aria-label="Управление предпросмотром">
-                <input id="result-player-seek" type="range" min="0" max="0" step="0.001" value="0" aria-label="Время в исходном видео">
-                <div class="result-player-buttons">
-                  <button id="result-player-toggle" type="button" aria-label="Воспроизвести">▶</button>
-                  <span class="result-player-clock"><span id="result-player-time">00:00:00</span> / <span id="result-player-end">00:00:00</span> · исходное видео</span>
-                  <button type="button" id="result-playback-mode" class="result-playback-mode"
-                          data-mode="sequence" aria-label="Режим просмотра: По очереди"
-                          title="Переключить режим просмотра">
-                    <span id="result-playback-mode-icon" aria-hidden="true">▶▶</span>
-                    <span id="result-playback-mode-name">По очереди</span>
-                  </button>
-                  <button id="result-player-mute" type="button" aria-label="Выключить звук">Звук</button>
-                  <select id="result-player-speed" aria-label="Скорость воспроизведения"><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="1.5">1.5×</option><option value="2">2×</option></select>
-                  <button id="result-player-fullscreen" type="button" aria-label="Полный экран">⛶</button>
-                </div>
-              </div>
-              <button id="result-trajectory-jump" class="result-trajectory-jump" type="button" hidden>Перейти к мячу</button>
-              <div id="result-trajectory-indicator" class="result-trajectory-indicator" hidden>● Траектория включена</div>
-              <div id="result-overlay" class="result-overlay" aria-hidden="true">
-                <div id="result-ball-layer" class="result-ball-layer" aria-hidden="true">
-                  <div id="result-raw-vball" class="result-raw-ball result-raw-vball" hidden>VballNet</div>
-                  <div id="result-raw-ravel" class="result-raw-ball result-raw-ravel" hidden>RAVEL</div>
-                  <svg id="result-raw-ball-trail" class="result-raw-ball-trail"
-                       viewBox="0 0 1 1" preserveAspectRatio="none" aria-hidden="true" hidden>
-                    <path id="result-raw-ball-trail-path"></path>
-                    <circle id="result-raw-ball-trail-head" r="6"></circle>
-                  </svg>
-                  <div id="result-model-touch-boxes" class="result-model-touch-boxes" aria-label="Рамки касаний RAVEL-013"></div>
-                  <div id="result-player-boxes" class="result-player-boxes" aria-label="Обнаруженные игроки с Track ID"></div>
-                  <svg id="result-ball-trail" class="result-ball-trail" viewBox="0 0 1 1" preserveAspectRatio="none" hidden>
-                    <path id="result-ball-trail-path"></path>
-                    <circle id="result-ball-trail-head" r="24"></circle>
-                  </svg>
-                  <div id="result-overlay-ball" class="result-ball" hidden></div>
-                </div>
-                <div id="result-overlay-event" class="result-event-label" hidden></div>
-                <div id="result-overlay-touch" class="result-touch-label" hidden>КАСАНИЕ</div>
-                <div id="result-overlay-rally" class="result-rally-label" hidden></div>
-              </div>
-              <div id="result-video-placeholder" class="result-video-placeholder">Ожидание анализа</div>
-            </div>
-            <div class="result-timeline">
-              <div class="result-timeline-heading">
-                <strong>Розыгрыши и игровые события</strong>
-                <span id="result-current-time">00:00:00</span>
-              </div>
-              <div id="result-rally-track" class="result-rally-track" aria-label="Розыгрыши и игровые действия"></div>
-              <div id="result-timeline-ticks" class="timeline-ticks"></div>
-              <p id="result-rally-summary" class="result-rally-summary" aria-live="polite"></p>
-              <details class="result-rally-settings" id="result-rally-settings">
-                <summary>Границы розыгрышей · быстрый пересчёт по готовым трекам</summary>
-                <div class="result-rally-settings-fields">
-                  <label class="field"><span>Объединять разрывы траектории до (сек)</span>
-                    <input id="rally-gap-sec" type="number" min="0" max="12" step="0.5" value="3"></label>
-                  <label class="field"><span>Минимальная длительность игрового эпизода (сек)</span>
-                    <input id="rally-min-sec" type="number" min="0" max="40" step="0.5" value="3"></label>
-                  <label class="field"><span>Запас до и после эпизода (сек)</span>
-                    <input id="rally-context-sec" type="number" min="0" max="10" step="0.5" value="1.5"></label>
-                </div>
-                <p class="footnote">Значения сразу перестраивают границы по уже классифицированным CPU-трекам — без перезапуска видео или нейросетей. Классификация «игровой / неигровой» не меняется. Для пересчёта траекторий и касаний используйте блок CPU ниже.</p>
-                <p id="result-rally-recalc-status" class="result-rally-recalc-status" role="status" aria-live="polite">Измените значение для проверки границ по сохранённым трекам.</p>
-              </details>
-              <div id="result-model-touch-section" class="result-model-touch-section" hidden>
-                <div class="result-model-touch-header">
-                  <strong id="result-model-touch-info">Касания RAVEL-013</strong>
-                  <small id="result-model-touch-current"></small>
-                </div>
-                <div class="result-model-touch-histogram-wrap">
-                  <canvas id="result-model-touch-histogram" width="900" height="70"
-                    aria-label="Плотность предсказаний касаний RAVEL-013 по всему видео. Нажмите, чтобы перейти к моменту."></canvas>
-                  <div id="result-model-touch-playhead" class="result-model-touch-playhead"></div>
-                </div>
-                <small id="result-model-touch-window-count" class="muted"></small>
-                <div id="result-model-touch-nearby" class="result-model-touch-nearby"
-                  aria-label="Предсказания касаний в текущем интервале"></div>
-              </div>
-              <p class="footnote">Границы розыгрышей и классификация действий определены автоматически и могут быть неточными. Метки на видео появляются в моменты обнаруженных событий.</p>
-            </div>
-          </div>
-          <aside class="result-rally-sidebar result-rallies-panel" aria-label="Найденные розыгрыши">
-            <div class="result-rally-sidebar-head">
-              <div class="result-rally-title"><h3>Найденные розыгрыши</h3><span id="result-rally-count" class="muted">0</span></div>
-              <label class="result-rally-sort-label" for="result-rally-sort">Сортировка
-                <select id="result-rally-sort" aria-label="Сортировка найденных розыгрышей">
-                  <option value="normal">Обычная (по времени)</option>
-                  <option value="duration">По длительности ↓</option>
-                  <option value="touches">По касаниям ↓</option>
-                </select>
-              </label>
-            </div>
-            <div id="result-rally-list" class="result-rally-list">
-              <div class="empty">Розыгрыши появятся после анализа.</div>
-            </div>
-          </aside>
-          </div>
-            <section class="result-cpu-tools" aria-label="Параметры CPU-пересчёта">
-              <div class="result-cpu-head"><strong>Рекомендуемая интерпретация · CPU · VballNet + RAVEL Touch + геометрия</strong>
-                <p>По умолчанию: Touch 45%, игроки 30%, сохранённые кандидаты RAVEL и геометрическая проверка. Изменения создают отдельные версии и не запускают нейросети. Без повторного запуска нейросетей. Выберите пороги для <b>всех видео проекта</b>. Ползунки изменяют пробную разметку в «Предпросмотре», а новые события сохраняются только после нажатия «Пересчитать проект».</p>
+            <section id="analysis-postprocessing" class="panel result-cpu-tools" aria-label="Параметры CPU-пересчёта">
+              <div class="result-cpu-head"><h3>Постобработка</h3>
+                <p>Настройте события и розыгрыши по сохранённым обнаружениям. «Пересчитать проект» создаёт новую версию для всех видео без повторного запуска нейросетей. Проверьте её в режиме «После обработки» перед монтажом.</p>
+                <button type="button" class="text-link" data-go="analysis-results">Проверить результат →</button>
               </div>
               <div class="result-cpu-params">
               <div class="result-ball-threshold-controls" id="result-ball-threshold-controls">
@@ -896,9 +683,230 @@
                   </div>
                   <p class="footnote">Удержание и дистанция применяются к CPU Re-tracking по сохранённым кандидатам RAVEL. Исходные GPU Track ID остаются неизменными; при недостатке доказательств новые CPU-фрагменты получают отдельный ID. Параметры пересчитывают касания и розыгрыши без повторного GPU-инференса.</p>
                 </details>
-                <small id="result-reprocess-status" role="status">Пороги выше меняют только предпросмотр. Для сохранения новых событий нажмите «Пересчитать».</small>
+                <small id="result-reprocess-status" role="status">Изменения параметров не заменяют сохранённую версию. Нажмите «Пересчитать проект», затем проверьте результат.</small>
               </div>
+              <details class="result-rally-settings" id="result-rally-settings">
+                <summary>Границы розыгрышей · быстрый пересчёт по готовым трекам</summary>
+                <div class="result-rally-settings-fields">
+                  <label class="field"><span>Объединять разрывы траектории до (сек)</span>
+                    <input id="rally-gap-sec" type="number" min="0" max="12" step="0.5" value="3"></label>
+                  <label class="field"><span>Минимальная длительность игрового эпизода (сек)</span>
+                    <input id="rally-min-sec" type="number" min="0" max="40" step="0.5" value="3"></label>
+                  <label class="field"><span>Запас до и после эпизода (сек)</span>
+                    <input id="rally-context-sec" type="number" min="0" max="10" step="0.5" value="1.5"></label>
+                </div>
+                <p class="footnote">Значения сразу перестраивают границы по уже классифицированным CPU-трекам — без перезапуска видео или нейросетей. Классификация «игровой / неигровой» не меняется. Для пересчёта траекторий и касаний используйте настройки постобработки выше.</p>
+                <p id="result-rally-recalc-status" class="result-rally-recalc-status" role="status" aria-live="polite">Измените значение для проверки границ по сохранённым трекам.</p>
+              </details>
             </section>
+        <details id="results-diagnostics" class="panel result-diagnostics-panel">
+          <summary>Диагностика сохранённого анализа</summary>
+          <p class="footnote">Не влияет на распознавание. При необходимости отдельно запускает штатные track_processor.py и show_rally.py по уже сохранённым трекам текущего видео. Для обычного просмотра достаточно разметки поверх плеера, экспорт не нужен.</p>
+          <label class="field"><span>Видео для диагностики</span><select id="diagnostics-source-select" aria-label="Видео для диагностического экспорта"></select></label>
+          <form id="diagnostics-form">
+            <section class="pipeline-settings-group"><h4>Экспорт и диагностика (по запросу)</h4><div class="pipeline-settings-grid"><label class="field"><span>Клипы из track_processor.py</span><select name="tracks_export_mode"><option value="none">Не создавать</option><option value="combined">Один общий MP4</option><option value="split">Отдельные MP4 по розыгрышам</option><option value="both">Общий и отдельные MP4</option></select></label>
+<label class="field"><span>Запас до/после розыгрыша, с</span><input name="tracks_padding" type="number" min="0" max="10" step="0.01" value="0.33" required></label>
+<label class="checkbox-field"><input data-advanced-check name="tracks_include_not_rally" type="checkbox" ><span>Включить неигровые и нераспознанные треки</span></label>
+<label class="checkbox-field"><input data-advanced-check name="tracks_mark_ball" type="checkbox" checked><span>Показывать маркер мяча на диагностическом видео</span></label>
+<label class="checkbox-field"><input data-advanced-check name="tracks_debug" type="checkbox" ><span>Наложить отладочные признаки на MP4</span></label>
+<label class="checkbox-field"><input data-advanced-check name="show_rally_snapshot" type="checkbox" ><span>Создать снимок show_rally.py (без GUI)</span></label>
+<label class="field"><span>Номер трека для снимка</span><input name="show_rally_track" type="number" min="0" max="99999" step="1" value="0" required></label></div></section>
+            <div class="form-row"><button type="submit" class="secondary" id="diagnostics-submit">Создать диагностические файлы</button>
+              <span id="diagnostics-status" class="muted" role="status">Выберите формат и запустите при необходимости.</span></div>
+          </form>
+          <div id="diagnostics-files" class="diagnostics-files" aria-live="polite"></div>
+          <pre id="diagnostics-log" class="diagnostics-log" hidden></pre>
+        </details>
+      </section>
+      <section id="view-analysis-results" class="view">
+        <div id="result-unavailable" class="panel result-unavailable" hidden>
+          <h3>Результаты ещё не готовы</h3>
+          <p>Ход обработки и журнал находятся во вкладке «Анализ». Видео с разметкой и розыгрыши появятся здесь после завершения анализа.</p>
+          <button class="secondary" data-go="analysis" type="button">Вернуться к анализу</button>
+        </div>
+        <section class="panel result-media-panel" aria-label="Просмотр результата, источники и временная шкала">
+          <div class="result-video-layout">
+          <div class="result-video-main">
+            <div class="result-video-head">
+              <div><h3 id="result-video-name">Предпросмотр</h3><span id="result-meta" class="muted">Выберите проанализированное видео</span></div>
+              <div class="result-preview-mode-bar" role="group" aria-label="Режим просмотра">
+                <label title="События и розыгрыши для монтажа"><input type="radio" name="result-preview-mode" value="events" checked><span>После обработки</span></label>
+                <label title="Диагностика сохранённых обнаружений нейросетей"><input type="radio" name="result-preview-mode" value="model"><span>Сырые данные</span></label>
+              </div>
+              <select id="result-video-select" aria-label="Видео для просмотра" hidden></select>
+              <div class="result-touch-diagnostic-actions">
+                <a id="result-upstream-touch-video" href="#" target="_blank" rel="noopener"
+                  download="ravel-touch-upstream.mp4" hidden title="Диагностический MP4 RAVEL-013: пики Touch, исполнитель, временная лента">
+                  <span>Скачать Touch MP4 · upstream</span>
+                </a>
+                <span class="result-annotation-badge">Разметка событий</span>
+              </div>
+            </div>
+            <p class="result-source-explainer" id="result-source-explainer" role="status" hidden>
+              CPU: события и розыгрыши выбранной версии. Сырые ответы моделей смотрите в соседнем режиме.
+            </p>
+            <div id="result-raw-source-switch" class="result-raw-source-switch" role="radiogroup" aria-label="Нейросеть для предпросмотра" hidden>
+              <span class="result-raw-source-label">Сохранённые обнаружения:</span>
+              <label><input type="radio" name="result-raw-source" value="vballnet" checked> VballNetV4c</label>
+              <label><input type="radio" name="result-raw-source" value="ravel"> RAVEL-013</label>
+            </div>
+            <details class="result-display-options"><summary>Разметка видео</summary>
+            <fieldset class="result-raw-controls result-overlay-controls" id="result-raw-controls"
+                      aria-label="Исходные обнаружения нейросетей" hidden>
+              <legend>Нейросети · сохранённые предсказания, без расчёта касаний и розыгрышей</legend>
+              <div class="result-overlay-options" data-result-raw-group="vballnet">
+                <label><input type="checkbox" data-result-raw="vballnet" checked>
+                  <span>Мяч + траектория · VballNetV4c</span></label>
+              </div>
+              <div class="result-overlay-options" data-result-raw-group="ravel" hidden>
+                <label><input type="checkbox" data-result-raw="ravelBall" checked>
+                  <span>Мяч + траектория · RAVEL-013</span></label>
+                <label><input type="checkbox" data-result-raw="players" checked>
+                  <span>Рамки игроков · RAVEL-013 / Track ID</span></label>
+                <label><input type="checkbox" data-result-raw="touch" checked>
+                  <span>Касания Touch · RAVEL-013 (по кадрам)</span></label>
+              </div>
+              <div class="result-raw-filters" data-result-raw-group="vballnet">
+                <label for="result-raw-vball-threshold">Уверенность мяча VballNetV4c ≥ <output id="result-raw-vball-value">35%</output>
+                  <input id="result-raw-vball-threshold" type="range" min="0.05" max="0.95" step="0.05" value="0.35">
+                </label>
+              </div>
+              <div class="result-raw-filters" data-result-raw-group="ravel" hidden>
+                <label for="result-raw-ravel-threshold">Уверенность мяча RAVEL ≥ <output id="result-raw-ravel-value">35%</output>
+                  <input id="result-raw-ravel-threshold" type="range" min="0.05" max="0.95" step="0.05" value="0.35">
+                </label>
+                <label for="result-raw-player-threshold">Уверенность игроков RAVEL ≥ <output id="result-raw-player-value">30%</output>
+                  <input id="result-raw-player-threshold" type="range" min="0.02" max="0.95" step="0.01" value="0.30">
+                </label>
+              </div>
+              <div class="result-raw-trail-controls">
+                <label for="result-raw-trail-seconds">Длина траектории мяча
+                  <select id="result-raw-trail-seconds">
+                    <option value="0.5">0,5 с</option>
+                    <option value="1">1 с</option>
+                    <option value="2" selected>2 с</option>
+                    <option value="3">3 с</option>
+                  </select>
+                </label>
+              </div>
+              <small id="result-raw-filter-status" class="result-raw-note" role="status"></small>
+              <small class="result-raw-note" id="result-raw-note">
+                В новых GPU-анализах сохраняются слабые кандидаты игроков (от 2%)
+                до CPU-фильтрации. В старых версиях минимальный порог может быть выше.
+                Отметки здесь не означают подтверждённое касание.
+              </small>
+            </fieldset>
+            <fieldset class="result-overlay-controls result-cpu-overlays" aria-label="Фильтры отображения игровых событий на видео">
+              <legend>События выбранной CPU-версии · только отображение</legend>
+              <div class="result-overlay-options">
+                <label data-kind="touches"><input type="checkbox" data-result-overlay="touches" checked> <span>Касания · CPU</span><small data-result-count="touches"></small></label>
+                <label data-kind="attacks"><input type="checkbox" data-result-overlay="attacks" checked> <span>Атаки</span><small data-result-count="attacks"></small></label>
+                <label data-kind="blocks"><input type="checkbox" data-result-overlay="blocks" checked> <span>Блоки</span><small data-result-count="blocks"></small></label>
+                <label data-kind="serves"><input type="checkbox" data-result-overlay="serves" checked> <span>Подачи</span><small data-result-count="serves"></small></label>
+                <label data-kind="digs"><input type="checkbox" data-result-overlay="digs" checked> <span>Приёмы</span><small data-result-count="digs"></small></label>
+                <label data-kind="passes"><input type="checkbox" data-result-overlay="passes" checked> <span>Верхние передачи</span><small data-result-count="passes"></small></label>
+                <label data-kind="trajectory"><input type="checkbox" data-result-overlay="trajectory"> <span>След VballNet · только отображение</span></label>
+                <label data-kind="players"><input type="checkbox" data-result-overlay="players"> <span>Рамки игроков · RAVEL / ID</span></label>
+              </div>
+            </fieldset>
+            <div class="result-model-touch-controls" id="result-model-touch-controls" hidden>
+              <label for="result-model-touch-threshold">Фильтр отображения Touch
+                <select id="result-model-touch-threshold">
+                  <option value="0.5">50%</option>
+                  <option value="0.65">65%</option>
+                  <option value="0.8">80%</option>
+                  <option value="0.9">90%</option>
+                </select>
+              </label>
+              <span id="result-model-touch-summary" aria-live="polite"></span>
+            </div>
+            </details>
+            <div class="result-player-wrap">
+              <video id="result-video-player" playsinline preload="metadata"></video>
+              <div class="result-player-controls" aria-label="Управление предпросмотром">
+                <input id="result-player-seek" type="range" min="0" max="0" step="0.001" value="0" aria-label="Время в исходном видео">
+                <div class="result-player-buttons">
+                  <button id="result-player-toggle" type="button" aria-label="Воспроизвести">▶</button>
+                  <span class="result-player-clock"><span id="result-player-time">00:00:00</span> / <span id="result-player-end">00:00:00</span> · исходное видео</span>
+                  <button type="button" id="result-playback-mode" class="result-playback-mode"
+                          data-mode="sequence" aria-label="Режим просмотра: По очереди"
+                          title="Переключить режим просмотра">
+                    <span id="result-playback-mode-icon" aria-hidden="true">▶▶</span>
+                    <span id="result-playback-mode-name">По очереди</span>
+                  </button>
+                  <button id="result-player-mute" type="button" aria-label="Выключить звук">Звук</button>
+                  <select id="result-player-speed" aria-label="Скорость воспроизведения"><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="1.5">1.5×</option><option value="2">2×</option></select>
+                  <button id="result-player-fullscreen" type="button" aria-label="Полный экран">⛶</button>
+                </div>
+              </div>
+              <button id="result-trajectory-jump" class="result-trajectory-jump" type="button" hidden>Перейти к мячу</button>
+              <div id="result-trajectory-indicator" class="result-trajectory-indicator" hidden>● Траектория включена</div>
+              <div id="result-overlay" class="result-overlay" aria-hidden="true">
+                <div id="result-ball-layer" class="result-ball-layer" aria-hidden="true">
+                  <div id="result-raw-vball" class="result-raw-ball result-raw-vball" hidden>VballNet</div>
+                  <div id="result-raw-ravel" class="result-raw-ball result-raw-ravel" hidden>RAVEL</div>
+                  <svg id="result-raw-ball-trail" class="result-raw-ball-trail"
+                       viewBox="0 0 1 1" preserveAspectRatio="none" aria-hidden="true" hidden>
+                    <path id="result-raw-ball-trail-path"></path>
+                    <circle id="result-raw-ball-trail-head" r="6"></circle>
+                  </svg>
+                  <div id="result-model-touch-boxes" class="result-model-touch-boxes" aria-label="Рамки касаний RAVEL-013"></div>
+                  <div id="result-player-boxes" class="result-player-boxes" aria-label="Обнаруженные игроки с Track ID"></div>
+                  <svg id="result-ball-trail" class="result-ball-trail" viewBox="0 0 1 1" preserveAspectRatio="none" hidden>
+                    <path id="result-ball-trail-path"></path>
+                    <circle id="result-ball-trail-head" r="24"></circle>
+                  </svg>
+                  <div id="result-overlay-ball" class="result-ball" hidden></div>
+                </div>
+                <div id="result-overlay-event" class="result-event-label" hidden></div>
+                <div id="result-overlay-touch" class="result-touch-label" hidden>КАСАНИЕ</div>
+                <div id="result-overlay-rally" class="result-rally-label" hidden></div>
+              </div>
+              <div id="result-video-placeholder" class="result-video-placeholder">Ожидание анализа</div>
+            </div>
+            <div class="result-timeline">
+              <div class="result-timeline-heading">
+                <strong>Розыгрыши и игровые события</strong>
+                <span id="result-current-time">00:00:00</span>
+              </div>
+              <div id="result-rally-track" class="result-rally-track" aria-label="Розыгрыши и игровые действия"></div>
+              <div id="result-timeline-ticks" class="timeline-ticks"></div>
+              <p id="result-rally-summary" class="result-rally-summary" aria-live="polite"></p>
+
+              <div id="result-model-touch-section" class="result-model-touch-section" hidden>
+                <div class="result-model-touch-header">
+                  <strong id="result-model-touch-info">Касания RAVEL-013</strong>
+                  <small id="result-model-touch-current"></small>
+                </div>
+                <div class="result-model-touch-histogram-wrap">
+                  <canvas id="result-model-touch-histogram" width="900" height="70"
+                    aria-label="Плотность предсказаний касаний RAVEL-013 по всему видео. Нажмите, чтобы перейти к моменту."></canvas>
+                  <div id="result-model-touch-playhead" class="result-model-touch-playhead"></div>
+                </div>
+                <small id="result-model-touch-window-count" class="muted"></small>
+                <div id="result-model-touch-nearby" class="result-model-touch-nearby"
+                  aria-label="Предсказания касаний в текущем интервале"></div>
+              </div>
+              <p class="footnote">Границы розыгрышей и классификация действий определены автоматически и могут быть неточными. Метки на видео появляются в моменты обнаруженных событий.</p>
+            </div>
+          </div>
+          <aside class="result-rally-sidebar result-rallies-panel" aria-label="Найденные розыгрыши">
+            <div class="result-rally-sidebar-head">
+              <div class="result-rally-title"><h3>Найденные розыгрыши</h3><span id="result-rally-count" class="muted">0</span></div>
+              <label class="result-rally-sort-label" for="result-rally-sort">Сортировка
+                <select id="result-rally-sort" aria-label="Сортировка найденных розыгрышей">
+                  <option value="normal">Обычная (по времени)</option>
+                  <option value="duration">По длительности ↓</option>
+                  <option value="touches">По касаниям ↓</option>
+                </select>
+              </label>
+            </div>
+            <div id="result-rally-list" class="result-rally-list">
+              <div class="empty">Розыгрыши появятся после анализа.</div>
+            </div>
+          </aside>
+          </div>
+
 
         </section>
 
@@ -907,12 +915,15 @@
         <div class="section-intro"><h2>Игроки</h2>
           <p>Состав проекта, привязанные ID и фотографии игроков.</p>
         </div>
+        <div id="players-health" class="players-health players-project-health" aria-live="polite"></div>
         <div class="players-stack">
           <div class="panel players-unified">
-            <div class="players-identity-panel">
+            <aside class="players-identity-panel">
               <div class="panel-heading"><h3>Состав проекта</h3><span id="groups-count" class="muted"></span></div>
+              <div class="player-roster-scroll">
               <div id="named-list" class="named-list" aria-label="Участники проекта"></div>
-              <details class="player-add-disclosure"><summary>+ Добавить игрока</summary>
+              </div>
+              <details class="player-add-disclosure"><summary><span class="player-add-icon" aria-hidden="true">+</span><span>Добавить игрока</span></summary>
               <div class="player-library-add">
                 <label class="field"><span>Добавить участника</span><select id="library-player-select"><option value="">Выберите игрока из базы…</option></select></label>
                 <button type="button" id="add-library-player" class="secondary small">Добавить в проект</button>
@@ -935,7 +946,8 @@
                   </div>
                 </form>
               </details>
-            </div>
+            </aside>
+            <div class="players-detail-workspace">
             <div class="player-gallery-toolbar">
               <div class="player-gallery-tabs" role="group" aria-label="Фотографии и ID">
                 <button type="button" data-player-gallery="unassigned" aria-pressed="false">Неразмеченные ID</button>
@@ -943,18 +955,12 @@
                 <button type="button" data-player-gallery="tracks" aria-pressed="true" class="is-active">ID игрока</button>
                 <button type="button" data-player-gallery="photos" aria-pressed="false">Фото игрока</button>
               </div>
-              <details class="player-workspace-settings"><summary>Инструменты</summary>
-            <div class="player-overview-main">
-              <label class="field player-video-selector"><span>Запись для привязки Track ID</span><select id="players-video" aria-label="Видео с найденными треками"></select></label>
-              <div id="players-health" class="players-health" aria-live="polite"></div>
             </div>
             <div class="player-recalculate-bar">
               <button type="button" id="players-recalculate" class="primary small" title="Пересчитать действия игроков по выбранным CPU-результатам и привязанным Track ID во всех видео проекта. GPU-инференс не запускается.">Пересчитать касания</button>
               <span id="players-recalculate-status" role="status" aria-live="polite">Для пересчёта касаний выберите результаты анализа.</span>
             </div>
             <div id="player-action-statistics" class="player-action-statistics" aria-live="polite"></div>
-              </details>
-            </div>
             <section data-player-pane="view" class="player-mode-pane" aria-label="Фотографии выбранного игрока">
               <div class="panel-heading">
                 <div class="player-mode-switch player-detail-switch" hidden role="group" aria-label="Таблица выбранного игрока">
@@ -965,14 +971,14 @@
               </div>
               <div data-player-table-pane="tracks">
                 <h3>Привязанные ID выбранного игрока</h3>
-                <p class="player-panel-hint">ID текущего видео и выбранной версии анализа. Для сохранения фото используются только подтверждённые привязки.</p>
+                <p class="player-panel-hint">ID всех видео проекта и выбранных версий анализа. Для сохранения фото используются только подтверждённые привязки.</p>
                 <div class="table-scroll"><table>
                   <thead><tr><th>КАДР</th><th>TRACK ID</th><th>ВИДЕН</th><th>ПРИВЯЗКА</th></tr></thead>
                   <tbody id="player-linked-tracks"><tr><td colspan="4" class="empty">Выберите игрока проекта.</td></tr></tbody>
                 </table></div>
               </div>
               <div data-player-table-pane="photos" hidden>
-              <div class="panel-heading"><h3>Сохранённые фотографии игрока</h3><button type="button" class="secondary small" id="refresh-player-album" title="Повторно загрузить фотографии игрока из общей базы">Обновить фотографии</button></div>
+              <div class="panel-heading"><h3>Сохранённые фотографии игрока</h3><div class="player-album-tools"><button type="button" class="secondary small" id="filter-player-album" aria-pressed="false" disabled>Фильтровать похожие фото</button><button type="button" class="secondary small" id="refresh-player-album" title="Повторно загрузить фотографии игрока из общей базы">Обновить фотографии</button></div></div><p id="player-album-filter-status" class="muted" role="status" aria-live="polite"></p>
               <p class="player-panel-hint">Выберите игрока выше. Удалённый пример не вернётся после повторного сбора кадров и больше не будет использоваться как эталон ReID.</p>
               <div class="table-scroll"><table class="player-album-table">
                 <thead><tr><th>ФОТО</th><th>ИСТОЧНИК</th><th>ДЕЙСТВИЯ</th></tr></thead>
@@ -983,9 +989,9 @@
             <section data-player-pane="auto" class="player-mode-pane" aria-label="Автоматически сгруппированные ID" hidden>
               <div class="panel-heading">
                 <h3>Автоматически сгруппированные Track ID</h3>
-                <button type="button" class="secondary small" id="player-groups-rebuild">Пересчитать группы</button>
               </div>
-              <p class="player-panel-hint">Здесь только группы из двух и более непривязанных ID, прошедшие установленный порог сходства ReID. Одиночные ID, группы без оценки сходства и не прошедшие порог находятся в «Ручной привязке». Назначение игроку — только после нажатия «Привязать».</p>
+              <div id="player-groups-status" class="player-groups-status" role="status" aria-live="polite"></div>
+              <div id="player-groups-list" class="player-groups-list"></div>
               <div class="player-reid-controls">
                 <label for="player-reid-threshold">Порог сходства ReID для автоматической группировки</label>
                 <input type="range" id="player-reid-threshold" min="55" max="99" step="1" value="85">
@@ -993,13 +999,9 @@
                 <output id="player-reid-threshold-value" for="player-reid-threshold">85%</output>
                 <small>Диапазон 55–99%. Изменение пересчитывает группы по уже сохранённым признакам без GPU-инференса. Сходство не является вероятностью личности.</small>
               </div>
-              <div class="player-reid-controls">
-                <label for="player-auto-assign-enabled">Автопривязка только к подтверждённым игрокам <input type="checkbox" id="player-auto-assign-enabled"></label>
-                <label class="player-reid-number-label" for="player-auto-assign-threshold">Порог автопривязки, % <input type="number" id="player-auto-assign-threshold" min="55" max="99" step="1" value="90" inputmode="numeric"></label>
-                <small>Сопоставления выше порога сохраняются автоматически только без неоднозначности и конфликтов. Эти ID не используются как подтверждённые образцы до ручной проверки.</small>
+              <div class="player-auto-footer-actions">
+                <button type="button" class="secondary small" id="player-groups-rebuild">Пересчитать группы</button>
               </div>
-              <div id="player-groups-status" class="player-groups-status" role="status" aria-live="polite"></div>
-              <div id="player-groups-list" class="player-groups-list"></div>
             </section>
             <section data-player-pane="manual" class="player-mode-pane" aria-label="Ручная привязка Track ID" hidden>
               <div class="panel-heading"><h3 id="tracks-heading">Нераспознанные Track ID</h3><span id="raw-count" class="muted"></span></div>
@@ -1042,6 +1044,7 @@
               </div>
             </section>
             <p id="players-action-feedback" class="player-action-feedback" role="status" aria-live="polite"></p>
+            </div>
           </div>
         </div>
       </section>
@@ -1069,7 +1072,7 @@
               <label class="field"><span>Режим выбора розыгрышей</span>
                 <select name="rally_selection_mode" id="montage-selection-mode">
                   <option value="auto">Автоматически</option>
-                  <option value="manual">Выбрать вручную</option>
+                  <option value="manual">Отмеченные розыгрыши / вручную</option>
                 </select>
               </label>
               <label class="field" id="montage-auto-strategy"><span>Отбирать розыгрыши по</span>
@@ -1262,17 +1265,17 @@
     <footer>VOLLEY STUDIO · ЛОКАЛЬНЫЙ ИНТЕРФЕЙС <span>Необработанные данные сохраняются · 2026</span></footer>
   </main>
 </div>
-<script src="/i18n-en.js?v=18" defer></script>
+<script src="/i18n-en.js?v=19" defer></script>
 <script src="/i18n.js" defer></script>
-<script src="/analysis-ui.js" defer></script>
+<script src="/analysis-ui.js?v=2" defer></script>
 <script src="/court-ui.js" defer></script>
-<script src="/model-touches-ui.js?v=6" defer></script>
+<script src="/model-touches-ui.js?v=7" defer></script>
 <script>
 /* Persist immutable, source-scoped analysis JSON across F5 without HTTP re-fetches.
    Live job status, project registry and analysis-run lists are intentionally NOT cached. */
 window.VolleyDataCache=(()=>{
   "use strict";
-  const STORE="volley-analysis-json-v2",MAX_ITEMS=60,MAX_BYTES=8*1024*1024;
+  const STORE="volley-analysis-json-v3",MAX_ITEMS=60,MAX_BYTES=8*1024*1024;
   const pending=new Map();
   let epoch=0,clearing=Promise.resolve();
   function supports(url){
@@ -1340,15 +1343,17 @@ window.VolleyDataCache=(()=>{
   return {supports,get,invalidate};
 })();
 </script>
-<script src="/results-ui.js?v=29" defer></script>
-<script src="/results-diagnostics.js" defer></script>
-<script src="/analysis-presets.js?v=5" defer></script>
+<script src="/results-ui.js?v=31" defer></script>
+<script src="/results-diagnostics.js?v=2" defer></script>
+<script src="/analysis-presets.js?v=6" defer></script>
 <script src="/settings-tooltips.js?v=5" defer></script>
-<script src="/montage-player.js" defer></script>
+<script src="/montage-player.js?v=2" defer></script>
 <script src="/header-chain.js?v=7" defer></script>
-<script src="/header-chain-menu.js?v=4" defer></script>
-<script src="/player-photo-hover.js?v=2" defer></script>
-<script src="/app.js?v=25" defer></script>
-<script src="/quick-reel-ui.js?v=13" defer></script>
+<script src="/header-chain-menu.js?v=5" defer></script>
+<script src="/player-photo-hover.js?v=5" defer></script>
+<script src="/project-player-tracks.js?v=1" defer></script>
+<script src="/app.js?v=35" defer></script>
+<script src="/quick-reel-ui.js?v=14" defer></script>
+<script src="/shared-player.js?v=1" defer></script>
 </body>
 </html>

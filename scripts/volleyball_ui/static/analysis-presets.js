@@ -115,9 +115,9 @@ window.VolleyballAnalysisPresets=(()=>{
     if(el.type==="number")return Number(el.value);
     return el.value;
   }
-  function readValues(){
+  function readValues(includeInactive=false){
     const values={};
-    controls().forEach(el=>{values[el.name]=cast(el);});
+    controls().filter(el=>includeInactive||!el.disabled).forEach(el=>{values[el.name]=cast(el);});
     values.manual_width_enabled=$("manual-width-enabled").checked;
     return values;
   }
@@ -243,7 +243,7 @@ window.VolleyballAnalysisPresets=(()=>{
   }
 
   function snapshotDefaults(){
-    Object.assign(factory,readValues());
+    Object.assign(factory,readValues(true));
   }
   function profileValues(id){
     return {...factory,...(all[id]?.values||{})};
@@ -260,7 +260,7 @@ window.VolleyballAnalysisPresets=(()=>{
   function difference(current,base){
     // Older saved profiles can include CPU-only/diagnostic flags no longer
     // exposed by the primary analysis form. They must not create fake diffs.
-    return Object.keys(current).filter(key=>String(current[key])!==String(base[key]));
+    return Object.keys(current).filter(key=>!control(key)?.disabled&&String(current[key])!==String(base[key]));
   }
   function clearNotice(){
     $("analysis-preset-applied").hidden=true;

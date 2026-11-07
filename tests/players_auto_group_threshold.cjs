@@ -6,8 +6,8 @@ const vm=require("node:vm");
 const root=path.resolve(__dirname,"../scripts/volleyball_ui/static");
 const html=fs.readFileSync(path.join(root,"index.html"),"utf8");
 const source=fs.readFileSync(path.join(root,"app.js"),"utf8");
-assert(html.includes('data-player-mode="manual"'));
-assert(html.includes('>Ручная привязка</button>'));
+assert(html.includes('data-player-gallery="unassigned"'));
+assert(html.includes('>Неразмеченные ID</button>'));
 assert(!html.includes("Ручная группировка"));
 assert(!html.includes('id="player-groups-merge"'));
 assert(!html.includes('id="player-groups-split"'));
@@ -51,16 +51,17 @@ run([
 ].join("\n"));
 const list=()=>el("#player-groups-list").innerHTML;
 const status=()=>el("#player-groups-status").textContent;
-assert(list().includes("#101")&&list().includes("#102"));
-assert(list().includes("#112")&&list().includes("#113"));
+assert(list().includes('data-group-link="strong"'),"Qualified strong group must be shown");
+assert(list().includes('data-group-link="medium"'),"Qualified medium group must be shown");
 for(const id of [103,104,105,106,107,108,109,110,111]){
   assert(!list().includes("#"+id),"invalid, unmatched or partial ID must stay hidden: "+id);
 }
 assert.equal((list().match(/class="player-appearance-card"/g)||[]).length,2);
-assert(status().includes("порог 85%"));
-assert(status().includes("ID вне групп: 8"));
+assert.equal(status(),"","Ready groups should not show verbose diagnostics");
+
+
 run('state.playerGroups.threshold_percent=90;renderPlayerGroups()');
-assert(list().includes("#101")&&list().includes("#102"));
+assert(list().includes('data-group-link="strong"'),"Qualified strong group must be shown");
 assert(!list().includes("#112"));
 assert.equal((list().match(/class="player-appearance-card"/g)||[]).length,1);
 run('state.playerGroups.threshold_percent=95;renderPlayerGroups()');

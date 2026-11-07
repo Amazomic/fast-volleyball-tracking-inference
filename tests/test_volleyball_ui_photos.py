@@ -36,11 +36,13 @@ class PlayerPhotosTest(unittest.TestCase):
             p.start()
             self.addCleanup(p.stop)
 
-    def test_returns_three_samples_for_known_id(self):
+    def test_returns_six_evenly_spaced_samples_for_known_id(self):
         meta=photos.photos_metadata(self.name,"12")
-        self.assertEqual(len(meta["samples"]),3)
+        self.assertEqual(len(meta["samples"]),6)
         frames=[x["frame"] for x in meta["samples"]]
         self.assertEqual(frames,sorted(set(frames)))
+        self.assertGreater(frames[-1]-frames[0], 80)
+        self.assertLess(max(b-a for a,b in zip(frames,frames[1:])), 40)
         self.assertTrue(all(x["url"].startswith("/api/player-photo?") for x in meta["samples"]))
 
     def test_rejects_invalid_ids_and_video_path(self):

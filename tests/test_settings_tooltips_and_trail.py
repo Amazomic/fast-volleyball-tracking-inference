@@ -23,8 +23,8 @@ class TooltipsAndTrajectoryTests(unittest.TestCase):
                 self.assertIn('    ' + field + ':"', js)
         self.assertIn('По умолчанию:', js)
         self.assertIn('Влияние:', js)
-        self.assertIn('mouseenter', js)
-        self.assertIn('focus', js)
+        self.assertIn('addEventListener("pointerover"', js)
+        self.assertIn('addEventListener("focusin"', js)
 
     def test_tooltips_are_served(self):
         html = (STATIC / "index.html").read_text(encoding="utf-8")

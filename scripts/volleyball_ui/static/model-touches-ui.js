@@ -23,6 +23,7 @@ window.VolleyballModelTouches=(()=>{
     E("result-model-touch-current").textContent="";
     E("result-model-touch-nearby").replaceChildren();
     E("result-model-touch-summary").textContent="";
+    E("result-model-touch-threshold").disabled=true;
     const canvas=E("result-model-touch-histogram");
     canvas.getContext("2d").clearRect(0,0,canvas.width,canvas.height);
   }
@@ -70,6 +71,8 @@ window.VolleyballModelTouches=(()=>{
   }
   function presentSummary(){
     const info=E("result-model-touch-summary"),header=E("result-model-touch-info");
+    const filter=E("result-model-touch-threshold");
+    filter.disabled=!summary?.available;
     if(!summary?.available){
       const reason=summary?.reason==="different_model"
         ?"В выбранном результате использована не RAVEL-013. Выберите результат профиля «Новый»."
@@ -78,6 +81,15 @@ window.VolleyballModelTouches=(()=>{
       header.textContent="Касания RAVEL-013 недоступны";
       return;
     }
+    const floor=Number(summary.stored_threshold)||0;
+    for(const option of Array.from(filter.options))option.disabled=Number(option.value)<floor;
+    if(!Array.from(filter.options).some(option=>Number(option.value)===summary.threshold)){
+      const option=document.createElement("option");
+      option.value=String(summary.threshold);
+      option.textContent=Math.round(summary.threshold*100)+"%";
+      filter.append(option);
+    }
+    filter.value=String(summary.threshold);
     const count=Number(summary.count).toLocaleString(window.VolleyI18n?.locale()||"ru-RU");
     header.textContent=count+" предсказаний Touch · порог "+
       Math.round(summary.threshold*100)+"%";

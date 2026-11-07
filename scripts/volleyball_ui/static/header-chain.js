@@ -71,6 +71,8 @@
       }
       return "Время обработки не записано";
     }
+    if(!settings&&run.inference_only&&run.postprocessed_videos?.length)
+      return "Исходная обработка · сохранённые события";
     if(!settings)return run.inference_only
       ?"Первичный инференс нейросетей · CPU ещё не выполнен"
       :"Старый полный анализ · треки, касания и розыгрыши";

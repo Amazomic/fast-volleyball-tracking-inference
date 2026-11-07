@@ -349,6 +349,8 @@ def list_runs(project_id: str, *, target_run_id: str | None = None) -> list[dict
                     "profile_id": entry.get("profile_id") or "legacy",
                     "started_at": entry.get("started_at"), "videos": by_video,
                     "video_ranges": video_ranges,
+                    "postprocessed_videos": [video for video, ident in by_video.items()
+                        if (project_cache_root(project_id) / ident / "analysis/events.json").is_file()],
                     "status": "complete",
                     "inference_only": bool(entry.get("inference_only")
                          or (entry.get("settings") or {}).get("inference_only")),

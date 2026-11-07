@@ -11,7 +11,9 @@ STAGES = {
         "player_model", "player_score_threshold", "player_head_threshold",
         "player_ball_threshold", "player_nms_iou", "player_close_threshold",
         "player_hysteresis_frames", "player_match_center_distance", "player_match_iou",
-        "player_action_threshold", "player_backend", "player_device"},
+        "player_action_threshold", "player_backend", "player_device",
+        "player_identity_mode", "player_reid_threshold_percent", "player_auto_assign",
+        "player_auto_assign_threshold_percent", "player_session_gap_sec"},
     "analysis-stage-performance": {
         "gpu_device_id", "gpu_memory_limit_mb", "player_stride", "player_frame_step",
         "threads", "analysis_width",

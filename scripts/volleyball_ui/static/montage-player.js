@@ -170,6 +170,7 @@ window.VolleyballMontagePlayer=(()=>{
     window.addEventListener("resize",syncFullscreenVideo);
     playButton.addEventListener("click",togglePlay);
     document.addEventListener("keydown",event=>{
+      if(window.VolleyballSharedPlayer)return;
       if(event.code!=="Space"||event.repeat||event.altKey||event.ctrlKey||
           event.metaKey||event.isComposing||!duration())return;
       const active=document.activeElement;
@@ -240,6 +241,9 @@ window.VolleyballMontagePlayer=(()=>{
     video.controls=false;
     reset();
   }
-  return {init,reset,fitAspect,setRallyRange,playRally};
+  return {init,reset,fitAspect,setRallyRange,playRally,
+    playbackBounds:bounds,fps:()=>30,
+    seek:time=>{const range=bounds();video.currentTime=Math.max(range.start,Math.min(range.end,time));refresh();},
+    togglePlayback:togglePlay};
 })();
 document.addEventListener("DOMContentLoaded",()=>window.VolleyballMontagePlayer.init());

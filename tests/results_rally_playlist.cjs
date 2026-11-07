@@ -100,7 +100,14 @@ const rawControls=["vballnet","ravelBall","players","touch"].map(key=>{
 });
 const document={
   getElementById:get,
-  querySelector(selector){return selector===".result-confidence-options"?get("confidence-options"):null;},
+  createElement:tag=>new Element(tag),
+  body:{appendChild(){}},
+  addEventListener(){},
+  querySelector(selector){
+    const raw=selector.match(/^\[data-result-raw="([^"]+)"\]$/);
+    if(raw)return rawControls.find(input=>input.dataset.resultRaw===raw[1])||null;
+    return selector===".result-confidence-options"?get("confidence-options"):null;
+  },
   querySelectorAll(selector){
     if(selector==="[data-result-confidence]")return confidenceButtons;
     if(selector==="[data-result-overlay]")return overlayControls;
@@ -305,11 +312,8 @@ function nearEnd(t){video.currentTime=t;video.fire("timeupdate");}
     "../scripts/volleyball_ui/static/index.html"),"utf8");
   assert.ok(!previewHtml.includes('id="result-source-list"'),
     "Video selection is exclusively in the header chain");
-  assert.ok(get("result-rally-list").innerHTML.includes('data-montage-rally="'+rallyA+'"'));
-  const checkbox=new Element("rally-selection");
-  checkbox.dataset.montageRally=rallyA;
-  checkbox.checked=true;
-  get("result-rally-list").fire("change",{target:checkbox});
+  assert.ok(get("result-rally-list").innerHTML.includes('data-rally-mark="'+rallyA+'"'));
+  ui.setMontageRallies([rallyA],"project-1","run-A");
   assert.deepEqual(selection("project-1","run-A"),[rallyA]);
   assert.equal(emitted.at(-1).type,"volley:montage-rallies-change");
   assert.equal(emitted.at(-1).detail.run_id,"run-A");
@@ -321,8 +325,8 @@ function nearEnd(t){video.currentTime=t;video.fire("timeupdate");}
   ui.setCacheSelection({"match.mp4":"cache-1","second.mp4":"cache-2"},"run-A");
   await ui.setProject("project-1",["match.mp4","second.mp4"],"match.mp4");
   assert.ok(get("result-rally-list").innerHTML.includes(
-    'data-montage-rally="'+rallyA+'" checked'),
-    "selected rally checkbox must be restored on return");
+    'is-selected" data-rally-mark="'+rallyA+'"'),
+    "golden rally mark must be restored on return");
   ui.setMontageRallies([rallyB],"project-1","run-A");
   assert.deepEqual(selection("project-1","run-A"),[rallyB]);
   ui.setMontageRallies([],"project-1","run-A");
@@ -433,8 +437,8 @@ function nearEnd(t){video.currentTime=t;video.fire("timeupdate");}
   assert.equal(current(),1,"preserve active rally across boundary-only update");
   assert.deepEqual(selection("project-1","run-A"),[rallyD],
     "manual montage selection follows stable detected rally when padding changes");
-  assert.ok(listBefore.innerHTML.includes('data-montage-rally="'+rallyD+'" checked'),
-    "updated rally remains checked for manual montage");
+  assert.ok(listBefore.innerHTML.includes('is-selected" data-rally-mark="'+rallyD+'"'),
+    "updated rally remains marked for manual montage");
   assert.equal(listBefore.scrollTop,139,"preserve rally list scroll position");
   assert.ok(listBefore.innerHTML.includes("00:00:28"),
     "updated boundary is visible in the rally list");
@@ -475,8 +479,38 @@ function nearEnd(t){video.currentTime=t;video.fire("timeupdate");}
   assert.ok(previewHtml.slice(previewHtml.indexOf('class="result-player-buttons"'),
     previewHtml.indexOf('id="result-player-mute"')).includes('id="result-playback-mode"'));
 
+  get("result-reprocess-mode").value="combined";
+  get("result-reprocess-mode").fire("change");
+  assert.equal(get("result-track-no-ball-fill").disabled,true,"combined mode does not consume no-ball-fill");
+  fixture.capabilities={reprocess_modes:["baseline"],raw_sources:{vballnet:true,ravel:true},model_touch:false};
+  ui.setCacheSelection({"match.mp4":"legacy-model-cache"},"legacy-model-run");
+  await ui.setProject("project-1",["match.mp4"],"match.mp4");
+  assert.equal(get("result-reprocess-mode").value,"baseline","non-013 cache only offers supported CPU mode");
+  assert.equal(get("result-reprocess-touch-threshold").disabled,true);
+  ui.setReprocessTask({kind:"analyze",status:"running"});
+  assert.equal(get("result-reprocess-start").disabled,true,"another running server job blocks CPU launch");
+  ui.setReprocessTask(null);
+  assert.equal(get("result-reprocess-start").disabled,false);
+  rawActive=true;
+  fixture.analyzed=false;fixture.inference_ready=true;
+  fixture.capabilities={reprocess_modes:["baseline","combined"],raw_sources:{vballnet:true,ravel:true},model_touch:true,touch_floor:0};
+  ui.setCacheSelection({"match.mp4":"raw-013-cache"},"raw-013-run");
+  await ui.setProject("project-1",["match.mp4"],"match.mp4");
+  assert.equal(rawControls.find(input=>input.dataset.resultRaw==="touch").disabled,false,
+    "inference-only context updates Touch availability even when raw mode stays selected");
+  fixture.capabilities={...fixture.capabilities,model_touch:false};
+  ui.setCacheSelection({"match.mp4":"raw-012-cache"},"raw-012-run");
+  await ui.setProject("project-1",["match.mp4"],"match.mp4");
+  assert.equal(rawControls.find(input=>input.dataset.resultRaw==="touch").disabled,true);
+  fixture.capabilities={...fixture.capabilities,reprocess_modes:[]};
+  ui.setCacheSelection({"match.mp4":"incomplete-cache"},"incomplete-run");
+  await ui.setProject("project-1",["match.mp4"],"match.mp4");
+  assert.equal(get("result-reprocess-start").disabled,true,"incomplete cache cannot start a guaranteed failing job");
   ui.setCacheSelection({},"unfinished-run");
   await ui.setProject("project-1",["match.mp4","second.mp4"],"match.mp4");
+  ui.setReprocessTask(null);
+  for(const id of ["result-reprocess-mode","result-touch-min-interval","result-track-min-duration","rally-gap-sec","result-rally-sort","result-playback-mode"])
+    assert.equal(get(id).disabled,true,id+" requires an actual selected result");
   assert.ok(!previewHtml.includes('id="result-confidence-threshold"'),
     "No second confidence threshold in the preview");
   assert.ok(!previewHtml.includes('id="result-trajectory-status"'),

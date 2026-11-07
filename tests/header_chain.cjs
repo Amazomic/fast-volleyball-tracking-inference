@@ -57,7 +57,7 @@ for(const id of ["chain-project","chain-inference","chain-postprocess"]){
 }
 assert(!html.includes('id="chain-video"'));
 assert(html.includes('src="/header-chain.js?v=7"'));
-assert(html.includes('src="/header-chain-menu.js?v=4"'));
+assert.match(html,/src="\/header-chain-menu\.js\?v=\d+"/);
 assert(!html.includes('id="project-settings-trigger"'));
 assert(html.includes('id="header-entry-action-dialog"'));
 assert.equal(model.parseChoiceId(model.choiceId("video | clip.mp4","run3")).video,"video | clip.mp4");

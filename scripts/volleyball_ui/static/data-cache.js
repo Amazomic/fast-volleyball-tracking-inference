@@ -2,7 +2,7 @@
    Live job status, project registry and analysis-run lists are intentionally NOT cached. */
 window.VolleyDataCache=(()=>{
   "use strict";
-  const STORE="volley-analysis-json-v2",MAX_ITEMS=60,MAX_BYTES=8*1024*1024;
+  const STORE="volley-analysis-json-v3",MAX_ITEMS=60,MAX_BYTES=8*1024*1024;
   const pending=new Map();
   let epoch=0,clearing=Promise.resolve();
   function supports(url){

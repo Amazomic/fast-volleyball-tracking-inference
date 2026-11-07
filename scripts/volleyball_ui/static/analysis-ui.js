@@ -380,6 +380,7 @@ window.VolleyballAnalysisUI=(()=>{
         "Браузер не поддерживает кодек этого видео. Диапазон можно задавать вручную.";
     });
     document.addEventListener("keydown",e=>{
+      if(window.VolleyballSharedPlayer)return;
       if(!E("view-analysis").classList.contains("active")||!meta)return;
       if(e.altKey||e.ctrlKey||e.metaKey)return;
       const target=e.target;
@@ -425,5 +426,6 @@ window.VolleyballAnalysisUI=(()=>{
     return {analysis_width:E("manual-width-enabled").checked?w:"auto"};
   }
   return {init,setVideo,setProjectRanges,currentRange,activeVideo,activeProject,params,
-    currentPosition:()=>current,duration:()=>meta?.duration_sec||0};
+    currentPosition:()=>current,duration:()=>meta?.duration_sec||0,
+    fps:()=>Number(meta?.fps)||30,seek:time=>seek(time,true),togglePlayback};
 })();

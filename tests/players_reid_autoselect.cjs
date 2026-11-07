@@ -70,7 +70,7 @@ assert.match(run('playerPickerHtml("group-player-picker",["201","202","203"],"g:
 
 run('state.video="match.mp4";renderPlayerGroups()');
 assert.match(el("#player-groups-list").innerHTML, /data-player-pick-key="g:g1"/);
-assert.match(el("#player-groups-list").innerHTML, /2\/3 ID/);
+assert(!el("#player-groups-list").innerHTML.includes("2/3 ID"),"Standalone ReID hint should not be shown in group card");
 run('renderPlayers()');
 assert.match(el("#raw-players").innerHTML, /data-player-pick-key="t:204"/);
 assert.match(el("#raw-players").innerHTML, /Вера · 70% сходство/);

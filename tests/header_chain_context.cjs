@@ -104,5 +104,15 @@ const evaluate=code=>vm.runInContext(code,ctx);
   assert(calls.some(([kind,name])=>kind==="video"&&name==="second.mp4"));
   assert(!fs.readFileSync(path.join(__dirname,"../scripts/volleyball_ui/static/index.html"),"utf8")
     .includes('id="chain-video"'));
+  base1.inference_only=true;
+  processed1.inference_only=true;
+  state.analysisRunId="base1";
+  evaluate("renderHeaderChain()");
+  assert.equal(element("#chain-postprocess").value,"","GPU-only selection is not a CPU version");
+  assert(!element("#chain-postprocess").options.some(o=>o.value==="base1"));
+  assert(element("#chain-postprocess").options.some(o=>o.value==="base1_pp_aa"));
+  base1.postprocessed_videos=["first.mp4"];
+  evaluate("renderHeaderChain()");
+  assert.equal(element("#chain-postprocess").value,"base1","actual cached CPU events take precedence over the launch label");
   console.log("HEADER THREE-LEVEL VIDEO-IN-INFERENCE CASCADE: PASS");
 })().catch(e=>{console.error(e);process.exitCode=1});

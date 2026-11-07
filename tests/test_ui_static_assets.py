@@ -30,7 +30,9 @@ class HeaderAssetServingTests(unittest.TestCase):
             html = response.read().decode("utf-8")
         assets = re.findall(r'<(?:script|link)[^>]+(?:src|href)="(/[^"]+\.(?:js|css)(?:\?[^"]*)?)"', html)
         self.assertGreaterEqual(len(assets), 10, "Expected UI JavaScript/CSS assets")
-        self.assertIn("/header-chain-menu.js?v=3", assets)
+        self.assertTrue(any(asset.split("?")[0] == "/header-chain-menu.js" for asset in assets))
+        self.assertTrue(any(asset.split("?")[0] == "/shared-player.js" for asset in assets))
+        self.assertTrue(any(asset.split("?")[0] == "/shared-player.css" for asset in assets))
         for asset in assets:
             with self.subTest(asset=asset):
                 try:
