@@ -2,6 +2,7 @@
 mod analysis_runs;
 mod catalog;
 mod history;
+mod montage;
 mod playback;
 mod preparation;
 mod projects;
@@ -18,6 +19,7 @@ struct AppState {
     repository_root: PathBuf,
     data_root: PathBuf,
     writes_enabled: bool,
+    montage: montage::MontageManager,
     preparation: preparation::PreparationManager,
     preview_limit: tokio::sync::Semaphore,
 }
@@ -55,6 +57,12 @@ async fn rewrite_status(
             "GET /api/analysis-resources",
             "POST /api/project-create (isolated data root only)",
             "POST /api/project-update (isolated data root only)",
+            "POST /api/montage/native/start (manual clips, isolated root)",
+            "GET /api/montage/native/status",
+            "POST /api/montage/native/cancel (isolated root)",
+            "GET /api/montage/native/library",
+            "GET /api/montage/native/media (Range bytes)",
+            "POST /api/montage/native/audio (multipart, isolated root)",
         ],
         pid: std::process::id(),
     })
@@ -78,6 +86,19 @@ fn app(state: Arc<AppState>) -> Router {
         .route("/api/players/library", get(catalog::get_library))
         .route("/api/project-create", post(projects::create_project))
         .route("/api/project-update", post(projects::update_project))
+        .route(
+            "/api/montage/native/start",
+            post(montage::start_native_montage),
+        )
+        .route("/api/montage/native/status", get(montage::native_status))
+        .route("/api/montage/native/cancel", post(montage::native_cancel))
+        .route("/api/montage/native/media", get(montage::native_media))
+        .route("/api/montage/native/library", get(montage::native_library))
+        .route(
+            "/api/montage/native/audio",
+            post(montage::native_upload_audio)
+                .layer(axum::extract::DefaultBodyLimit::max(91 * 1024 * 1024)),
+        )
         .route(
             "/api/project-preparation",
             get(preparation::get_preparation),
@@ -124,6 +145,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         repository_root: root,
         data_root,
         writes_enabled,
+        montage: montage::MontageManager::new(),
         preparation: preparation::PreparationManager::new(),
         preview_limit: tokio::sync::Semaphore::new(2),
     });

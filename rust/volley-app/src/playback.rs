@@ -62,7 +62,10 @@ fn range_request(value: Option<&str>, size: u64) -> Result<(u64, u64, bool), ()>
     }
 }
 
-async fn serve_mp4(path: PathBuf, headers: &HeaderMap) -> Result<Response<Body>, ApiError> {
+pub(crate) async fn serve_mp4(
+    path: PathBuf,
+    headers: &HeaderMap,
+) -> Result<Response<Body>, ApiError> {
     let mut file = fs::File::open(&path)
         .await
         .map_err(|_| storage::not_found("Видео не найдено"))?;
