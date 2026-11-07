@@ -90,3 +90,116 @@ def bbox_iou(a: Sequence[float], b: Sequence[float]) -> float:
     if os.environ.get("VOLLEY_RUST_IOU") == "1":
         return rust_bbox_iou(a, b)  # Must fail loudly, never silently fall back.
     return python_bbox_iou(a, b)
+
+
+class _BallObservation(ctypes.Structure):
+    _fields_ = [
+        ("frame", ctypes.c_int64),
+        ("x", ctypes.c_double),
+        ("y", ctypes.c_double),
+    ]
+
+
+class _MotionConfig(ctypes.Structure):
+    _fields_ = [
+        ("velocity_window", ctypes.c_size_t),
+        ("min_samples", ctypes.c_size_t),
+        ("max_gap_frames", ctypes.c_int64),
+        ("min_speed", ctypes.c_double),
+        ("min_residual", ctypes.c_double),
+        ("relative_residual", ctypes.c_double),
+        ("gravity", ctypes.c_double),
+    ]
+
+
+class _MotionEvidence(ctypes.Structure):
+    _fields_ = [
+        ("motion_frame", ctypes.c_int64),
+        ("speed_before", ctypes.c_double),
+        ("speed_after", ctypes.c_double),
+        ("angle", ctypes.c_double),
+        ("residual", ctypes.c_double),
+    ]
+
+
+@lru_cache(maxsize=4)
+def _rust_motion_batch_function(path: str):
+    target = Path(path)
+    if not target.is_file():
+        raise FileNotFoundError(
+            f"Rust motion kernel not built: {target}. Run cargo build --manifest-path "
+            "rust/volley-core/Cargo.toml before enabling VOLLEY_RUST_MOTION=1."
+        )
+    library, _ = _load_library(str(target.resolve()))
+    function = library.volley_ball_motion_batch_v1
+    function.argtypes = [
+        ctypes.POINTER(_BallObservation),
+        ctypes.c_size_t,
+        ctypes.POINTER(ctypes.c_int64),
+        ctypes.c_size_t,
+        ctypes.c_int64,
+        ctypes.POINTER(_MotionConfig),
+        ctypes.POINTER(_MotionEvidence),
+        ctypes.POINTER(ctypes.c_int32),
+    ]
+    function.restype = ctypes.c_int32
+    return function
+
+
+def rust_ball_motion_changes(
+    observations: Sequence[tuple[int, float, float]],
+    target_frames: Sequence[int],
+    window_frames: int = 4,
+) -> list[dict | None]:
+    """Batched RAVEL Touch motion evidence; mirrors reprocess._ball_motion_change.
+
+    One FFI call evaluates every candidate against the same ball observations.
+    The original Python path remains the default; only explicit opt-in uses
+    this function. All physical thresholds come from the Python constants.
+    """
+    if not target_frames:
+        return []
+    if not observations:
+        return [None] * len(target_frames)
+    if sys.platform == "win32" and ctypes.sizeof(ctypes.c_void_p) != 8:
+        raise RuntimeError("Rust volley-core DLL requires 64-bit Python on Windows")
+
+    from src.player_contacts import (
+        VELOCITY_WINDOW, MIN_VELOCITY_SAMPLES, MAX_SEGMENT_GAP_FRAMES,
+        MIN_SPEED_PX_PER_FRAME, MIN_VELOCITY_RESIDUAL_PX_FRAME,
+        RELATIVE_VELOCITY_RESIDUAL, DEFAULT_GRAVITY_PX_PER_FRAME2,
+    )
+
+    obs_array = (_BallObservation * len(observations))(
+        *(_BallObservation(int(frame), float(x), float(y))
+          for frame, x, y in observations)
+    )
+    frames_array = (ctypes.c_int64 * len(target_frames))(
+        *(int(frame) for frame in target_frames)
+    )
+    config = _MotionConfig(
+        VELOCITY_WINDOW, MIN_VELOCITY_SAMPLES, MAX_SEGMENT_GAP_FRAMES,
+        MIN_SPEED_PX_PER_FRAME, MIN_VELOCITY_RESIDUAL_PX_FRAME,
+        RELATIVE_VELOCITY_RESIDUAL, DEFAULT_GRAVITY_PX_PER_FRAME2,
+    )
+    outputs = (_MotionEvidence * len(target_frames))()
+    statuses = (ctypes.c_int32 * len(target_frames))()
+    result = _rust_motion_batch_function(str(library_path()))(
+        obs_array, len(observations), frames_array, len(target_frames),
+        window_frames, ctypes.byref(config), outputs, statuses,
+    )
+    if result != 0:
+        raise ValueError(
+            "Rust motion kernel rejected input: observations must be sorted "
+            "by frame, finite, and use valid motion thresholds."
+        )
+    return [
+        {
+            "motion_frame": int(found.motion_frame),
+            "speed_before_px_frame": round(float(found.speed_before), 3),
+            "speed_after_px_frame": round(float(found.speed_after), 3),
+            "direction_change_deg": round(float(found.angle), 2),
+            "velocity_residual_px_frame": round(float(found.residual), 3),
+        } if status == 1 else None
+        for found, status in zip(outputs, statuses)
+    ]

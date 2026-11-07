@@ -81,6 +81,10 @@ def _ball_motion_change(observations: list[tuple[int, float, float]],
     geometry detector in src/player_contacts.py. Merely passing through
     a player box must not qualify as a Touch.
     """
+    if os.environ.get("VOLLEY_RUST_MOTION") == "1":
+        from .rust_core import rust_ball_motion_changes
+        return rust_ball_motion_changes(observations, [frame], window_frames)[0]
+
     from src.player_contacts import (
         VELOCITY_WINDOW, MIN_VELOCITY_SAMPLES, MAX_SEGMENT_GAP_FRAMES,
         MIN_SPEED_PX_PER_FRAME, MIN_VELOCITY_RESIDUAL_PX_FRAME,
@@ -173,6 +177,19 @@ def _ravel_contacts(track: dict, predictions: list[dict], threshold: float,
     candidates = []
     peaks = (selected_peaks if selected_peaks is not None else
              select_touch_peaks(predictions, threshold, smooth, min_gap))
+    # Transfer the trajectory once for all candidate model peaks, rather
+    # than invoking the Rust C ABI separately for each proposed touch.
+    rust_motions = None
+    if os.environ.get("VOLLEY_RUST_MOTION") == "1" and peaks:
+        from .rust_core import rust_ball_motion_changes
+        candidate_frames = list(dict.fromkeys(
+            int(peak["frame_index"]) for peak in peaks
+            if peak.get("class_name") == "player" and peak.get("action") == "Touch"
+            and not peak.get("interpolated")
+            and float(peak.get("action_score") or 0) >= threshold
+        ))
+        rust_motions = dict(zip(candidate_frames,
+                                rust_ball_motion_changes(observations, candidate_frames)))
     for p in peaks:
         if (p.get("class_name") != "player" or p.get("action") != "Touch"
                 or p.get("interpolated")
@@ -204,7 +221,8 @@ def _ravel_contacts(track: dict, predictions: list[dict], threshold: float,
         outside_y = max(y1-y, y-y2, 0.)
         if max(outside_x,outside_y) > max_reach_ratio * height:
             continue
-        motion = _ball_motion_change(observations, frame)
+        motion = (rust_motions.get(frame) if rust_motions is not None
+                  else _ball_motion_change(observations, frame))
         if motion is None:
             continue
         candidates.append({

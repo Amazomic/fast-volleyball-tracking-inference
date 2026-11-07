@@ -5,6 +5,8 @@
 //! CPU routines are migrated.  No GPU inference, video I/O, or player
 //! identity state is handled here.
 
+pub mod motion;
+
 /// Must match the positive-area intersection-over-union operation used by
 /// `scripts/volleyball_studio/replay_player_tracking.py` for valid boxes.
 /// Input order: left, top, right, bottom (normalized frame coordinates).

@@ -39,7 +39,7 @@ Keep the running Python implementation as the oracle and fallback. Start with **
 |---|---|---|---|---|
 | S00 | Freeze checkpoint, sync the latest `master`, document migration and baseline | `docs/RUST_MIGRATION.md` | clean tracked status, policy tests, reconciliation documented | LOCAL TEST GATE PASSED |
 | S01 | Toolchain, isolated Rust crate, deterministic data-contract kernel, fixtures & fallback adapter | `rust/volley-core/{Cargo.toml,src/lib.rs}`, `tests/test_rust_core_contract.py` | `cargo fmt --check`, `cargo test`, Python golden parity (no GPU) | VERIFIED LOCALLY — optional, NOT default |
-| S02 | Ball trajectory, acceleration and touch-peak candidates; preserve RAVEL-013 evidence | `rust/volley-core/src/touches.rs`; `src/player_contacts.py` adapter | same touch timestamps/IDs before switch; annotated-match quality >= current | NOT STARTED |
+| S02 | Ball trajectory, acceleration and touch-peak candidates; preserve RAVEL-013 evidence | `rust/volley-core/src/motion.rs` (S02a), later `touches.rs` and `src/player_contacts.py` | same touch timestamps/IDs before switch; annotated-match quality >= current | S02a TESTED; rest PENDING |
 | S03 | CPU player tracking and up-to-4s gap interpolation, occupancy conflicts | `rust/volley-core/src/tracking.rs`; `scripts/volleyball_studio/replay_player_tracking.py` | deterministic same-track tests; player ID fragmentation/recall not worse | NOT STARTED |
 | S04 | ReID similarity, reference photo grouping, manual precedence | `rust/volley-core/src/reid.rs`; `scripts/volleyball_ui/player_identity_groups.py` | match ordering, no simultaneous-identity merges, photo/test parity | NOT STARTED |
 | S05 | Rally boundaries, contacts, reports and CPU versioning | `rust/volley-core/src/rallies.rs`; `scripts/volleyball_studio/reprocess.py` | no clipped rallies, stable API schemas, golden regression gate | NOT STARTED |
@@ -84,7 +84,7 @@ Keep the running Python implementation as the oracle and fallback. Start with **
 
 
 ### S01 Rust kernel and parity — 2026-11-07
-**Status:** S01 local acceptance PASSED. Commit belongs to this stage; verify published remote SHA independently. No default behavior change.
+**Status:** S01 local acceptance PASSED and GitHub-published commit `2d251b0c86e53fdd0ee62b4b5133cac06585d3c3` (same Git tree as local `ed5bb80114efa09e830619e3374ba232f45e52d7`). No default behavior change.
 
 - New crate `rust/volley-core` (Rust 1.99.1; versioned ABI 1, `cdylib` plus `rlib`), implemented `bbox_iou` with the exact epsilon/degenerate-box semantics of CPU replay.
 - Added `scripts/volleyball_studio/rust_core.py` ctypes adapter, `tests/test_rust_core_contract.py` parity tests and optional call site in `scripts/volleyball_studio/replay_player_tracking.py`. Default `VOLLEY_RUST_IOU` unset uses Python. Set to `1` only after building. Missing DLL or incorrect ABI fails explicitly; never silently substitutes an algorithm.
@@ -96,6 +96,20 @@ Keep the running Python implementation as the oracle and fallback. Start with **
 - `tests/test_player_three_second_gap.py` — **NOT TESTED** on this Python 3.11 environment: import fails because `cv2` is missing. No runtime library installs, GPU jobs, media, or user caches were modified to force this test.
 - Full E2E project replay, annotated real-match accuracy, Docker and GPU — **NOT TESTED**. S01 implements only deterministic geometry/parity, not an overall faster tracker.
 - Rollback: leave `VOLLEY_RUST_IOU` unset; if necessary restore the entire branch to S00 remote `8ebca9f64f5a4fe57999e0c3af01880a34d13075` (retain user data and checkpoint).
+
+
+### S02a Rust batched motion validation — 2026-11-07
+**Status:** Local deterministic-parity gate PASSED; S02 overall remains INCOMPLETE pending annotated-match evaluation and other touch-peak logic.
+
+- Scope: move the gravity-corrected velocity fits and motion-break selection for RAVEL touch evidence to `rust/volley-core/src/motion.rs`. Safe C ABI `volley_ball_motion_batch_v1` consumes saved ball observations and all target peak frames in one call. No model, raw cache, golden thresholds, identity assignment or montage data is changed.
+- The existing `scripts/volleyball_studio/reprocess.py` preserves the Python path unless the explicit environment flag `VOLLEY_RUST_MOTION=1` is set. `_ravel_contacts` batches proposed peak frames for one Rust call rather than copying the ball track for each candidate.
+- Rust uses parameter values from `src/player_contacts.py` passed by Python in `scripts/volleyball_studio/rust_core.py`, avoiding diverging numerical defaults. The output schema, rounding, frame selection, rejection of gravity-only flight and touch gates were preserved.
+- `cargo test --manifest-path rust/volley-core/Cargo.toml` — PASS (7 Rust tests, including the 4 S01 tests). `cargo build` — PASS. `cargo fmt --manifest-path rust/volley-core/Cargo.toml` applied formatting and `cargo fmt -- --check` is required before commit.
+- `VOLLEY_RUST_REQUIRED=1 python -m unittest discover -s tests -p test_rust_motion_contract.py` — PASS (4 Python tests, 90 seeded noisy trajectories plus straight/gravity/reversal/speed-gain/sparse tracks, default-vs-Rust identical dictionaries, and malformed input diagnostics).
+- Existing `python -m unittest discover -s tests -p test_ravel_touch_motion.py` — PASS (7 tests); with `VOLLEY_RUST_MOTION=1` — PASS (7 tests). Identical input touch results in both modes.
+- Synthetic microbenchmark on same HOME-PC: 500 saved trajectory observations, 96 candidate frames per run, 25 runs; Python **0.1227 s**, Rust batch **0.0179 s** (~6.9x faster on this microbenchmark), with exact matching evidence. This is **NOT** a measured full-video / production speedup.
+- Real annotated-match acceptance, GPU inference, CPU full quality suite, 64-bit Python 3.14 environment and Docker — **NOT TESTED**. Do not change golden defaults or automatically enable Rust. Retain original Python path for rollback by simply unsetting `VOLLEY_RUST_MOTION`.
+- Next gate S02b: port the remaining Touch candidate/peak or CPU geometry work only after repeatable baseline fixtures are available, and compare actual Touch precision/recall and event timing on the same cached inference. Do not equate synthetic equality with real-match quality.
 
 ## 5. Instructions for the next AI / engineer
 
