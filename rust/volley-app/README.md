@@ -43,6 +43,7 @@ GET  /api/analysis-history?project_id=...
 GET  /api/analysis-resources     CPU thread count
 GET  /api/players/library       existing global athlete catalog
 POST /api/players/continuity-preview  provisional Track ID groups and 4s gap suggestions for selected run
+POST /api/players/reid-native/preview   cached native ReID grouping and vetted references (read-only)
 POST /api/project-create        experimental isolated registry only
 POST /api/project-update        experimental isolated registry only
 GET  /api/project-preparation?project_id=...  preparation states, enqueue missing when isolated
@@ -61,7 +62,7 @@ POST /api/cpu/touch-preview          read-only RAVEL Touch proposals and motion-
 
 These routes are implementations of persisted formats, not a claim of complete API parity. Rust project creation/update now queues native preparation. Compatible original MP4s are reused without recoding; other sources are converted by native FFmpeg to H.264/30 FPS/YUV420P and stored in the separate content-addressed development cache. One converter runs at a time; file locks prevent duplicate publication, status tracks FFmpeg progress, and cancellation is persisted per project until an explicit retry. Existing projects may use legacy storage conventions not fully supported; player catalog loading does not yet run legacy photo/identity backfills.
 
-**Not implemented:** gold-marked episode filters, complete player/ball overlays or auto-follow/vertical crop, audio mixing with source sound, complete browser montage UI contract, cross-project adoption of old prepared results, general uploads, complete model/GPU inference and CPU touch inference, full ReID/manual players, personal player statistics, on-demand fallback video segments, quick reel, full API, Rust/WASM browser UI and desktop packaging.
+**Not implemented:** gold-marked episode filters, complete player/ball overlays or auto-follow/vertical crop, audio mixing with source sound, complete browser montage UI contract, cross-project adoption of old prepared results, general uploads, complete model/GPU inference and CPU touch inference, live ReID embedding extraction/manual photo operations, personal player statistics, on-demand fallback video segments, quick reel, full API, Rust/WASM browser UI and desktop packaging.
 
 Development compilation/smoke probes are allowed. User-directed order: finish all Rust functionality **first**, then comprehensive tests/adaptation, then compare final Rust vs saved Python; rollback to `checkpoint/pre-rust-2026-11-07` if needed. See `docs/RUST_REWRITE_SCOPE.md` and `docs/RUST_MIGRATION.md`.
 
@@ -140,3 +141,18 @@ Use `POST /api/players/continuity-preview` on the standalone Rust development se
 ```
 
 It reads existing project-scoped inference/CPU player observations and exclusions. `continuity.proposed_links` are conservatively merged **candidate** groups for short gaps; `continuity.extended_suggestions` are unmerged proposals for longer gaps up to the chosen limit. Both remain `confirmed: false`; they are not personal identities or calibrated ReID percentages. No GPU work or writes occur. The Touch diagnostic also returns `unconfirmed_candidate_touch_counts` for physically validated touches, without modifying verified ID labels or persistent statistics. Cross-run identity consistency, ReID and manual confirmation UI remain outstanding.
+
+## Experimental ReID archive preview
+
+Read-only POST /api/players/reid-native/preview body:
+
+~~~json
+{
+  "project_id": "1234abcdef01",
+  "run_id": "run_20261107_123456",
+  "video": "match.mp4",
+  "threshold_percent": 85
+}
+~~~
+
+Requires a chosen saved run and existing fresh player_identity_groups/*.npz embedding archive. Rust calculates cosine scores and candidate groups, honoring manual exclusions and reviewed owners. Existing trusted photo-album vectors provide suggested player matches for the project's roster; automatic assignment is disabled. No Python subprocess is used. ReID image encoder and uncached embedding capture, real manual linking UI, model parity checks and full integration tests are still outstanding.

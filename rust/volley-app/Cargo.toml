@@ -19,3 +19,5 @@ volley-media = { path = "../volley-media" }
 volley-core = { path = "../volley-core" }
 tokio-util = { version = "0.7", features = ["io"] }
 percent-encoding = "2"
+zip = { version = "2.2", default-features = false, features = ["deflate"] }
+half = "2.4"
