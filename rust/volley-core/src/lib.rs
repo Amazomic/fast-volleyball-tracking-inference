@@ -6,6 +6,7 @@
 //! identity state is handled here.
 
 pub mod continuity;
+pub mod event_evidence;
 pub mod fusion;
 pub mod motion;
 pub mod rallies;
