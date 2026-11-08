@@ -4,7 +4,7 @@
 //! by this module; each owner association requires an explicit human action.
 use crate::{
     cpu_retrack::{opaque_id, safe_file, safe_folder, BoundedReader},
-    inference_stream, player_catalog, preparation, project_archive, projects,
+    inference_stream, native_reid_cache, player_catalog, preparation, project_archive, projects,
     storage::{self, ApiError, ApiResult},
     versioned_store::{self, revision},
     AppState,
@@ -751,15 +751,17 @@ pub async fn embeddings(
         .acquire()
         .await
         .map_err(|e| storage::internal(format!("ReID gate: {e}")))?;
-    // Refuse missing libraries or model files before expensive video decoding.
-    let library = std::env::var("VOLLEY_OPENVINO_C_LIB").map_err(|_| {
-        storage::bad_request(
-            "Native OpenVINO C runtime is not configured: set VOLLEY_OPENVINO_C_LIB",
-        )
-    })?;
+    // The exact current model fingerprint is required even for a cache hit.
     let repo = state.repository_root.clone();
     let before =
         volley_inference::reid_openvino::fingerprint(&repo).map_err(storage::bad_request)?;
+    let cache_scope = native_reid_cache::CacheScope {
+        project_id: req.project_id.clone(),
+        video: req.video.clone(),
+        replay_id: req.replay_id.clone(),
+        replay_sha256: req.expected_source_sha256.clone(),
+        model_fingerprint: before.clone(),
+    };
     let expected_sha = req.expected_source_sha256.clone();
     let planned_state = state.clone();
     let (source_file, source_stamp, replay_file, replay_stamp, crops, evidence) =
@@ -811,13 +813,26 @@ pub async fn embeddings(
         })
         .await
         .map_err(|e| storage::internal(format!("ReID source check task: {e}")))??;
+    let cache =
+        native_reid_cache::read(&state.data_root, &cache_scope).map_err(storage::bad_request)?;
+    let cache_invalidated = cache.invalidated;
+    let mut selected = BTreeMap::<u64, Vec<f32>>::new();
+    for (id, _, _) in &crops {
+        if let Some(vector) = cache.vectors.get(id) {
+            selected.insert(*id, vector.clone());
+        }
+    }
+    let cached_count = selected.len();
     let _decode_slot = state
         .preview_limit
         .acquire()
         .await
         .map_err(|e| storage::internal(format!("ReID media slot: {e}")))?;
     let mut frames = Vec::with_capacity(crops.len());
-    for (track_id, best_frame, [x, y, w, h]) in crops {
+    for &(track_id, best_frame, [x, y, w, h]) in &crops {
+        if selected.contains_key(&track_id) {
+            continue;
+        }
         let secs = format!("{:.6}", best_frame as f64 / 30.0);
         let vf = format!(
             "crop={w}:{h}:{x}:{y},scale={}:{}:flags=bilinear,format=bgr24",
@@ -864,25 +879,29 @@ pub async fn embeddings(
             .map_err(storage::bad_request)?;
         frames.push((track_id, best_frame, chw));
     }
-    let generated = tokio::task::spawn_blocking(move || -> Result<Vec<Value>, ApiError> {
-        let mut encoder =
-            volley_inference::reid_openvino::Encoder::load(&repo, Path::new(&library))
-                .map_err(storage::bad_request)?;
-        let mut output = Vec::new();
-        for (id, frame, chw) in frames {
-            let vector = encoder.infer(&chw).map_err(storage::bad_request)?;
-            output.push(json!({
-                "track_id":id,
-                "best_frame":frame,
-                "dimensions":vector.len(),
-                "vector":vector,
-                "confirmed_athlete_identity":false
-            }));
-        }
-        Ok(output)
-    })
-    .await
-    .map_err(|e| storage::internal(format!("ReID native inference task: {e}")))??;
+    let computed = if frames.is_empty() {
+        Vec::<(u64, Vec<f32>)>::new()
+    } else {
+        // Only an actual cache miss needs the native OpenVINO runtime.
+        let library = std::env::var("VOLLEY_OPENVINO_C_LIB").map_err(|_| {
+            storage::bad_request(
+                "Native OpenVINO C runtime is not configured: set VOLLEY_OPENVINO_C_LIB",
+            )
+        })?;
+        tokio::task::spawn_blocking(move || -> Result<Vec<(u64, Vec<f32>)>, ApiError> {
+            let mut encoder =
+                volley_inference::reid_openvino::Encoder::load(&repo, Path::new(&library))
+                    .map_err(storage::bad_request)?;
+            let mut output = Vec::new();
+            for (id, _, chw) in frames {
+                let vector = encoder.infer(&chw).map_err(storage::bad_request)?;
+                output.push((id, vector));
+            }
+            Ok(output)
+        })
+        .await
+        .map_err(|e| storage::internal(format!("ReID native inference task: {e}")))??
+    };
     let replay_stat = fs::metadata(&replay_file)
         .map_err(|_| storage::conflict("CPU replay disappeared during ReID inference"))?;
     if (replay_stat.len(), replay_stat.modified().ok()) != replay_stamp
@@ -896,6 +915,58 @@ pub async fn embeddings(
             "Video or ReID weights changed during feature extraction",
         ));
     }
+    let computed_count = computed.len();
+    let persisted = if state.writes_enabled && !computed.is_empty() {
+        let writer = state.clone();
+        let scope = cache_scope.clone();
+        let vectors = computed.clone();
+        let source_path = source_file.clone();
+        let replay_path = replay_file.clone();
+        tokio::task::spawn_blocking(move || -> Result<(), ApiError> {
+            let _guard = project_archive::archive_guard(&writer, &scope.project_id)?;
+            let stat = fs::metadata(&replay_path)
+                .map_err(|_| storage::conflict("ReID replay disappeared before cache commit"))?;
+            if (stat.len(), stat.modified().ok()) != replay_stamp
+                || inference_stream::source_stamp(&source_path).map_err(storage::bad_request)?
+                    != source_stamp
+                || volley_inference::reid_openvino::fingerprint(&writer.repository_root)
+                    .map_err(storage::bad_request)?
+                    != scope.model_fingerprint
+            {
+                return Err(storage::conflict(
+                    "Native ReID source/model changed before cache commit",
+                ));
+            }
+            native_reid_cache::merge(&writer.data_root, &scope, &vectors)
+                .map_err(storage::bad_request)?;
+            Ok(())
+        })
+        .await
+        .map_err(|e| storage::internal(format!("Native ReID cache task: {e}")))??;
+        true
+    } else {
+        false
+    };
+    for (id, vector) in computed {
+        selected.insert(id, vector);
+    }
+    let generated = crops
+        .iter()
+        .map(|(id, frame, _)| -> Result<Value, ApiError> {
+            let vector = selected.get(id).ok_or_else(|| {
+                storage::internal("Verified ReID feature missing from source/cache")
+            })?;
+            Ok(json!({
+                "track_id":id,
+                "best_frame":frame,
+                "dimensions":vector.len(),
+                "vector":vector,
+                "cache_hit":cache.vectors.contains_key(id),
+                "confirmed_athlete_identity":false
+            }))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let source_kind = evidence.source_kind();
     Ok(Json(json!({
         "schema":"volley-native-reid-features/1",
         "source_replay_sha256":expected_sha,
@@ -903,9 +974,13 @@ pub async fn embeddings(
         "model":volley_inference::reid_openvino::MODEL_NAME,
         "model_fingerprint":before,
         "preprocessing":volley_inference::reid_openvino::PREPROCESS,
-        "source_kind":"native_cpu_replay",
+        "source_kind":source_kind,
         "dimensions":volley_inference::reid_openvino::DIMENSIONS,
         "embedding_count":generated.len(),
+        "cache_hits":cached_count,
+        "computed_count":computed_count,
+        "cache_invalidated":cache_invalidated,
+        "cache_persisted":persisted,
         "features":generated,
         "similarity_type":"cosine_similarity_not_probability",
         "identities_confirmed":false,
@@ -1837,6 +1912,31 @@ mod tests {
                 assert_eq!(vec.len(), 256);
                 let norm = vec.iter().map(|x| x.as_f64().unwrap().powi(2)).sum::<f64>();
                 assert!((norm - 1.0).abs() < 0.00001);
+                assert_eq!(output["cache_hits"], 0);
+                assert_eq!(output["computed_count"], 1);
+                assert_eq!(output["cache_persisted"], true);
+                let again = embeddings(
+                    State(shared.clone()),
+                    HeaderMap::new(),
+                    Json(EmbeddingRequest {
+                        project_id: id.into(),
+                        video: video.into(),
+                        replay_id: replay.into(),
+                        track_ids: vec![7],
+                        expected_source_sha256: source_sha.clone(),
+                    }),
+                )
+                .await
+                .unwrap()
+                .0;
+                assert_eq!(again["cache_hits"], 1);
+                assert_eq!(again["computed_count"], 0);
+                assert_eq!(again["cache_persisted"], false);
+                assert_eq!(
+                    again["features"][0]["vector"],
+                    output["features"][0]["vector"]
+                );
+                assert_eq!(again["model_fingerprint"], output["model_fingerprint"]);
                 // A stale model-to-replay reference must be refused before
                 // decoding or invoking the installed inference library.
                 assert!(embeddings(

@@ -11,7 +11,7 @@ pipeline is **project → prepared video → immutable VballNet/RAVEL GPU eviden
 versioned CPU player tracks/Touch/rallies → reviewed players → original-quality montage**.
 FFmpeg, ONNX Runtime and CUDA are native external runtimes, not Python components.
 
-**Rust-миграция: 61/85; следующий 62/85 (плановый объём).**
+**Rust-миграция: 62/85; следующий 63/85 (плановый объём).**
 [Stage map](docs/RUST_ROADMAP.md) ·
 [Migration journal](docs/RUST_MIGRATION.md) ·
 [Architecture and owners](docs/RUST_ARCHITECTURE.md).

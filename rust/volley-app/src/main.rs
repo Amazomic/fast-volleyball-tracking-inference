@@ -15,6 +15,7 @@ mod montage;
 mod native_player_tracks;
 mod native_rally_marks;
 mod native_rally_preview;
+mod native_reid_cache;
 mod playback;
 mod player_catalog;
 mod player_continuity;

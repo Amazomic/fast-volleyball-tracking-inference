@@ -1,8 +1,8 @@
 {
     "schema":  "volley-rust-stage-roadmap/1",
     "plannedTotal":  85,
-    "lastRecorded":  61,
-    "nextStage":  62,
+    "lastRecorded":  62,
+    "nextStage":  63,
     "estimateNote":  "85 — текущий ориентир планирования, не обещание неизменного объема; этап != готовая подсистема. При пересмотре плана обновлять JSON, Markdown и журнал в одном коммите.",
     "stages":  [
                    {
@@ -497,8 +497,9 @@
                        "number":  62,
                        "title":  "Версионирование модели embeddings и инвалидирование кеша",
                        "area":  "ReID",
-                       "status":  "planned",
-                       "acceptance":  "Model versions cannot be compared across spaces; cache verified"
+                       "status":  "recorded",
+                       "acceptance":  "Model versions cannot be compared across spaces; cache verified",
+                       "journalSection":  62
                    },
                    {
                        "number":  63,
