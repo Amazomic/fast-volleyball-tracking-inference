@@ -4,6 +4,7 @@
 //! Legacy frame rates and SHA hashes must never be fabricated.
 
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
 
 /// Byte count and modification timestamp of an independently validated file.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Serialize, Deserialize)]
@@ -262,6 +263,71 @@ impl ScopedTrackId {
     }
 }
 
+/// Shared identity-review membership contract. Both source readers may
+/// produce this set, but may never mix IDs from two versions or source kinds.
+/// Raw file formats, enrichment and evidence SHA checks remain in adapters.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct VerifiedTrackSet {
+    source: EvidenceSource,
+    ids: BTreeSet<u64>,
+}
+impl VerifiedTrackSet {
+    pub fn new(source: EvidenceSource, ids: impl IntoIterator<Item = u64>) -> Result<Self, String> {
+        let source = source.checked()?;
+        let mut accepted = BTreeSet::new();
+        for id in ids {
+            if matches!(source, EvidenceSource::NativeGpuCpuReplay { .. }) && id == 0 {
+                return Err("Native tracking ID zero is invalid".into());
+            }
+            if !accepted.insert(id) {
+                return Err("Duplicate Track ID in one verified source".into());
+            }
+            if accepted.len() > 20_000 {
+                return Err("Too many Track IDs in one review source".into());
+            }
+        }
+        Ok(Self {
+            source,
+            ids: accepted,
+        })
+    }
+
+    pub fn source(&self) -> &EvidenceSource {
+        &self.source
+    }
+
+    pub fn len(&self) -> usize {
+        self.ids.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.ids.is_empty()
+    }
+
+    pub fn ids(&self) -> &BTreeSet<u64> {
+        &self.ids
+    }
+
+    /// Only for numbers already obtained from a validated, source-specific
+    /// adapter. Cross-source callers MUST use contains_scoped instead.
+    pub fn contains_number(&self, track_id: u64) -> bool {
+        self.ids.contains(&track_id)
+    }
+
+    pub fn contains_scoped(&self, track: &ScopedTrackId) -> Result<bool, String> {
+        let checked = track.clone().checked()?;
+        self.source.ensure_same_scope(&checked.source)?;
+        Ok(self.ids.contains(&checked.track_id))
+    }
+
+    pub fn scoped(&self, track_id: u64) -> Result<ScopedTrackId, String> {
+        if !self.ids.contains(&track_id) {
+            return Err("Track ID is absent from verified source".into());
+        }
+        self.source.clone().track(track_id)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -296,6 +362,53 @@ mod tests {
         )
         .unwrap()
     }
+    #[test]
+    fn source_scoped_index_has_one_membership_contract_for_both_adapters() {
+        let legacy_index = VerifiedTrackSet::new(legacy(), [5, 7, 9]).unwrap();
+        let native_index = VerifiedTrackSet::new(native(), [5, 7, 9]).unwrap();
+        assert_eq!(legacy_index.len(), 3);
+        assert_eq!(legacy_index.ids(), native_index.ids());
+        assert_eq!(legacy_index.scoped(7).unwrap().track_id, 7);
+        assert!(legacy_index
+            .contains_scoped(&legacy_index.scoped(7).unwrap())
+            .unwrap());
+        assert!(native_index
+            .contains_scoped(&native_index.scoped(7).unwrap())
+            .unwrap());
+        // Equal raw numeric Track IDs never authorize a cross-run join.
+        assert!(native_index
+            .contains_scoped(&legacy_index.scoped(7).unwrap())
+            .is_err());
+        assert!(legacy_index
+            .contains_scoped(&native_index.scoped(7).unwrap())
+            .is_err());
+        assert!(legacy_index.scoped(18).is_err());
+        assert!(!native_index.contains_number(18));
+    }
+    #[test]
+    fn source_scoped_index_rejects_duplicate_zero_and_oversized_native_input() {
+        assert!(VerifiedTrackSet::new(native(), [2, 2]).is_err());
+        assert!(VerifiedTrackSet::new(native(), [0]).is_err());
+        assert!(VerifiedTrackSet::new(native(), 1..=20_001).is_err());
+        let legacy_zero = VerifiedTrackSet::new(legacy(), [0, 4]).unwrap();
+        assert!(legacy_zero.contains_number(0));
+        let other = EvidenceSource::legacy(
+            "abcdef123456",
+            "Матч 1.mp4",
+            "run_20261108_141501",
+            &"a".repeat(32),
+            stamp(),
+            FrameRate::Unknown,
+        )
+        .unwrap();
+        assert!(legacy_zero
+            .contains_scoped(&other.track(4).unwrap())
+            .is_err());
+        assert!(VerifiedTrackSet::new(native(), std::iter::empty::<u64>())
+            .unwrap()
+            .is_empty());
+    }
+
     #[test]
     fn source_roundtrip_is_explicit_and_never_invents_legacy_fps_or_sha() {
         let first = legacy();

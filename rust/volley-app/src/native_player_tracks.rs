@@ -23,7 +23,7 @@ use std::{
     sync::Arc,
 };
 use volley_core::{
-    evidence_source::{EvidenceSource, FrameRate, SourceStamp},
+    evidence_source::{EvidenceSource, FrameRate, SourceStamp, VerifiedTrackSet},
     fusion::Candidate,
 };
 
@@ -87,6 +87,7 @@ struct Frame {
 }
 struct Inputs {
     evidence: EvidenceSource,
+    known: VerifiedTrackSet,
     project_id: String,
     video: String,
     replay_id: String,
@@ -261,6 +262,8 @@ fn source(
         },
     )
     .map_err(storage::bad_request)?;
+    let known = VerifiedTrackSet::new(evidence.clone(), tracks.keys().copied())
+        .map_err(storage::bad_request)?;
     let (catalog, _) = player_catalog::load(state, false)?;
     let allowed = project["player_ids"]
         .as_array()
@@ -284,6 +287,7 @@ fn source(
     }
     Ok(Inputs {
         evidence,
+        known,
         project_id: project_id.into(),
         video: video.into(),
         replay_id: replay_id.into(),
@@ -336,7 +340,7 @@ fn validated(raw: Option<&[u8]>, ctx: &Inputs) -> Result<Value, String> {
     let mut excluded_set = BTreeSet::new();
     for value in excluded {
         let id = value.as_u64().ok_or("Invalid excluded Track ID")?;
-        if !ctx.tracks.contains_key(&id) || !excluded_set.insert(id) {
+        if !ctx.known.contains_number(id) || !excluded_set.insert(id) {
             return Err("Unknown or duplicate excluded Track ID".into());
         }
     }
@@ -344,7 +348,7 @@ fn validated(raw: Option<&[u8]>, ctx: &Inputs) -> Result<Value, String> {
         let id = key
             .parse::<u64>()
             .map_err(|_| "Invalid assigned Track ID")?;
-        if id.to_string() != *key || !ctx.tracks.contains_key(&id) || excluded_set.contains(&id) {
+        if id.to_string() != *key || !ctx.known.contains_number(id) || excluded_set.contains(&id) {
             return Err("Stale, excluded or unknown assigned Track ID".into());
         }
         let owner = value.as_str().ok_or("Invalid player ID in Track link")?;
@@ -399,7 +403,7 @@ fn page(
         "source_kind":ctx.evidence.source_kind(),
         "evidence_source":ctx.evidence,
         "revision":version,"writable":ctx.can_write,
-        "total_tracks":ctx.tracks.len(),"offset":offset,"limit":limit,
+        "total_tracks":ctx.known.len(),"offset":offset,"limit":limit,
         "assigned_count":assignments.len(),"excluded_count":excluded.len(),
         "roster":roster,"tracks":rows,
         "athlete_links_require_manual_confirmation":true,
@@ -440,7 +444,11 @@ fn change(state: &AppState, req: &TrackEdit) -> Result<Value, ApiError> {
         return Err(storage::bad_request("Invalid assignment revision"));
     }
     let ctx = source(state, &req.project_id, &req.video, &req.replay_id)?;
-    if req.track_ids.iter().any(|id| !ctx.tracks.contains_key(id)) {
+    if req
+        .track_ids
+        .iter()
+        .any(|id| !ctx.known.contains_number(*id))
+    {
         return Err(storage::bad_request(
             "Selected Track ID not present in verified CPU replay",
         ));
@@ -736,8 +744,10 @@ mod tests {
             },
         )
         .unwrap();
+        let known = VerifiedTrackSet::new(evidence.clone(), tracks.keys().copied()).unwrap();
         Inputs {
             evidence,
+            known,
             project_id: "123456abcdef".into(),
             video: "match.mp4".into(),
             replay_id: "0123456789abcdef0123456789abcdef".into(),

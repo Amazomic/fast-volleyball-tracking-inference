@@ -20,7 +20,7 @@ use std::{
     sync::{Arc, Mutex, OnceLock},
     time::{SystemTime, UNIX_EPOCH},
 };
-use volley_core::evidence_source::{EvidenceSource, FrameRate, SourceStamp};
+use volley_core::evidence_source::{EvidenceSource, FrameRate, SourceStamp, VerifiedTrackSet};
 
 const MAX_IDENTITIES_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_IDS_PER_ACTION: usize = 200;
@@ -65,7 +65,7 @@ struct Context {
     video: String,
     base_cache_id: String,
     storage_key: String,
-    known: BTreeSet<String>,
+    known: VerifiedTrackSet,
     roster: BTreeMap<String, String>,
 }
 
@@ -203,7 +203,7 @@ fn validate_context(state: &AppState, req: &IdentityRequest) -> Result<Context, 
         selected
     };
     let player_file = base.join("players.json");
-    let known = known_tracks(&player_file)?;
+    let known_ids = known_tracks(&player_file)?;
     let (bytes, mtime_ns) =
         crate::inference_stream::source_stamp(&player_file).map_err(storage::bad_request)?;
     let evidence = EvidenceSource::legacy(
@@ -219,6 +219,15 @@ fn validate_context(state: &AppState, req: &IdentityRequest) -> Result<Context, 
         FrameRate::Unknown,
     )
     .map_err(storage::bad_request)?;
+    let numeric_ids = known_ids
+        .iter()
+        .map(|id| {
+            id.parse::<u64>()
+                .map_err(|_| storage::bad_request("Legacy tracking ID is not an integer"))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let known =
+        VerifiedTrackSet::new(evidence.clone(), numeric_ids).map_err(storage::bad_request)?;
     if known.len() > MAX_KNOWN_TRACKS {
         return Err(storage::bad_request("Too many Track IDs"));
     }
@@ -328,7 +337,11 @@ fn select_ids(req: &IdentityRequest, ctx: &Context) -> Result<Vec<String>, ApiEr
         let normalized = numeric_id(id)
             .ok_or_else(|| storage::bad_request("Invalid numeric Track ID"))?
             .to_string();
-        if !ctx.known.contains(&normalized) {
+        if !ctx.known.contains_number(
+            normalized
+                .parse::<u64>()
+                .map_err(|_| storage::bad_request("Invalid normalized Track ID"))?,
+        ) {
             return Err(storage::bad_request(format!(
                 "Track ID {normalized} does not belong to selected inference"
             )));
@@ -555,7 +568,12 @@ fn present(ctx: &Context, raw: &Value, revision: String) -> Result<Value, ApiErr
                 .flatten()
                 .filter_map(value_id)
             {
-                if !ctx.known.contains(&id) || excluded.contains(&id) {
+                if !id
+                    .parse::<u64>()
+                    .ok()
+                    .is_some_and(|n| ctx.known.contains_number(n))
+                    || excluded.contains(&id)
+                {
                     continue;
                 }
                 if let Some(old) = assigned.insert(id.clone(), owner.to_owned()) {
@@ -583,8 +601,10 @@ fn present(ctx: &Context, raw: &Value, revision: String) -> Result<Value, ApiErr
         "auto_rejected_track_ids":rejected,
         "known_track_count":ctx.known.len(),
         "assigned_count":assigned.len(),
-        "unassigned_count":ctx.known.iter().filter(|id|!assigned.contains_key(*id)
-            && !excluded.contains(*id)).count(),
+        "unassigned_count":ctx.known.ids().iter().filter(|id|{
+            let text=id.to_string();
+            !assigned.contains_key(&text) && !excluded.contains(&text)
+        }).count(),
         "conflicting_assignment_ids":conflicts,
         "roster":ctx.roster,
     }))
@@ -773,19 +793,20 @@ mod tests {
     use super::*;
 
     fn context() -> Context {
+        let evidence = EvidenceSource::legacy(
+            "1234abcdef01",
+            "match.mp4",
+            "run_20261107_123456",
+            &"a".repeat(32),
+            SourceStamp {
+                bytes: 100,
+                mtime_ns: 100,
+            },
+            FrameRate::Unknown,
+        )
+        .unwrap();
         Context {
-            evidence: EvidenceSource::legacy(
-                "1234abcdef01",
-                "match.mp4",
-                "run_20261107_123456",
-                &"a".repeat(32),
-                SourceStamp {
-                    bytes: 100,
-                    mtime_ns: 100,
-                },
-                FrameRate::Unknown,
-            )
-            .unwrap(),
+            evidence: evidence.clone(),
             player_file: PathBuf::new(),
             identity_path: PathBuf::new(),
             group_path: PathBuf::new(),
@@ -793,7 +814,7 @@ mod tests {
             video: "match.mp4".into(),
             base_cache_id: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into(),
             storage_key: "match.mp4::aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into(),
-            known: BTreeSet::from(["5".into(), "8".into()]),
+            known: VerifiedTrackSet::new(evidence, [5, 8]).unwrap(),
             roster: BTreeMap::from([
                 ("player-a".into(), "Player A".into()),
                 ("player-b".into(), "Player B".into()),

@@ -605,3 +605,10 @@ Remaining: compile a real browser Rust/WASM application after adding supported t
 - `docs/RUST_CANONICAL_OWNERS.json` теперь имеет **15** владельцев, включая единственный `evidence_source` в volley-core; два существующих identity-модуля указаны адаптерами. Unit tests проверяют round-trip, ограничения FPS/sha, source stamp, отсутствие смешивания двух идентичных Track ID и невалидную десериализацию; интеграционные тесты сохраняют исходную схему sidecar и проверяют source поля на реальном MP4.
 
 **Ограничения:** наличие типизированного происхождения не означает, что объединена логика ручных назначений или появилось настоящее ReID. Это задачи 55–65. Не подтверждено качество на реальных матчах, поэтому готовность продукта не равна 54/85.
+
+## 55. Два адаптера чтения Track ID для одного identity-сервиса — 2026-11-09
+
+**PARTIAL identity convergence; source adapters remain, no Python runtime invoked.**
+Added a single `volley_core::evidence_source::VerifiedTrackSet` as the canonical, typed source-scoped Track ID membership contract. Both the SHA-verified native CPU replay adapter (`rust/volley-app/src/native_player_tracks.rs`) and the existing legacy on-disk cache adapter (`rust/volley-app/src/player_identity.rs`) construct this set from independently validated evidence. The public API/sidecar formats and optimistic mutation rules are unchanged. The shared contract rejects duplicate IDs, more than 20,000 identities, native ID 0 and cross-run/cross-source scoped identities. No equality or athlete assignment is inferred from the same numeric Track ID in two snapshots.
+
+**Verification:** WSL `cargo fmt --all`, `cargo check --workspace --offline` and `cargo test --workspace --offline`: 149 tests passed, two hardware-dependent ONNX tests ignored. The next shared mutation-policy stage is still pending. No legacy media, saved project, model, or Python checkpoint was modified.
