@@ -994,6 +994,24 @@ mod tests {
             "Native {device:?} full GPU -> fusion -> tracks -> Touch -> rally proposals: {}",
             rally_run["rally_candidates"]
         );
+        let read_only_preview = crate::native_rally_preview::preview(
+            axum::extract::State(state.clone()),
+            axum::extract::Query(crate::native_rally_preview::PreviewQuery {
+                project_id: id.into(),
+                rally_run_id: rally_run["rally_run_id"].as_str().unwrap().into(),
+                offset: 0,
+                limit: 24,
+            }),
+        )
+        .await
+        .unwrap()
+        .0;
+        assert_eq!(read_only_preview["schema"], "volley-native-rally-preview/1");
+        assert_eq!(read_only_preview["total_candidates"], 0);
+        assert_eq!(read_only_preview["automatic_montage_eligible"], false);
+        assert_eq!(read_only_preview["authoritative_game_events"], false);
+        assert_eq!(read_only_preview["items"].as_array().unwrap().len(), 0);
+        println!("Native {device:?} CPU rally preview loaded and SHA-verified");
         assert_eq!(fs::metadata(&original).unwrap().len(), source_size);
         assert!(!repo.join("results").exists());
         fs::remove_dir_all(root).unwrap();

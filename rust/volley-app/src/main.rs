@@ -12,6 +12,7 @@ mod inference_fusion;
 mod inference_native;
 mod inference_stream;
 mod montage;
+mod native_rally_preview;
 mod playback;
 mod player_catalog;
 mod player_continuity;
@@ -111,6 +112,8 @@ async fn rewrite_status(
             "POST /api/cpu/native/touches (CPU-only motion-gated Touch candidates)",
             "POST /api/cpu/native/rallies (rebuild provisional rally candidates)",
             "GET /api/cpu/native/rallies (read isolated rally manifest)",
+            "GET /api/cpu/native/rallies/preview (verified paginated motion evidence and safe manual clips)",
+            "POST /api/montage/native/start-from-rally-candidates (explicit manual selection, original media)",
             "GET /api/cpu/native/touches (read isolated Touch snapshot manifest)",
             "GET /api/cpu/native/retrack (read isolated tracking manifest)",
             "POST /api/cpu/touch-preview (read-only RAVEL diagnostics)",
@@ -159,6 +162,10 @@ fn app(state: Arc<AppState>) -> Router {
         )
         .route("/api/montage/native/status", get(montage::native_status))
         .route("/api/montage/native/plan", post(rallies::preview_selection))
+        .route(
+            "/api/montage/native/start-from-rally-candidates",
+            post(native_rally_preview::start_manual_montage),
+        )
         .route("/api/rallies/native/marks", post(rally_marks::marks))
         .route(
             "/api/quick-reel/native/select",
@@ -215,6 +222,10 @@ fn app(state: Arc<AppState>) -> Router {
         .route(
             "/api/cpu/native/rallies",
             post(cpu_rallies::run).get(cpu_rallies::status),
+        )
+        .route(
+            "/api/cpu/native/rallies/preview",
+            get(native_rally_preview::preview),
         )
         .route("/api/cpu/touch-preview", post(touch_preview::touch_preview))
         .route(
