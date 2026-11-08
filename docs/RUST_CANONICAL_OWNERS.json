@@ -45,9 +45,10 @@
     },
     {
       "id": "identity",
-      "owner": "rust/volley-app/src/native_player_tracks.rs",
+      "owner": "rust/volley-core/src/identity_review.rs",
       "status": "partial",
       "adapters": [
+        "rust/volley-app/src/native_player_tracks.rs",
         "rust/volley-app/src/player_identity.rs"
       ],
       "stores": [

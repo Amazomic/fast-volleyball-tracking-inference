@@ -25,6 +25,7 @@ use std::{
 use volley_core::{
     evidence_source::{EvidenceSource, FrameRate, SourceStamp, VerifiedTrackSet},
     fusion::Candidate,
+    identity_review::{ManualReviewState, ReviewAction, ReviewErrorKind},
 };
 
 const MAX_TRACKS: usize = 20_000;
@@ -475,51 +476,55 @@ fn change(state: &AppState, req: &TrackEdit) -> Result<Value, ApiError> {
         ));
     }
     let mut doc = validated(before.as_deref(), &ctx).map_err(storage::bad_request)?;
-    let mut assignments = doc["assignments"]
+    // This adapter validates JSON and applies the one human-review policy.
+    let assignments = doc["assignments"]
         .as_object()
-        .cloned()
-        .ok_or_else(|| storage::bad_request("Missing assignment object"))?;
-    let mut excluded = doc["excluded_ids"]
+        .ok_or_else(|| storage::bad_request("Missing assignment object"))?
+        .iter()
+        .map(|(key, value)| {
+            Ok((
+                key.parse::<u64>()
+                    .map_err(|_| storage::bad_request("Invalid saved Track ID"))?,
+                value
+                    .as_str()
+                    .ok_or_else(|| storage::bad_request("Invalid saved athlete ID"))?
+                    .to_owned(),
+            ))
+        })
+        .collect::<Result<BTreeMap<_, _>, ApiError>>()?;
+    let excluded = doc["excluded_ids"]
         .as_array()
         .ok_or_else(|| storage::bad_request("Missing excluded list"))?
         .iter()
-        .filter_map(Value::as_u64)
-        .collect::<BTreeSet<_>>();
-    for id in &req.track_ids {
-        let key = id.to_string();
-        match req.action.as_str() {
-            "assign" => {
-                if excluded.contains(id) {
-                    return Err(storage::conflict(
-                        "Restore an excluded Track ID before assignment",
-                    ));
-                }
-                if assignments
-                    .get(&key)
-                    .and_then(Value::as_str)
-                    .is_some_and(|owner| Some(owner) != req.player_id.as_deref())
-                {
-                    return Err(storage::conflict(
-                        "Track ID already belongs to another player; unassign it first",
-                    ));
-                }
-                assignments.insert(key, json!(req.player_id));
-            }
-            "unassign" => {
-                assignments.remove(&key);
-            }
-            "exclude" => {
-                assignments.remove(&key);
-                excluded.insert(*id);
-            }
-            "restore" => {
-                excluded.remove(id);
-            }
-            _ => unreachable!(),
-        }
-    }
-    doc["assignments"] = json!(assignments);
-    doc["excluded_ids"] = json!(excluded);
+        .map(|v| {
+            v.as_u64()
+                .ok_or_else(|| storage::bad_request("Invalid excluded ID"))
+        })
+        .collect::<Result<BTreeSet<_>, _>>()?;
+    let mut review = ManualReviewState {
+        assignments,
+        excluded,
+        rejected: BTreeSet::new(),
+    };
+    review
+        .apply(
+            &ctx.known,
+            &ctx.roster,
+            ReviewAction::parse(&req.action).map_err(|e| storage::bad_request(e.message))?,
+            &req.track_ids,
+            req.player_id.as_deref(),
+            false,
+        )
+        .map_err(|e| match e.kind {
+            ReviewErrorKind::Invalid => storage::bad_request(e.message),
+            ReviewErrorKind::Conflict => storage::conflict(e.message),
+        })?;
+    doc["assignments"] = json!(review
+        .assignments
+        .iter()
+        .map(|(id, player)| (id.to_string(), player.clone()))
+        .collect::<BTreeMap<_, _>>());
+    doc["excluded_ids"] = json!(review.excluded);
     if before.is_none()
         || doc != validated(before.as_deref(), &ctx).map_err(storage::bad_request)?
     {

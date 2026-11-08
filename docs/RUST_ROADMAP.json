@@ -1,8 +1,8 @@
 {
     "schema":  "volley-rust-stage-roadmap/1",
     "plannedTotal":  85,
-    "lastRecorded":  56,
-    "nextStage":  57,
+    "lastRecorded":  57,
+    "nextStage":  58,
     "estimateNote":  "85 — текущий ориентир планирования, не обещание неизменного объема; этап != готовая подсистема. При пересмотре плана обновлять JSON, Markdown и журнал в одном коммите.",
     "stages":  [
                    {
@@ -457,7 +457,8 @@
                        "number":  57,
                        "title":  "Перевод старых и нативных API на общий identity-сервис",
                        "area":  "Игроки",
-                       "status":  "planned",
+                       "status":  "recorded",
+                       "journalSection":  57,
                        "acceptance":  "Both route contracts persist existing JSON and pass old-project test fixtures"
                    },
                    {

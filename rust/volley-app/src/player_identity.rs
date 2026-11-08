@@ -21,6 +21,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 use volley_core::evidence_source::{EvidenceSource, FrameRate, SourceStamp, VerifiedTrackSet};
+use volley_core::identity_review::{ManualReviewState, ReviewAction, ReviewErrorKind};
 
 const MAX_IDENTITIES_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_IDS_PER_ACTION: usize = 200;
@@ -420,19 +421,6 @@ fn remove_ids(groups: &mut Vec<Value>, ids: &BTreeSet<String>) {
     groups.retain(|g| g["track_ids"].as_array().is_some_and(|arr| !arr.is_empty()));
 }
 
-fn assigned_to(groups: &[Value], id: &str) -> HashSet<String> {
-    groups
-        .iter()
-        .filter_map(|group| {
-            let has = group["track_ids"]
-                .as_array()
-                .is_some_and(|arr| arr.iter().any(|item| value_id(item).as_deref() == Some(id)));
-            has.then(|| group["id"].as_str().map(str::to_owned))
-                .flatten()
-        })
-        .collect()
-}
-
 fn apply(
     raw: &mut Value,
     req: &IdentityRequest,
@@ -441,53 +429,71 @@ fn apply(
 ) -> Result<(), ApiError> {
     let key = &ctx.storage_key;
     let chosen = ids.iter().cloned().collect::<BTreeSet<_>>();
-    let mut excluded = set_of(raw, "excluded_ids", key)?;
-    let mut auto_rejected = set_of(raw, "auto_rejected", key)?;
-    let target = match req.action.as_str() {
-        "assign" => {
-            let pid = req
-                .player_id
-                .as_deref()
-                .ok_or_else(|| storage::bad_request("Choose an existing project player"))?;
-            if !ctx.roster.contains_key(pid) {
-                return Err(storage::bad_request(
-                    "Player is not in the selected project's roster",
-                ));
+    let groups = raw["videos"][key].as_array().cloned().unwrap_or_default();
+    let mut assigned = BTreeMap::<u64, String>::new();
+    for group in &groups {
+        let owner = group["id"]
+            .as_str()
+            .ok_or_else(|| storage::bad_request("Invalid saved athlete group"))?;
+        for record in group["track_ids"].as_array().into_iter().flatten() {
+            let id =
+                value_id(record).ok_or_else(|| storage::bad_request("Invalid saved Track ID"))?;
+            let number = id
+                .parse::<u64>()
+                .map_err(|_| storage::bad_request("Invalid saved Track ID"))?;
+            if let Some(previous) = assigned.insert(number, owner.to_owned()) {
+                if previous != owner && chosen.contains(&id) {
+                    return Err(storage::conflict(
+                        "Selected Track ID has conflicting saved owners",
+                    ));
+                }
             }
-            if chosen.iter().any(|id| excluded.contains(id)) {
-                return Err(storage::conflict(
-                    "Excluded Track IDs must be restored explicitly before assigning",
-                ));
-            }
-            Some(pid.to_owned())
         }
-        "exclude" | "restore" | "unassign" => {
-            if req.action == "restore" && chosen.iter().any(|id| !excluded.contains(id)) {
-                return Err(storage::conflict(
-                    "Only explicitly excluded Track IDs can be restored",
-                ));
-            }
-            None
-        }
-        _ => return Err(storage::bad_request("Unsupported manual identity action")),
+    }
+    let excluded = set_of(raw, "excluded_ids", key)?;
+    let rejected = set_of(raw, "auto_rejected", key)?;
+    let numbers = |set: BTreeSet<String>| -> Result<BTreeSet<u64>, ApiError> {
+        set.iter()
+            .map(|id| {
+                id.parse::<u64>()
+                    .map_err(|_| storage::bad_request("Invalid saved numeric Track ID"))
+            })
+            .collect()
     };
-    {
+    let mut state = ManualReviewState {
+        assignments: assigned,
+        excluded: numbers(excluded)?,
+        rejected: numbers(rejected)?,
+    };
+    let selected = ids
+        .iter()
+        .map(|id| {
+            id.parse::<u64>()
+                .map_err(|_| storage::bad_request("Invalid selected numeric Track ID"))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let action = ReviewAction::parse(&req.action).map_err(|e| storage::bad_request(e.message))?;
+    state
+        .apply(
+            &ctx.known,
+            &ctx.roster,
+            action,
+            &selected,
+            req.player_id.as_deref(),
+            req.allow_reassign,
+        )
+        .map_err(|e| match e.kind {
+            ReviewErrorKind::Invalid => storage::bad_request(e.message),
+            ReviewErrorKind::Conflict => storage::conflict(e.message),
+        })?;
+
+    // The legacy JSON layout is an adapter, not an alternate policy.
+    // Preserve unrelated source scopes, group metadata and manual flags.
+    if action != ReviewAction::Restore {
         let groups = groups_mut(raw, key)?;
-        if let Some(ref new_owner) = target {
-            for id in ids {
-                let previous = assigned_to(groups, id);
-                if previous.len() > 1 {
-                    return Err(storage::conflict(
-                        "Conflicting existing owners; resolve this ID manually",
-                    ));
-                }
-                if previous.iter().any(|owner| owner != new_owner) && !req.allow_reassign {
-                    return Err(storage::conflict(
-                        "Track ID already belongs to another player; explicit allow_reassign is required",
-                    ));
-                }
-            }
-            remove_ids(groups, &chosen);
+        remove_ids(groups, &chosen);
+        if action == ReviewAction::Assign {
+            let new_owner = req.player_id.as_deref().expect("owner validated by core");
             let name = ctx.roster.get(new_owner).expect("project roster verified");
             let index = groups
                 .iter()
@@ -517,40 +523,23 @@ fn apply(
             for id in ids {
                 meta.insert(id.clone(), json!({"source":"manual","reviewed":true}));
             }
-            for id in ids {
-                auto_rejected.remove(id);
-            }
-        } else {
-            // A restore changes the exclusion list only. Do NOT detach any
-            // unrelated owner or clear rejection preferences by accident.
-            if req.action != "restore" {
-                remove_ids(groups, &chosen);
-            }
-            match req.action.as_str() {
-                "exclude" => {
-                    excluded.extend(chosen.iter().cloned());
-                    auto_rejected.extend(chosen.iter().cloned());
-                }
-                "unassign" => {
-                    auto_rejected.extend(chosen.iter().cloned());
-                }
-                "restore" => {
-                    for id in ids {
-                        excluded.remove(id);
-                    }
-                    // Keep auto_rejected: restoring visibility never silently
-                    // re-enables automatic identity proposals.
-                }
-                _ => {}
-            }
         }
     }
+    let excluded = state
+        .excluded
+        .iter()
+        .map(u64::to_string)
+        .collect::<BTreeSet<_>>();
+    let rejected = state
+        .rejected
+        .iter()
+        .map(u64::to_string)
+        .collect::<BTreeSet<_>>();
     put_set(raw, "excluded_ids", key, &excluded)?;
-    put_set(raw, "auto_rejected", key, &auto_rejected)?;
+    put_set(raw, "auto_rejected", key, &rejected)?;
     raw["schema"] = json!(2);
     Ok(())
 }
-
 fn present(ctx: &Context, raw: &Value, revision: String) -> Result<Value, ApiError> {
     let groups = raw["videos"][&ctx.storage_key]
         .as_array()
@@ -942,6 +931,29 @@ mod tests {
             &["5".into()]
         )
         .is_err());
+    }
+    #[test]
+    fn legacy_sidecar_preserves_unrelated_historical_tracks_and_metadata() {
+        let ctx = context();
+        let mut data = parse_document(None).unwrap();
+        data["videos"][&ctx.storage_key] = json!([{
+            "id":"player-a","name":"Player A","track_ids":["999"],
+            "link_meta":{"999":{"source":"manual","reviewed":true}}
+        }]);
+        data["auto_rejected"][&ctx.storage_key] = json!(["999"]);
+        apply(
+            &mut data,
+            &request("assign", Some("player-b"), false),
+            &ctx,
+            &["5".into()],
+        )
+        .unwrap();
+        let groups = data["videos"][&ctx.storage_key].as_array().unwrap();
+        assert_eq!(groups.len(), 2);
+        assert_eq!(groups[0]["track_ids"], json!(["999"]));
+        assert_eq!(groups[0]["link_meta"]["999"]["reviewed"], true);
+        assert_eq!(groups[1]["track_ids"], json!(["5"]));
+        assert_eq!(data["auto_rejected"][&ctx.storage_key], json!(["999"]));
     }
     #[test]
     fn revision_is_stable_for_unchanged_input_and_distinguishes_absence() {

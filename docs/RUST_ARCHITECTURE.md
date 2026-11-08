@@ -1,3 +1,6 @@
+> Manual Track ID mutation policy owner: rust/volley-core/src/identity_review.rs.
+> Native and historical-cache HTTP handlers are only evidence-bound JSON adapters.
+> No separate rules for assign, unassign, exclude, restore are permitted.
 > 2026-11-09: This branch has a Rust-only executable and no Python application source. The old code is in the frozen Git checkpoint; legacy on-disk evidence remains a read-only compatibility format. Product completion is not implied.
 
 # Rust migration — canonical architecture and anti-duplication contract
