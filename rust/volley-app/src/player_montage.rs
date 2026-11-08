@@ -3,7 +3,7 @@
 //! A candidate ReID similarity never automatically becomes a real player.
 
 use crate::{
-    player_statistics, projects, rallies, reid_native,
+    player_statistics, projects, rallies,
     storage::{self, ApiError},
     AppState,
 };
@@ -30,39 +30,6 @@ fn matches_range(event: &Action, scene: &rallies::Scene) -> bool {
             && scene.rally.start_evidence == "detected_serve"
             && scene.rally.serve_frame == Some(frame)
             && frame < start)
-}
-
-fn verified_group_source(
-    state: &AppState,
-    project_id: &str,
-    video: &str,
-    base: &str,
-    source: &Path,
-) -> Result<(Value, String), ApiError> {
-    let group_path = projects::project_root(state)
-        .join(project_id)
-        .join("player_identity_groups")
-        .join(format!("{}.json", reid_native::path_key(video, base)));
-    let (group, revision) = player_statistics::read_document(&group_path, METADATA_LIMIT, false)?;
-    if group.is_null() {
-        return Ok((group, revision));
-    }
-    let stamp = fs::metadata(source)
-        .map_err(|_| storage::bad_request("Saved GPU player source missing"))?;
-    let time_ns = stamp
-        .modified()
-        .ok()
-        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-        .map(|t| t.as_nanos());
-    if group["schema"].as_u64() != Some(1)
-        || group["stamp"]["size"].as_u64() != Some(stamp.len())
-        || group["stamp"]["mtime_ns"].as_u64().map(u128::from) != time_ns
-    {
-        return Err(storage::conflict(
-            "ReID-группы устарели, нельзя использовать их для монтажа игрока",
-        ));
-    }
-    Ok((group, revision))
 }
 
 fn action_count_for_strategy(counts: &BTreeMap<String, u64>, strategy: &str, total: u64) -> u64 {
@@ -117,15 +84,13 @@ pub(crate) fn annotate_rallies(
         .map_err(|_| storage::bad_request("Отсутствуют исходные обнаружения игроков"))?;
     let gpu_stamp = (gpu_before.len(), gpu_before.modified().ok());
     let known = player_statistics::known_tracks(&player_source)?;
-    let (groups, group_revision) =
-        verified_group_source(state, project_id, video, base, &player_source)?;
     let identity_file = projects::project_root(state)
         .join(project_id)
         .join("player_identities.json");
     let (identity, identity_revision) =
         player_statistics::read_document(&identity_file, METADATA_LIMIT, false)?;
     let (owners, excluded, conflicts, _) =
-        player_statistics::known_owners(&identity, &groups, video, base, &roster, &known);
+        player_statistics::known_owners(&identity, video, base, &roster, &known);
     if conflicts != 0 {
         // Don't produce a flattering player reel from an ambiguous identity
         // registry. Ask for manual repair rather than dropping conflicts.
@@ -260,12 +225,6 @@ pub(crate) fn annotate_rallies(
     if roster_after != roster_before {
         return Err(storage::conflict(
             "Состав игроков изменился при планировании монтажа",
-        ));
-    }
-    let (_, groups_after) = verified_group_source(state, project_id, video, base, &player_source)?;
-    if groups_after != group_revision {
-        return Err(storage::conflict(
-            "Ручные ReID-группы изменились при выборе розыгрышей",
         ));
     }
     let replay_after = fs::metadata(&replay_path)

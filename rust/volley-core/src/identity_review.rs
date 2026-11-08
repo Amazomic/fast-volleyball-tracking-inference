@@ -165,6 +165,51 @@ impl ManualReviewState {
     }
 }
 
+/// Only an explicit human-reviewed link is authoritative for player statistics
+/// and personalized highlights. ReID groups are visual *suggestions* and can
+/// never create inherited athlete ownership.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ReviewedLink {
+    pub track_id: u64,
+    pub owner: String,
+    pub reviewed: bool,
+}
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct ConfirmedIdentityView {
+    pub owners: BTreeMap<u64, String>,
+    pub excluded: BTreeSet<u64>,
+    pub conflicts: BTreeSet<u64>,
+}
+pub fn resolve_reviewed(
+    known: &BTreeSet<u64>,
+    roster: &BTreeMap<String, String>,
+    links: &[ReviewedLink],
+    excluded: &BTreeSet<u64>,
+) -> ConfirmedIdentityView {
+    let mut view = ConfirmedIdentityView {
+        owners: BTreeMap::new(),
+        excluded: excluded.intersection(known).copied().collect(),
+        conflicts: BTreeSet::new(),
+    };
+    for link in links {
+        if !link.reviewed
+            || !known.contains(&link.track_id)
+            || view.excluded.contains(&link.track_id)
+            || !roster.contains_key(&link.owner)
+        {
+            continue;
+        }
+        if let Some(old) = view.owners.insert(link.track_id, link.owner.clone()) {
+            if old != link.owner {
+                view.conflicts.insert(link.track_id);
+            }
+        }
+    }
+    for id in &view.conflicts {
+        view.owners.remove(id);
+    }
+    view
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -205,6 +250,46 @@ mod tests {
             ("athlete1".to_owned(), "A".to_owned()),
             ("athlete2".to_owned(), "B".to_owned()),
         ])
+    }
+    #[test]
+    fn only_explicit_reviewed_links_ever_reach_player_statistics() {
+        let known = BTreeSet::from([5_u64, 8, 13]);
+        let roster = roster();
+        let links = vec![
+            ReviewedLink {
+                track_id: 5,
+                owner: "athlete1".into(),
+                reviewed: true,
+            },
+            ReviewedLink {
+                track_id: 8,
+                owner: "athlete2".into(),
+                reviewed: false,
+            },
+            ReviewedLink {
+                track_id: 13,
+                owner: "removed".into(),
+                reviewed: true,
+            },
+            ReviewedLink {
+                track_id: 100,
+                owner: "athlete1".into(),
+                reviewed: true,
+            },
+        ];
+        let snapshot = resolve_reviewed(&known, &roster, &links, &BTreeSet::new());
+        assert_eq!(snapshot.owners, BTreeMap::from([(5, "athlete1".into())]));
+        assert!(snapshot.conflicts.is_empty());
+        let mut conflicting = links.clone();
+        conflicting.push(ReviewedLink {
+            track_id: 5,
+            owner: "athlete2".into(),
+            reviewed: true,
+        });
+        let snapshot = resolve_reviewed(&known, &roster, &conflicting, &BTreeSet::from([8]));
+        assert!(!snapshot.owners.contains_key(&5));
+        assert_eq!(snapshot.conflicts, BTreeSet::from([5]));
+        assert_eq!(snapshot.excluded, BTreeSet::from([8]));
     }
     #[test]
     fn both_evidence_formats_use_one_manual_policy() {

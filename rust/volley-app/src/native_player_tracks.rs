@@ -25,7 +25,7 @@ use std::{
 use volley_core::{
     evidence_source::{EvidenceSource, FrameRate, SourceStamp, VerifiedTrackSet},
     fusion::Candidate,
-    identity_review::{ManualReviewState, ReviewAction, ReviewErrorKind},
+    identity_review::{self, ManualReviewState, ReviewAction, ReviewErrorKind, ReviewedLink},
 };
 
 const MAX_TRACKS: usize = 20_000;
@@ -378,9 +378,24 @@ fn page(
         .iter()
         .filter_map(Value::as_u64)
         .collect::<BTreeSet<_>>();
+    let reviewed_links = assignments
+        .iter()
+        .map(|(id, owner)| {
+            Ok(ReviewedLink {
+                track_id: id.parse::<u64>().map_err(|_| "Invalid reviewed ID")?,
+                owner: owner
+                    .as_str()
+                    .ok_or("Invalid reviewed player ID")?
+                    .to_owned(),
+                reviewed: true,
+            })
+        })
+        .collect::<Result<Vec<_>, &str>>()?;
+    let reviewed =
+        identity_review::resolve_reviewed(ctx.known.ids(), &ctx.roster, &reviewed_links, &excluded);
     let mut rows = Vec::new();
     for (id, info) in ctx.tracks.iter().skip(offset).take(limit) {
-        let owner = assignments.get(&id.to_string()).and_then(Value::as_str);
+        let owner = reviewed.owners.get(id).map(String::as_str);
         rows.push(json!({
             "track_id":id,"first_frame":info.first,"last_frame":info.last,
             "observations":info.observed,"best_frame":info.best_frame,
@@ -1026,6 +1041,12 @@ mod tests {
         doc["assignments"]["7"] = json!("abcdef012345");
         assert_eq!(
             validated(Some(&serde_json::to_vec(&doc).unwrap()), &ctx).unwrap()["assignments"]["7"],
+            "abcdef012345"
+        );
+        let trusted_page = page(&ctx, &doc, "revision", 0, 40).unwrap();
+        assert_eq!(trusted_page["assigned_count"], 1);
+        assert_eq!(
+            trusted_page["tracks"][0]["assigned_player_id"],
             "abcdef012345"
         );
         let mut wrong = doc.clone();

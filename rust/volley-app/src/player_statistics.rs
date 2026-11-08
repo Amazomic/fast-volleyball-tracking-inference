@@ -13,7 +13,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{
-    collections::{BTreeMap, HashMap, HashSet},
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     fs::{self, File, OpenOptions},
     io::Read,
     path::{Path, PathBuf},
@@ -21,11 +21,12 @@ use std::{
     time::UNIX_EPOCH,
 };
 use volley_core::{
+    identity_review::{self, ReviewedLink},
     rallies::{self as rally_core, Event as RallyEvent, RebuildOptions, Track as RallyTrack},
     statistics::{self, Action, Player, PlayerTotals, Stats},
 };
 
-const STATS_ALGORITHM: &str = "volley-native-player-statistics-v1-rally-filter-dedup";
+const STATS_ALGORITHM: &str = "volley-native-player-statistics-v2-reviewed-links-only";
 const MAX_EVENTS: u64 = 160 * 1024 * 1024;
 const MAX_TRACKS: u64 = 128 * 1024 * 1024;
 const MAX_IDS: u64 = 16 * 1024 * 1024;
@@ -164,97 +165,62 @@ pub(crate) fn roster(
     }
     Ok(players)
 }
+/// The statistics and montage callers share the SAME reviewed-only snapshot.
+/// Visual ReID candidate groups are not identity assertions and cannot
+/// propagate a verified athlete to otherwise unassigned Track IDs.
 pub(crate) fn known_owners(
     identity: &Value,
-    groups: &Value,
     video: &str,
     base: &str,
     roster: &BTreeMap<String, String>,
     known: &HashMap<String, (i64, i64)>,
 ) -> (HashMap<String, String>, HashSet<String>, usize, usize) {
     let key = format!("{video}::{base}");
-    let mut excluded = HashSet::new();
-    for v in identity["excluded_ids"][&key]
+    let known_ids = known
+        .keys()
+        .filter_map(|id| id.parse::<u64>().ok())
+        .collect::<BTreeSet<_>>();
+    let excluded = identity["excluded_ids"][&key]
         .as_array()
         .into_iter()
         .flatten()
-    {
-        if let Some(id) = tid(v) {
-            excluded.insert(id);
-        }
-    }
-    let mut owners = HashMap::new();
-    let mut conflicted = HashSet::new();
+        .filter_map(tid)
+        .filter_map(|id| id.parse::<u64>().ok())
+        .collect::<BTreeSet<_>>();
+    let mut links = Vec::new();
     for group in identity["videos"][&key].as_array().into_iter().flatten() {
         let Some(owner) = group["id"].as_str() else {
             continue;
         };
-        if !roster.contains_key(owner) {
-            continue;
-        }
-        for value in group["track_ids"].as_array().into_iter().flatten() {
-            let Some(track) = tid(value) else {
+        for entry in group["track_ids"].as_array().into_iter().flatten() {
+            let Some(track_id) = tid(entry).and_then(|id| id.parse::<u64>().ok()) else {
                 continue;
             };
-            if excluded.contains(&track) || !known.contains_key(&track) {
-                continue;
-            }
-            let reviewed = group["link_meta"][&track]["reviewed"]
+            let reviewed = group["link_meta"][track_id.to_string()]["reviewed"]
                 .as_bool()
                 .unwrap_or(true);
-            if !reviewed {
-                continue;
-            }
-            if owners
-                .insert(track.clone(), owner.to_owned())
-                .is_some_and(|old| old != owner)
-            {
-                conflicted.insert(track);
-            }
+            links.push(ReviewedLink {
+                track_id,
+                owner: owner.to_owned(),
+                reviewed,
+            });
         }
     }
-    for track in &conflicted {
-        owners.remove(track);
-    }
-    let mut inherited = 0_usize;
-    for group in groups["groups"].as_array().into_iter().flatten() {
-        if group["source"].as_str() != Some("manual") {
-            continue;
-        }
-        let ids = group["track_ids"]
-            .as_array()
+    let resolved = identity_review::resolve_reviewed(&known_ids, roster, &links, &excluded);
+    (
+        resolved
+            .owners
             .into_iter()
-            .flatten()
-            .filter_map(tid)
-            .filter(|t| known.contains_key(t) && !excluded.contains(t) && !conflicted.contains(t))
-            .collect::<Vec<_>>();
-        // Imported manual group catalogues may predate overlap guards.
-        // Never credit an athlete from a group with co-visible Track IDs.
-        let overlaps = ids.iter().enumerate().any(|(i, id)| {
-            let (from, to) = known[id];
-            ids.iter().skip(i + 1).any(|other| {
-                let (b_from, b_to) = known[other];
-                from <= b_to && b_from <= to
-            })
-        });
-        if overlaps {
-            continue;
-        }
-        let candidates = ids
-            .iter()
-            .filter_map(|id| owners.get(id))
-            .collect::<HashSet<_>>();
-        if candidates.len() != 1 {
-            continue;
-        }
-        let owner = (*candidates.into_iter().next().expect("one owner")).clone();
-        for track in ids {
-            if owners.insert(track, owner.clone()).is_none() {
-                inherited += 1;
-            }
-        }
-    }
-    (owners, excluded, conflicted.len(), inherited)
+            .map(|(id, owner)| (id.to_string(), owner))
+            .collect(),
+        resolved
+            .excluded
+            .into_iter()
+            .map(|id| id.to_string())
+            .collect(),
+        resolved.conflicts.len(),
+        0, // ReID group membership never grants a new athlete identity.
+    )
 }
 fn rally_ranges(
     tracks: &Value,
@@ -709,34 +675,8 @@ fn calculate(state: &AppState, req: StatisticsRequest) -> Result<Value, ApiError
         if let Some(visible) = &available {
             actions.retain(|a| a.track_id.as_ref().is_none_or(|t| visible.contains_key(t)));
         }
-        let group_file = projects::project_root(state)
-            .join(&req.project_id)
-            .join("player_identity_groups")
-            .join(format!("{}.json", reid_native::path_key(video, base_id)));
-        let (groups, group_hash) = read_document(&group_file, MAX_IDS, false)?;
-        input_markers.push(Marker {
-            path: group_file.clone(),
-            value: optional_marker(&group_file)?,
-        });
-        if !groups.is_null() {
-            let stat = fs::metadata(&player_file)
-                .map_err(|_| storage::bad_request("GPU players.json пропал"))?;
-            let timestamp = stat
-                .modified()
-                .ok()
-                .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-                .map(|v| v.as_nanos());
-            if groups["schema"].as_u64() != Some(1)
-                || groups["stamp"]["size"].as_u64() != Some(stat.len())
-                || timestamp != groups["stamp"]["mtime_ns"].as_u64().map(u128::from)
-            {
-                return Err(storage::conflict(
-                    "ReID-группы устарели; нельзя наследовать по ним игрока",
-                ));
-            }
-        }
         let (owners, excluded, conflicts, inherited) =
-            known_owners(&identity, &groups, video, base_id, &athletes, &known);
+            known_owners(&identity, video, base_id, &athletes, &known);
         let participants = athletes
             .iter()
             .map(|(id, name)| Player {
@@ -765,7 +705,7 @@ fn calculate(state: &AppState, req: StatisticsRequest) -> Result<Value, ApiError
         );
         per_video.insert(video.clone(), stats);
         cache_ids.insert(video.clone(), cache_id.to_owned());
-        fingerprints.push(format!("video:{video};cpu:{cache_id};events:{events_hash};tracks:{tracks_hash};groups:{group_hash};gpu:{gpu_marker}"));
+        fingerprints.push(format!("video:{video};cpu:{cache_id};events:{events_hash};tracks:{tracks_hash};gpu:{gpu_marker}"));
     }
     let overall = combine(&per_video, &athletes);
     let fingerprint = format!("{:x}", Sha256::digest(fingerprints.join("\n").as_bytes()));
@@ -783,7 +723,7 @@ fn calculate(state: &AppState, req: StatisticsRequest) -> Result<Value, ApiError
         "overall":overall,
         "diagnostics":per_video_diagnostics,
         "saved":false,
-        "disclaimer":"Counts are CPU estimates. Only reviewed manual IDs and unambiguous explicit manual group links are credited to known athletes.",
+        "disclaimer":"Counts are CPU estimates. Athlete credit requires a directly reviewed Track ID assignment; ReID groups never confirm identity.",
     });
     // Reject a snapshot if any saved CPU/GPU input changed while calculating.
     for input in &input_markers {
@@ -826,4 +766,51 @@ pub async fn statistics(
         .await
         .map_err(|e| storage::internal(format!("Native stats calculation: {e}")))??;
     Ok(Json(report))
+}
+
+#[cfg(test)]
+mod identity_snapshot_tests {
+    use super::*;
+    #[test]
+    fn visual_manual_groups_do_not_grant_implicit_athlete_ownership() {
+        let roster = BTreeMap::from([
+            ("p1".to_owned(), "Player 1".to_owned()),
+            ("p2".to_owned(), "Player 2".to_owned()),
+        ]);
+        let known = HashMap::from([
+            ("7".to_owned(), (0, 10)),
+            ("8".to_owned(), (20, 30)),
+            ("9".to_owned(), (40, 50)),
+        ]);
+        let identity = json!({"videos":{"match.mp4::cache":[
+            {"id":"p1","track_ids":["7"],"link_meta":{"7":{"reviewed":true}}},
+            {"id":"p2","track_ids":["9"],"link_meta":{"9":{"reviewed":false}}}
+        ]},"excluded_ids":{}});
+        let _groups = json!({"groups":[
+            {"source":"manual","track_ids":["7","8","9"],"similarity":null}
+        ]});
+        let (owners, excluded, conflicts, inherited) =
+            known_owners(&identity, "match.mp4", "cache", &roster, &known);
+        assert_eq!(owners, HashMap::from([("7".into(), "p1".into())]));
+        assert!(excluded.is_empty());
+        assert_eq!(conflicts, 0);
+        assert_eq!(inherited, 0);
+    }
+    #[test]
+    fn conflicting_manual_confirmations_are_never_credited_to_any_athlete() {
+        let roster = BTreeMap::from([
+            ("p1".to_owned(), "Player 1".to_owned()),
+            ("p2".to_owned(), "Player 2".to_owned()),
+        ]);
+        let known = HashMap::from([("7".to_owned(), (0, 10))]);
+        let identity = json!({"videos":{"video.mp4::base":[
+            {"id":"p1","track_ids":["7"],"link_meta":{"7":{"reviewed":true}}},
+            {"id":"p2","track_ids":["7"],"link_meta":{"7":{"reviewed":true}}}
+        ]},"excluded_ids":{}});
+        let (owners, _, conflicts, inherited) =
+            known_owners(&identity, "video.mp4", "base", &roster, &known);
+        assert!(owners.is_empty());
+        assert_eq!(conflicts, 1);
+        assert_eq!(inherited, 0);
+    }
 }

@@ -1,8 +1,8 @@
 {
     "schema":  "volley-rust-stage-roadmap/1",
     "plannedTotal":  85,
-    "lastRecorded":  58,
-    "nextStage":  59,
+    "lastRecorded":  59,
+    "nextStage":  60,
     "estimateNote":  "85 — текущий ориентир планирования, не обещание неизменного объема; этап != готовая подсистема. При пересмотре плана обновлять JSON, Markdown и журнал в одном коммите.",
     "stages":  [
                    {
@@ -473,7 +473,8 @@
                        "number":  59,
                        "title":  "Общие подтверждённые identity решения для статистики и монтажа",
                        "area":  "Игроки",
-                       "status":  "planned",
+                       "status":  "recorded",
+                       "journalSection":  59,
                        "acceptance":  "Consumers access same reviewed identity snapshot across both source readers"
                    },
                    {

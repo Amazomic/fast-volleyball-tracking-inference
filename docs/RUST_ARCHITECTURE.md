@@ -1,3 +1,9 @@
+> Statistics/montage identity contract (2026-11-09):
+> rust/volley-core/src/identity_review.rs::resolve_reviewed is the single
+> source of confirmed Track ID owners. Saved ReID groups are **suggestions**
+> only; group membership never grants an athlete identity or statistic.
+> Both native and historical JSON readers use the same resolver, with
+> source-specific storage adapters and unchanged immutable evidence.
 > Manual Track ID mutation policy owner: rust/volley-core/src/identity_review.rs.
 > Native and historical-cache HTTP handlers are only evidence-bound JSON adapters.
 > No separate rules for assign, unassign, exclude, restore are permitted.
