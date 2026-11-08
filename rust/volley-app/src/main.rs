@@ -4,6 +4,7 @@ mod catalog;
 mod history;
 mod inference_clip;
 mod inference_native;
+mod inference_stream;
 mod montage;
 mod playback;
 mod player_catalog;
@@ -91,6 +92,7 @@ async fn rewrite_status(
             "POST /api/quick-reel/native/cancel",
             "POST /api/inference/native/preflight (read-only model + optional ONNX sessions)",
             "POST /api/inference/native/clip-preview (one actual 9-frame window, read-only)",
+            "POST /api/inference/native/window-scan (bounded multi-window ONNX diagnostic, read-only)",
             "POST /api/cpu/touch-preview (read-only RAVEL diagnostics)",
             "POST /api/players/continuity-preview (read-only geometry candidates)",
             "POST /api/players/reid-native/preview (saved embeddings, read-only)",
@@ -152,6 +154,10 @@ fn app(state: Arc<AppState>) -> Router {
         .route(
             "/api/inference/native/clip-preview",
             post(inference_clip::clip_preview),
+        )
+        .route(
+            "/api/inference/native/window-scan",
+            post(inference_stream::scan),
         )
         .route("/api/cpu/touch-preview", post(touch_preview::touch_preview))
         .route(

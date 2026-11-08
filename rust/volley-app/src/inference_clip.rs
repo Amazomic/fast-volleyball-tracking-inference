@@ -39,7 +39,7 @@ fn default_threads() -> usize {
     8
 }
 
-fn pixel_params(kind: ModelKind) -> (usize, usize, usize, &'static str) {
+pub(crate) fn pixel_params(kind: ModelKind) -> (usize, usize, usize, &'static str) {
     match kind {
         ModelKind::Ball => (512, 288, 1, "gray"),
         ModelKind::Players => (640, 360, 3, "rgb24"),
@@ -138,7 +138,7 @@ async fn decode_nine(prepared: PathBuf, request: &ClipRequest) -> Result<Vec<f32
         Err(_) => Err(storage::bad_request("FFmpeg decode exceeded 45s timeout")),
     }
 }
-fn ball_peaks(output: &Output, start: u64) -> Result<Value, String> {
+pub(crate) fn ball_peaks(output: &Output, start: u64) -> Result<Value, String> {
     if output.name != "heatmaps" || output.dimensions != [1, 18, 288, 512] {
         return Err("Unexpected VballNetV4c tensor layout".into());
     }
@@ -167,7 +167,7 @@ fn ball_peaks(output: &Output, start: u64) -> Result<Value, String> {
     }
     Ok(json!(peaks))
 }
-fn touch_peaks(output: &Output, start: u64) -> Result<Value, String> {
+pub(crate) fn touch_peaks(output: &Output, start: u64) -> Result<Value, String> {
     if output.name != "action_logits" {
         return Ok(Value::Null);
     }
