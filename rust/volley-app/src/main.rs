@@ -5,6 +5,7 @@ mod history;
 mod inference_clip;
 mod inference_evidence;
 mod inference_full;
+mod inference_fusion;
 mod inference_native;
 mod inference_stream;
 mod montage;
@@ -101,6 +102,8 @@ async fn rewrite_status(
             "POST /api/inference/native/full/start (queued full prepared-video model scan)",
             "GET /api/inference/native/full/status (model scan progress)",
             "POST /api/inference/native/full/cancel (model scan cancellation)",
+            "POST /api/inference/native/fuse (verify and merge two raw model runs)",
+            "GET /api/inference/native/fusion (isolated fusion manifest)",
             "POST /api/cpu/touch-preview (read-only RAVEL diagnostics)",
             "POST /api/players/continuity-preview (read-only geometry candidates)",
             "POST /api/players/reid-native/preview (saved embeddings, read-only)",
@@ -186,6 +189,11 @@ fn app(state: Arc<AppState>) -> Router {
         .route(
             "/api/inference/native/full/cancel",
             post(inference_full::cancel),
+        )
+        .route("/api/inference/native/fuse", post(inference_fusion::fuse))
+        .route(
+            "/api/inference/native/fusion",
+            get(inference_fusion::manifest),
         )
         .route("/api/cpu/touch-preview", post(touch_preview::touch_preview))
         .route(

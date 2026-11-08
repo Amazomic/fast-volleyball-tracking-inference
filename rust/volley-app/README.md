@@ -358,3 +358,7 @@ After native video preparation has finished for a selected project, the bounded 
 ~~~
 
 For RAVEL use `"model":"players"`. This reads exactly nine prepared video frames using FFmpeg, builds normalized float model input, executes the actual ONNX graph through Rust/ORT and returns **unconfirmed raw** ball candidates or RAVEL Touch query maxima. All outputs are read-only and are **not** a complete player/ball tracker, finished model run or analyzed montage. Quality/performance and pixel-level comparison to the original Python decoder remain to be performed in the deferred final testing phase.
+
+### Merge native RAVEL + VballNet raw GPU results
+
+After separate model jobs complete for the same project/video at **stride 9**, call `POST /api/inference/native/fuse` with JSON `{"project_id":"<project 12 hex>","video":"match.mp4","ravel_job_id":"<RAVEL 32 hex>","vball_job_id":"<Vball 32 hex>"}`. Rust checks both manifests, frame alignment, model identities, prepared source metadata and SHA-256 of the raw JSONL inputs, then streams an immutable raw candidate fusion to the isolated project tree under `native_gpu_fusions/<fusion_id>/`. Inspect it using `GET /api/inference/native/fusion?project_id=...&fusion_id=...`. The preferred ball is VballNet; the RAVEL ball is a fallback and retained as an alternative. These frame rows are **inputs for future CPU tracking/contact analysis, not verified Track IDs, contacts or completed Studio GPU runs**. No inference is rerun by the merge.
