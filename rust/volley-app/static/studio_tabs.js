@@ -59,6 +59,7 @@
     ui.players.classList.toggle("hidden",next!=="players");
     const labels={preview:"Предпросмотр",analysis:"Анализ",players:"Игроки",montage:"Монтаж"};
     ui.title.textContent=labels[next];
+    window.dispatchEvent(new CustomEvent("volley:tab-change",{detail:{tab:next}}));
     for(const nav of document.querySelectorAll("[data-studio-tab]")){
       const active=nav.dataset.studioTab===next;
       nav.classList.toggle("active",active);

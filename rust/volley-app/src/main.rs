@@ -126,6 +126,7 @@ async fn rewrite_status(
             "GET /api/cpu/native/touches (read isolated Touch snapshot manifest)",
             "GET /api/cpu/native/retrack (read isolated tracking manifest)",
             "GET/POST /api/players/native/tracks (manual provisional Track ID links for a selected CPU replay)",
+            "GET /api/players/native/track-photo (on-demand isolated player crop preview)",
             "POST /api/cpu/touch-preview (read-only RAVEL diagnostics)",
             "POST /api/players/continuity-preview (read-only geometry candidates)",
             "POST /api/players/reid-native/preview (saved embeddings, read-only)",
@@ -151,6 +152,7 @@ fn app(state: Arc<AppState>) -> Router {
         .route("/studio/rust", get(studio_web::index))
         .route("/studio/rust/app.js", get(studio_web::js))
         .route("/studio/rust/tabs.js", get(studio_web::tabs_js))
+        .route("/studio/rust/tracks.js", get(studio_web::tracks_js))
         .route(
             "/studio/rust/selection.wasm",
             get(studio_web::selection_wasm),
@@ -180,6 +182,10 @@ fn app(state: Arc<AppState>) -> Router {
         .route(
             "/api/players/native/tracks",
             get(native_player_tracks::read).post(native_player_tracks::edit),
+        )
+        .route(
+            "/api/players/native/track-photo",
+            get(native_player_tracks::photo),
         )
         .route("/api/project-create", post(projects::create_project))
         .route("/api/project-update", post(projects::update_project))

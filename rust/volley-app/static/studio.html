@@ -8,6 +8,7 @@
   <link rel="stylesheet" href="/studio/rust/app.css">
   <script src="/studio/rust/app.js" defer></script>
   <script src="/studio/rust/tabs.js" defer></script>
+  <script src="/studio/rust/tracks.js" defer></script>
 </head>
 <body>
   <div class="shell">
@@ -116,7 +117,39 @@
             <div class="inline-input"><input id="studio-player-name" name="name" type="text" placeholder="Имя игрока" minlength="1" maxlength="80" required autocomplete="off"><button class="primary" type="submit">Добавить</button></div>
           </form>
           <div class="section-bar"><h2>Библиотека <small id="studio-player-count">—</small></h2><button type="button" id="studio-player-refresh" class="secondary">↻ Обновить</button></div>
+
           <div id="studio-player-list" class="player-list" aria-live="polite"><div class="empty-state">Загрузка игроков…</div></div>
+          <section id="studio-native-track-panel" class="native-track-panel" aria-labelledby="studio-native-track-title">
+            <p class="eyebrow">04 / НАТИВНЫЙ CPU ТРЕКИНГ</p>
+            <h2 id="studio-native-track-title">Ручная привязка Track ID</h2>
+            <p class="panel-note">ID предварительные. Привязка к игроку выполняется только вручную и сохраняется для выбранной версии CPU-трекинга. Фото используется только для предпросмотра; ReID и сохранение фотоэталонов ещё не подключены.</p>
+            <div class="track-controls">
+              <div><label class="field-label" for="studio-track-video">Видео проекта</label><select id="studio-track-video"><option value="">Выберите видео</option></select></div>
+              <div><label class="field-label" for="studio-track-replay">CPU Track ID</label><select id="studio-track-replay"><option value="">Выберите обработку</option></select></div>
+              <button id="studio-track-refresh" type="button" class="secondary">↻ Обновить</button>
+            </div>
+            <p id="studio-track-status" class="panel-note" role="status" aria-live="polite">Выберите проект, видео и версию CPU-трекинга.</p>
+            <div class="track-summary"><strong id="studio-track-total">—</strong><span>Track ID</span><strong id="studio-track-assigned">—</strong><span>Привязано</span><strong id="studio-track-excluded">—</strong><span>Исключено</span></div>
+            <div class="track-actions">
+              <label class="field-label" for="studio-track-player">Игрок из состава проекта</label>
+              <select id="studio-track-player"><option value="">Выберите игрока</option></select>
+              <button id="studio-track-assign" type="button" class="primary" disabled>Привязать</button>
+              <button id="studio-track-unassign" type="button" class="secondary" disabled>Снять привязку</button>
+              <button id="studio-track-exclude" type="button" class="secondary" disabled>Исключить ID</button>
+              <button id="studio-track-restore" type="button" class="secondary" disabled>Восстановить ID</button>
+            </div>
+            <div id="studio-track-list" class="native-track-list" aria-live="polite"><div class="empty-state">Нет выбранной версии Track ID.</div></div>
+            <div class="track-bottom">
+              <span id="studio-track-page">—</span>
+              <button id="studio-track-prev" type="button" class="secondary" disabled>‹ Назад</button>
+              <button id="studio-track-next" type="button" class="secondary" disabled>Далее ›</button>
+            </div>
+            <div id="studio-track-photo" class="track-photo-panel hidden">
+              <h3>Фото Track ID <span id="studio-track-photo-id"></span></h3>
+              <img id="studio-track-photo-img" alt="Кадр с выделенным игроком" loading="lazy">
+              <p>Кадр текущего CPU-трекинга; не сохранённый фотоэталон и не подтверждение личности.</p>
+            </div>
+          </section>
         </section>
         <footer class="footer">Volleyball Studio — самостоятельный Rust backend. Отдельная версия для тестирования; Python Studio не затронута.</footer>
       </div>

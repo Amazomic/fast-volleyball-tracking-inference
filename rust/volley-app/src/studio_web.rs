@@ -20,6 +20,7 @@ use std::{fs, sync::Arc, time::SystemTime};
 const CSS: &str = include_str!("../static/studio.css");
 const SCRIPT: &str = include_str!("../static/studio.js");
 const TABS_SCRIPT: &str = include_str!("../static/studio_tabs.js");
+const TRACKS_SCRIPT: &str = include_str!("../static/studio_tracks.js");
 const SELECTION_WASM: &[u8] = include_bytes!("../static/volley_web.wasm");
 const HTML: &str = include_str!("../static/studio.html");
 
@@ -54,6 +55,9 @@ pub async fn js() -> Response {
 }
 pub async fn tabs_js() -> Response {
     web_asset("text/javascript; charset=utf-8", TABS_SCRIPT)
+}
+pub async fn tracks_js() -> Response {
+    web_asset("text/javascript; charset=utf-8", TRACKS_SCRIPT)
 }
 pub async fn selection_wasm() -> Response {
     let mut response = SELECTION_WASM.to_vec().into_response();
@@ -284,6 +288,11 @@ mod tests {
         assert!(tabs.starts_with("HTTP/1.1 200 OK"));
         assert!(tabs.contains("/api/studio/rust/analysis-overview"));
         assert!(tabs.contains("/api/players/library/native"));
+        let tracks = get(addr, "/studio/rust/tracks.js").await;
+        assert!(tracks.starts_with("HTTP/1.1 200 OK"));
+        assert!(tracks.contains("/api/players/native/tracks"));
+        assert!(tracks.contains("/api/players/native/track-photo"));
+        assert!(!tracks.contains("innerHTML"));
         let wasm = get(addr, "/studio/rust/selection.wasm").await;
         assert!(wasm.starts_with("HTTP/1.1 200 OK"));
         assert!(wasm.contains("application/wasm"));
@@ -308,6 +317,10 @@ mod tests {
         assert!(HTML.contains("id=\"studio-analysis-view\""));
         assert!(HTML.contains("id=\"studio-players-view\""));
         assert!(HTML.contains("/studio/rust/tabs.js"));
+        assert!(HTML.contains("/studio/rust/tracks.js"));
+        assert!(HTML.contains("id=\"studio-native-track-panel\""));
+        assert!(HTML.contains("id=\"studio-track-list\""));
+        assert!(!TRACKS_SCRIPT.contains("innerHTML"));
         assert!(!TABS_SCRIPT.contains("innerHTML"));
         assert!(!HTML.contains("http://127.0.0.1:8765"));
         assert!(SCRIPT.contains("textContent"));
