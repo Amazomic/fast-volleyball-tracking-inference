@@ -12,6 +12,7 @@ pub mod rallies;
 pub mod reid;
 pub mod statistics;
 pub mod touch;
+pub mod touch_pipeline;
 pub mod tracker;
 
 /// Must match the positive-area intersection-over-union operation used by
