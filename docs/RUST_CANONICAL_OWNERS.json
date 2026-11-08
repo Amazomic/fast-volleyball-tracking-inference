@@ -32,6 +32,10 @@
           "handler": "native_player_tracks::reference_photo"
         },
         {
+          "path": "/api/players/native/reid-groups",
+          "handler": "native_player_tracks::reid_preview"
+        },
+        {
           "path": "/api/players/native/embeddings",
           "handler": "native_player_tracks::embeddings"
         },

@@ -29,6 +29,7 @@ use volley_core::{
     evidence_source::{EvidenceSource, FrameRate, SourceStamp, VerifiedTrackSet},
     fusion::Candidate,
     identity_review::{self, ManualReviewState, ReviewAction, ReviewErrorKind, ReviewedLink},
+    reid::{self, Feature, FeatureMode, TrackInfo},
 };
 
 const MAX_TRACKS: usize = 20_000;
@@ -590,6 +591,178 @@ pub async fn edit(
     Ok(Json(result))
 }
 
+/// Versioned native ReID preview: similarity never establishes identity.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeReidQuery {
+    project_id: String,
+    video: String,
+    replay_id: String,
+    expected_source_sha256: String,
+    #[serde(default = "default_reid_threshold")]
+    threshold_percent: u8,
+}
+fn default_reid_threshold() -> u8 {
+    85
+}
+
+fn native_reid_report(
+    ctx: &Inputs,
+    doc: &Value,
+    cached: &BTreeMap<u64, Vec<f32>>,
+    threshold: u8,
+) -> Result<Value, String> {
+    let mut manual = BTreeMap::<u64, String>::new();
+    for (id, player) in doc["assignments"]
+        .as_object()
+        .ok_or("Invalid assignment registry")?
+    {
+        manual.insert(
+            id.parse::<u64>().map_err(|_| "Invalid assigned track ID")?,
+            player
+                .as_str()
+                .ok_or("Invalid assigned athlete")?
+                .to_owned(),
+        );
+    }
+    let excluded = doc["excluded_ids"]
+        .as_array()
+        .ok_or("Invalid excluded tracks")?
+        .iter()
+        .map(|v| v.as_u64().ok_or("Invalid excluded ID"))
+        .collect::<Result<BTreeSet<_>, _>>()?;
+    let reviewed = identity_review::resolve_reviewed(
+        ctx.known.ids(),
+        &ctx.roster,
+        &manual
+            .into_iter()
+            .map(|(track_id, owner)| ReviewedLink {
+                track_id,
+                owner,
+                reviewed: true,
+            })
+            .collect::<Vec<_>>(),
+        &excluded,
+    );
+    if !reviewed.conflicts.is_empty() {
+        return Err("Conflicting manual ownership blocks ReID suggestions".into());
+    }
+    let stats = ctx
+        .tracks
+        .iter()
+        .map(|(&id, track)| TrackInfo {
+            id: i64::try_from(id).expect("Replay Track ID bounded by verified manifest"),
+            first_frame: i64::try_from(track.first).expect("Replay frame bounded by manifest"),
+            last_frame: i64::try_from(track.last).expect("Replay frame bounded by manifest"),
+            detected_frames: u32::try_from(track.observed).unwrap_or(u32::MAX),
+            start_center: [
+                (track.best_box[0] + track.best_box[2]) * 0.5,
+                (track.best_box[1] + track.best_box[3]) * 0.5,
+            ],
+            end_center: [
+                (track.best_box[0] + track.best_box[2]) * 0.5,
+                (track.best_box[1] + track.best_box[3]) * 0.5,
+            ],
+            fps: 30.0,
+        })
+        .collect::<Vec<_>>();
+    let features = cached
+        .iter()
+        .filter(|(id, _)| ctx.known.contains_number(**id))
+        .map(|(&id, vec)| {
+            Ok(Feature {
+                id: i64::try_from(id).map_err(|_| "Track ID out of ReID range")?,
+                vector: vec.clone(),
+            })
+        })
+        .collect::<Result<Vec<_>, &str>>()?;
+    let owners = reviewed
+        .owners
+        .into_iter()
+        .map(|(id, player)| (id as i64, player))
+        .collect::<std::collections::HashMap<_, _>>();
+    let excluded = reviewed
+        .excluded
+        .into_iter()
+        .map(|id| id as i64)
+        .collect::<std::collections::HashSet<_>>();
+    let report = reid::build_groups(
+        &features,
+        &stats,
+        &owners,
+        &excluded,
+        FeatureMode::OpenVino,
+        threshold,
+    )?;
+    Ok(json!(report))
+}
+
+/// Read-only preview of actual OpenVINO vectors from the verified native
+/// cache. This endpoint does not compute missing features or change links.
+pub async fn reid_preview(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(req): Json<NativeReidQuery>,
+) -> ApiResult<Value> {
+    storage::validate_origin(&headers)?;
+    if !(55..=99).contains(&req.threshold_percent) {
+        return Err(storage::bad_request("ReID threshold must be 55..99"));
+    }
+    let _permit = state
+        .reid_limit
+        .acquire()
+        .await
+        .map_err(|e| storage::internal(format!("Native ReID gate: {e}")))?;
+    let state = state.clone();
+    let response = tokio::task::spawn_blocking(move || -> Result<Value, ApiError> {
+        let _guard = project_archive::archive_guard(&state, &req.project_id)?;
+        let ctx = source(&state, &req.project_id, &req.video, &req.replay_id)?;
+        if ctx.source_sha != req.expected_source_sha256 {
+            return Err(storage::conflict("Selected ReID replay SHA changed"));
+        }
+        let before = volley_inference::reid_openvino::fingerprint(&state.repository_root)
+            .map_err(storage::bad_request)?;
+        let scope = native_reid_cache::CacheScope {
+            project_id: req.project_id.clone(),
+            video: req.video.clone(),
+            replay_id: req.replay_id.clone(),
+            replay_sha256: ctx.source_sha.clone(),
+            model_fingerprint: before.clone(),
+        };
+        let cache = native_reid_cache::read(&state.data_root, &scope)
+            .map_err(storage::bad_request)?;
+        if cache.invalidated {
+            return Err(storage::conflict("ReID embeddings are stale; regenerate from current model"));
+        }
+        if cache.vectors.is_empty() {
+            return Err(storage::bad_request("No native embeddings cached; extract Track ID features first"));
+        }
+        let raw = existing(&ctx.sidecar).map_err(storage::bad_request)?;
+        let identity = validated(raw.as_deref(), &ctx).map_err(storage::bad_request)?;
+        let report = native_reid_report(&ctx, &identity, &cache.vectors, req.threshold_percent)
+            .map_err(storage::bad_request)?;
+        if volley_inference::reid_openvino::fingerprint(&state.repository_root)
+            .map_err(storage::bad_request)? != before {
+            return Err(storage::conflict("ReID model changed while comparing cached features"));
+        }
+        Ok(json!({
+            "schema":"volley-native-reid-groups/1",
+            "source_kind":ctx.evidence.source_kind(),
+            "project_id":ctx.project_id,
+            "video":ctx.video,
+            "replay_id":ctx.replay_id,
+            "source_replay_sha256":ctx.source_sha,
+            "model_fingerprint":before,
+            "method":volley_inference::reid_openvino::MODEL_NAME,
+            "reviewed_identity_revision":revision(raw.as_deref()),
+            "embedding":report,
+            "auto_assign_enabled":false,
+            "confirmed":false,
+            "warning":"Cosine similarity is not identity probability. ReID groups are proposals only."
+        }))
+    }).await.map_err(|e| storage::internal(format!("Native ReID worker: {e}")))??;
+    Ok(Json(response))
+}
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PhotoQuery {
@@ -1506,6 +1679,57 @@ mod tests {
                 .join("0123456789abcdef0123456789abcdef.json"),
             can_write: true,
         }
+    }
+    #[test]
+    fn native_reid_cached_features_are_proposals_with_hard_identity_and_overlap_gates() {
+        let (root, _, sha) = fixture();
+        let tracks = index_replay(&root.join("tracked_frames.jsonl"), &sha, 18).unwrap();
+        let mut ctx = context(&root, sha, tracks);
+        let mut second = ctx.tracks[&7].clone();
+        second.first = 20;
+        second.last = 30;
+        second.observed = 11;
+        ctx.tracks.insert(8, second.clone());
+        ctx.known = VerifiedTrackSet::new(ctx.evidence.clone(), [7, 8]).unwrap();
+        let mut features = BTreeMap::new();
+        let mut same = vec![0.0_f32; 256];
+        same[0] = 1.0;
+        features.insert(7, same.clone());
+        features.insert(8, same);
+        // A poisoned out-of-scope cache entry must never reach comparison.
+        features.insert(999, vec![0.0; 256]);
+        let mut doc = base_document(&ctx);
+        let report = native_reid_report(&ctx, &doc, &features, 85).unwrap();
+        assert_eq!(report["confirmed"], false);
+        assert_eq!(
+            report["similarity_type"],
+            "cosine_similarity_not_probability"
+        );
+        assert_eq!(report["groups"][0]["track_ids"], json!(["7", "8"]));
+        assert_eq!(report["embedded_count"], 2);
+        ctx.roster
+            .insert("fedcba654321".into(), "Second athlete".into());
+        doc["assignments"]["7"] = json!("abcdef012345");
+        doc["assignments"]["8"] = json!("fedcba654321");
+        let forbidden = native_reid_report(&ctx, &doc, &features, 85).unwrap();
+        assert!(forbidden["groups"].as_array().unwrap().is_empty());
+        doc["assignments"] = json!({});
+        ctx.tracks.get_mut(&8).unwrap().first = 10;
+        let simultaneous = native_reid_report(&ctx, &doc, &features, 85).unwrap();
+        assert!(simultaneous["groups"].as_array().unwrap().is_empty());
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn native_reid_missing_vectors_remain_unmatched_and_never_assigned() {
+        let (root, _, sha) = fixture();
+        let tracks = index_replay(&root.join("tracked_frames.jsonl"), &sha, 18).unwrap();
+        let ctx = context(&root, sha, tracks);
+        let empty = native_reid_report(&ctx, &base_document(&ctx), &BTreeMap::new(), 85).unwrap();
+        assert_eq!(empty["embedded_count"], 0);
+        assert_eq!(empty["missing_visual_ids"], json!(["7"]));
+        assert_eq!(empty["unmatched_ids"], json!(["7"]));
+        assert!(native_reid_report(&ctx, &base_document(&ctx), &BTreeMap::new(), 100).is_err());
+        fs::remove_dir_all(root).unwrap();
     }
     #[test]
     fn hash_checked_track_index_and_tampering_protection() {

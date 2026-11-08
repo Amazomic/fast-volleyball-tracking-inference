@@ -679,3 +679,11 @@ Next: stage 62 must add fingerprint-specific native embedding caches, with expli
 - Verified: Rust workspace offline cargo fmt/check/test passed (167 successful Rust tests, 2 model tests ignored). Synthetic-video native OpenVINO test exercises repeat cache-hit and source SHA rejection; isolated cache tests exercise model/replay invalidation, invalid vectors, merges and symlink rejection. Whole-match GPU accuracy is not claimed.
 
 Next stage: use existing canonical Rust cosine ReID groups with verified native embeddings; proposals remain unconfirmed.
+## 63. Общий ReID cosine и предложения между группами Track ID — 2026-11-09
+
+- Read-only POST /api/players/native/reid-groups runs the single canonical Rust volley-core/src/reid.rs::build_groups algorithm over only verified native CPU replay Track IDs whose vectors are already available in the model-fingerprint-checked isolated cache. No Python, OpenVINO session, FFmpeg decode or GPU operation is invoked for similarity reads.
+- Input accepts exact project/video/replay ID and replay SHA256 with bounded cosine threshold (55..99). The evidence adapter checks source checksum/manifests and on-disk reviewed assignments; the normalized appearance embeddings remain unconfirmed. Manual excluded IDs and distinct confirmed roster owners are hard vetoes; frame overlap blocks merges; missing embeddings remain unmatched. A model fingerprint change refuses stale vectors.
+- Route is listed in the 37+ Rust API contract and canonical ownership map under the existing ReID core owner, not a new cosine algorithm. The JSON response reports similarity_type=cosine_similarity_not_probability, confirmed=false and auto_assign_enabled=false. No existing sidecar or user data is changed by preview.
+- Verification: cargo fmt/check/test offline passed (169 successful tests, 2 optional ONNX tests ignored). Added native fixture checks for high-similarity non-overlapping tracks, confirmed different owners, overlapping tracks and out-of-scope cached IDs, and no-vector unmatched tracks. Existing core complete-link and ambiguity regression tests continue to pass. Real-match precision and interactive acceptance remain pending.
+
+Next: implement a manual ReID review surface with revision-safe explicit merge/split; never auto-confirm identity.

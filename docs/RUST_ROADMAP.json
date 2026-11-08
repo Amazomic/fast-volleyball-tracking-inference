@@ -1,8 +1,8 @@
 {
     "schema":  "volley-rust-stage-roadmap/1",
     "plannedTotal":  85,
-    "lastRecorded":  62,
-    "nextStage":  63,
+    "lastRecorded":  63,
+    "nextStage":  64,
     "estimateNote":  "85 — текущий ориентир планирования, не обещание неизменного объема; этап != готовая подсистема. При пересмотре плана обновлять JSON, Markdown и журнал в одном коммите.",
     "stages":  [
                    {
@@ -505,8 +505,9 @@
                        "number":  63,
                        "title":  "Общий ReID cosine и предложения между группами Track ID",
                        "area":  "ReID",
-                       "status":  "planned",
-                       "acceptance":  "Use existing volley-core algorithm; test similarity against fixtures"
+                       "status":  "recorded",
+                       "acceptance":  "Use existing volley-core algorithm; test similarity against fixtures",
+                       "journalSection":  63
                    },
                    {
                        "number":  64,
