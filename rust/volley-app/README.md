@@ -37,6 +37,14 @@ VOLLEY_RUST_DATA_ROOT=/home/amazomic/.cache/volley-rust-sandbox \
 cargo run --manifest-path rust/Cargo.toml -p volley-app
 ```
 
+To verify native ONNX Runtime and CUDA without changing user data, run from WSL with an installed compatible native ORT library:
+
+```bash
+bash scripts/ci/smoke_rust_ort.sh /absolute/path/to/libonnxruntime.so cuda full
+```
+
+This explicitly checks model sessions, performs real nine-frame inference, and verifies both models' raw JSONL output on temporary synthetic media. The script uses a read-only Rust development server on port 8879. CUDA wheels may require native Nvidia dynamic loader paths; the script locates sibling `nvidia/*/lib` directories when present. Do not confuse this targeted smoke with full-match or complete product acceptance.
+
 The dev server rejects writes without an isolated directory. It rejects writing anywhere inside (or above) the original repository, including `results/`, `project/`, and models. Project source videos are read only; the originals are never overwritten.
 
 ## Native endpoints implemented so far

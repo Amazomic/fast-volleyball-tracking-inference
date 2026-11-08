@@ -734,6 +734,151 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
+    #[tokio::test]
+    #[ignore = "Needs native ORT_DYLIB_PATH and source ONNX models; run explicitly"]
+    async fn native_full_model_fixture_end_to_end() {
+        use std::process::Command;
+        let root = std::env::temp_dir().join(format!("volley-native-gpu-e2e-{}", Uuid::new_v4()));
+        let repo = root.join("original");
+        let data = root.join("sandbox");
+        let id = "1234abcdef01";
+        let video = "fixture.mp4";
+        let source_models = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join("models");
+        fs::create_dir_all(repo.join("project")).unwrap();
+        fs::create_dir_all(repo.join("models")).unwrap();
+        fs::create_dir_all(data.join("projects").join(id)).unwrap();
+        for model in [ModelKind::Ball, ModelKind::Players] {
+            let onnx = model.filename();
+            let source = source_models.join(onnx);
+            let dest = repo.join("models").join(onnx);
+            fs::copy(&source, &dest).unwrap();
+            fs::copy(source.with_extension("json"), dest.with_extension("json")).unwrap();
+        }
+        let original = repo.join("project").join(video);
+        let media = Command::new("ffmpeg")
+            .args([
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "testsrc2=size=64x64:rate=30:duration=0.6",
+                "-an",
+                "-c:v",
+                "libx264",
+                "-pix_fmt",
+                "yuv420p",
+                "-y",
+            ])
+            .arg(&original)
+            .status()
+            .unwrap();
+        assert!(media.success());
+        let source_size = fs::metadata(&original).unwrap().len();
+        storage::write_json_atomic(
+            &data.join("projects").join("projects.json"),
+            &json!({"schema":1,"projects":[{
+                "id":id,"name":"fixture","videos":[video]
+            }]}),
+        )
+        .unwrap();
+        let state = Arc::new(AppState {
+            repository_root: repo.clone(),
+            data_root: data.clone(),
+            writes_enabled: true,
+            montage: crate::montage::MontageManager::new(),
+            preparation: crate::preparation::PreparationManager::new(),
+            preview_limit: tokio::sync::Semaphore::new(1),
+            touch_limit: tokio::sync::Semaphore::new(1),
+            continuity_limit: tokio::sync::Semaphore::new(1),
+            reid_limit: tokio::sync::Semaphore::new(1),
+            identity_limit: tokio::sync::Semaphore::new(1),
+            statistics_limit: tokio::sync::Semaphore::new(1),
+            marks_limit: tokio::sync::Semaphore::new(1),
+            quick_reel: crate::quick_reel::QuickReelManager::new(),
+            inference_limit: tokio::sync::Semaphore::new(1),
+            full_inference: FullInferenceManager::new(),
+        });
+        let device = match std::env::var("VOLLEY_TEST_ORT_DEVICE").as_deref() {
+            Ok("cuda") => Device::Cuda,
+            _ => Device::Cpu,
+        };
+        for model in [ModelKind::Ball, ModelKind::Players] {
+            let request = StartRequest {
+                project_id: id.into(),
+                video: video.into(),
+                model,
+                stride: 9,
+                device,
+                gpu_device_id: 0,
+                gpu_memory_limit_mb: 0,
+                cpu_threads: 2,
+            };
+            let Json(receipt) = start(State(state.clone()), HeaderMap::new(), Json(request))
+                .await
+                .unwrap();
+            let job_id = receipt["job_id"].as_str().unwrap().to_owned();
+            let mut last = Value::Null;
+            for _ in 0..160 {
+                last = status(
+                    State(state.clone()),
+                    Query(JobQuery {
+                        project_id: id.into(),
+                        job_id: Some(job_id.clone()),
+                    }),
+                )
+                .await
+                .unwrap()
+                .0;
+                if terminal(last["phase"].as_str().unwrap_or("")) {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+            assert_eq!(last["phase"], "complete", "GPU result: {last}");
+            assert_eq!(last["output_manifest"], MANIFEST_FILE);
+            let folder = data
+                .join("projects")
+                .join(id)
+                .join("native_gpu_runs")
+                .join(&job_id);
+            let manifest = storage::read_json(&folder.join(MANIFEST_FILE))
+                .unwrap()
+                .unwrap();
+            assert_eq!(manifest["schema"], "volley-native-gpu-model-detections/1");
+            assert_eq!(manifest["status"], "model_raw_detections_complete");
+            assert_eq!(manifest["windows"], 2);
+            assert_eq!(manifest["decoded_frames"], 18);
+            assert_eq!(manifest["raw_candidates_only"], true);
+            assert_eq!(manifest["studio_gpu_run_complete"], false);
+            let evidence = fs::read(folder.join(RESULT_FILE)).unwrap();
+            let hash = format!("{:x}", Sha256::digest(&evidence));
+            assert_eq!(manifest["sha256"].as_str(), Some(hash.as_str()));
+            let records = evidence
+                .split(|b| *b == b'\n')
+                .filter(|line| !line.is_empty())
+                .map(|line| serde_json::from_slice::<Value>(line).unwrap())
+                .collect::<Vec<_>>();
+            assert_eq!(records.len(), 2);
+            assert_eq!(records[0]["first_frame"], 0);
+            assert_eq!(records[1]["first_frame"], 9);
+            assert!(records.iter().all(|row| row["raw_detections"].is_array()));
+            println!(
+                "Complete {model:?} {device:?} native JSONL job: {} bytes SHA256 verified",
+                evidence.len()
+            );
+        }
+        assert_eq!(fs::metadata(&original).unwrap().len(), source_size);
+        assert!(!repo.join("results").exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn api_job_id_must_be_opaque_and_terminal_states_explicit() {
         assert!(valid_id("0123456789abcdef0123456789abcdef"));

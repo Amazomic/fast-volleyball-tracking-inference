@@ -361,4 +361,57 @@ mod tests {
         .verify()
         .is_err());
     }
+
+    /// Explicit integration smoke, disabled in normal CI: needs original
+    /// ONNX models and an ABI-compatible native ORT_DYLIB_PATH (CUDA optional).
+    #[test]
+    #[ignore = "Requires the installed ONNX Runtime shared library and model files"]
+    fn native_onnx_clip_infers_and_decodes() {
+        let repo = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap();
+        let device = match std::env::var("VOLLEY_TEST_ORT_DEVICE")
+            .unwrap_or_else(|_| "cpu".into())
+            .as_str()
+        {
+            "cuda" => Device::Cuda,
+            "cpu" => Device::Cpu,
+            other => panic!("Unexpected VOLLEY_TEST_ORT_DEVICE: {other}"),
+        };
+        for kind in [ModelKind::Ball, ModelKind::Players] {
+            let config = Config {
+                model: kind,
+                device,
+                gpu_device_id: 0,
+                gpu_memory_limit_mb: 0,
+                cpu_threads: 2,
+            };
+            let mut engine = Engine::load(repo, &config)
+                .unwrap_or_else(|e| panic!("Cannot open native {kind:?} session: {e}"));
+            let count = kind
+                .expected_input()
+                .iter()
+                .map(|&v| usize::try_from(v).unwrap())
+                .product::<usize>();
+            let results = engine
+                .infer_clip(vec![0.0_f32; count])
+                .unwrap_or_else(|e| panic!("Native {kind:?} inference failed: {e}"));
+            assert_eq!(results.len(), engine.spec().outputs.len());
+            let detections = match kind {
+                ModelKind::Ball => decode::decode_vball(&results, 0, 0.05),
+                ModelKind::Players => {
+                    decode::decode_ravel(&results, 0, decode::DecodeConfig::default())
+                }
+            }
+            .unwrap_or_else(|e| panic!("Native {kind:?} tensor decoding failed: {e}"));
+            assert!(detections.iter().all(|row| row.frame_index < 9));
+            println!(
+                "Real native {kind:?} {device:?}: {} tensors, {} raw detections",
+                results.len(),
+                detections.len()
+            );
+        }
+    }
 }
