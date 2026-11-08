@@ -1,6 +1,7 @@
 //! Rust-native Studio HTTP application. The replacement is still incomplete.
 mod analysis_runs;
 mod catalog;
+mod cpu_rallies;
 mod cpu_retrack;
 mod cpu_touches;
 mod history;
@@ -108,6 +109,8 @@ async fn rewrite_status(
             "GET /api/inference/native/fusion (isolated fusion manifest)",
             "POST /api/cpu/native/retrack (CPU provisional Track ID snapshot)",
             "POST /api/cpu/native/touches (CPU-only motion-gated Touch candidates)",
+            "POST /api/cpu/native/rallies (rebuild provisional rally candidates)",
+            "GET /api/cpu/native/rallies (read isolated rally manifest)",
             "GET /api/cpu/native/touches (read isolated Touch snapshot manifest)",
             "GET /api/cpu/native/retrack (read isolated tracking manifest)",
             "POST /api/cpu/touch-preview (read-only RAVEL diagnostics)",
@@ -208,6 +211,10 @@ fn app(state: Arc<AppState>) -> Router {
         .route(
             "/api/cpu/native/touches",
             post(cpu_touches::run).get(cpu_touches::status),
+        )
+        .route(
+            "/api/cpu/native/rallies",
+            post(cpu_rallies::run).get(cpu_rallies::status),
         )
         .route("/api/cpu/touch-preview", post(touch_preview::touch_preview))
         .route(

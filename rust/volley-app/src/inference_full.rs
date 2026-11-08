@@ -962,6 +962,38 @@ mod tests {
         assert_eq!(touch_run["sha256"].as_str(), Some(touch_hash.as_str()));
         println!("Native {device:?} complete GPU -> fusion -> tracklet -> motion Touch replay: {} events",
             touch_run["touch_candidates"]);
+        let rally_run = crate::cpu_rallies::process(
+            &state,
+            &crate::cpu_rallies::RallyRequest {
+                project_id: id.into(),
+                video: video.into(),
+                replay_id: cpu_replay["replay_id"].as_str().unwrap().into(),
+                touch_id: touch_run["touch_id"].as_str().unwrap().into(),
+                settings: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(rally_run["schema"], "volley-native-cpu-rally-proposals/1");
+        assert_eq!(rally_run["frames"], 18);
+        assert_eq!(rally_run["touch_candidates_ingested"], 0);
+        assert_eq!(rally_run["rally_candidates"], 0);
+        assert_eq!(rally_run["rallies_authoritatively_confirmed"], false);
+        assert_eq!(rally_run["montage_ready"], false);
+        assert_eq!(rally_run["cpu_processing_complete"], false);
+        let rallies_path = data
+            .join("projects")
+            .join(id)
+            .join("native_cpu_rallies")
+            .join(rally_run["rally_run_id"].as_str().unwrap())
+            .join("rally_candidates.jsonl");
+        let rallies = fs::read(rallies_path).unwrap();
+        assert!(rallies.is_empty());
+        let rallies_sha = format!("{:x}", Sha256::digest(&rallies));
+        assert_eq!(rally_run["sha256"].as_str(), Some(rallies_sha.as_str()));
+        println!(
+            "Native {device:?} full GPU -> fusion -> tracks -> Touch -> rally proposals: {}",
+            rally_run["rally_candidates"]
+        );
         assert_eq!(fs::metadata(&original).unwrap().len(), source_size);
         assert!(!repo.join("results").exists());
         fs::remove_dir_all(root).unwrap();
