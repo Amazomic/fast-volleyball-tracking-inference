@@ -254,6 +254,7 @@ mod registry_tests {
             marks_limit: tokio::sync::Semaphore::new(1),
             quick_reel: crate::quick_reel::QuickReelManager::new(),
             inference_limit: tokio::sync::Semaphore::new(1),
+            full_inference: crate::inference_full::FullInferenceManager::new(),
         };
         (dir, state)
     }

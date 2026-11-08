@@ -84,6 +84,9 @@ POST /api/inference/native/clip-preview  one real 9-frame ONNX inference from a 
 POST /api/inference/native/window-scan   multi-window FFmpeg→persistent ONNX scan (1–120 windows; no cache writes)
 POST /api/inference/native/evidence/save  isolated immutable raw-model candidate snapshot (not GPU run)
 GET  /api/inference/native/evidence?project_id=...&evidence_id=...  list/read bounded snapshots
+POST /api/inference/native/full/start  experimental full prepared-video ONNX model job, isolated JSONL
+GET  /api/inference/native/full/status  durable progress; interrupted on restart
+POST /api/inference/native/full/cancel  cooperative single-model cancellation
 POST /api/cpu/touch-preview          read-only RAVEL Touch proposals and motion-confirmed contacts for explicit run/video
 ```
 

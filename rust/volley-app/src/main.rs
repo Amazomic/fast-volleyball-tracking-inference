@@ -4,6 +4,7 @@ mod catalog;
 mod history;
 mod inference_clip;
 mod inference_evidence;
+mod inference_full;
 mod inference_native;
 mod inference_stream;
 mod montage;
@@ -47,6 +48,7 @@ struct AppState {
     marks_limit: tokio::sync::Semaphore,
     quick_reel: quick_reel::QuickReelManager,
     inference_limit: tokio::sync::Semaphore,
+    full_inference: inference_full::FullInferenceManager,
 }
 
 #[derive(Serialize)]
@@ -96,6 +98,9 @@ async fn rewrite_status(
             "POST /api/inference/native/window-scan (bounded multi-window ONNX diagnostic, read-only)",
             "POST /api/inference/native/evidence/save (isolated raw candidate snapshot)",
             "GET /api/inference/native/evidence (read/list isolated snapshots)",
+            "POST /api/inference/native/full/start (queued full prepared-video model scan)",
+            "GET /api/inference/native/full/status (model scan progress)",
+            "POST /api/inference/native/full/cancel (model scan cancellation)",
             "POST /api/cpu/touch-preview (read-only RAVEL diagnostics)",
             "POST /api/players/continuity-preview (read-only geometry candidates)",
             "POST /api/players/reid-native/preview (saved embeddings, read-only)",
@@ -169,6 +174,18 @@ fn app(state: Arc<AppState>) -> Router {
         .route(
             "/api/inference/native/evidence",
             get(inference_evidence::read),
+        )
+        .route(
+            "/api/inference/native/full/start",
+            post(inference_full::start),
+        )
+        .route(
+            "/api/inference/native/full/status",
+            get(inference_full::status),
+        )
+        .route(
+            "/api/inference/native/full/cancel",
+            post(inference_full::cancel),
         )
         .route("/api/cpu/touch-preview", post(touch_preview::touch_preview))
         .route(
@@ -260,6 +277,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         marks_limit: tokio::sync::Semaphore::new(1),
         quick_reel: quick_reel::QuickReelManager::new(),
         inference_limit: tokio::sync::Semaphore::new(1),
+        full_inference: inference_full::FullInferenceManager::new(),
     });
     println!(
         "Volleyball Studio Rust rewrite (INCOMPLETE): http://{addr}/internal/rewrite-status (isolated writes={writes_enabled})"

@@ -2,7 +2,7 @@
 //! This never removes original source recordings, global player photos or
 //! the shared prepared-video cache.
 use crate::{
-    montage, preparation, projects,
+    inference_full, montage, preparation, projects,
     storage::{self, ApiError, ApiResult},
     AppState,
 };
@@ -96,6 +96,7 @@ pub async fn archive(
     let outcome = async {
         let detached = preparation::detach_archiving_project(&state, &id).await;
         let stopped_montage = montage::stop_for_project_archive(&state, &id).await?;
+        let stopped_inference = inference_full::stop_for_project_archive(&state, &id).await?;
         let publishing = state.clone();
         let project_id = id.clone();
         let mut archive = tokio::task::spawn_blocking(move || {
@@ -105,6 +106,7 @@ pub async fn archive(
         .map_err(|e| storage::internal(format!("Archive commit task: {e}")))??;
         archive["cancelled_preparation_subscriptions"] = json!(detached);
         archive["stopped_montage"] = json!(stopped_montage);
+        archive["stopped_gpu_inference"] = json!(stopped_inference);
         Ok::<_, ApiError>(archive)
     }
     .await;
@@ -145,6 +147,7 @@ mod tests {
             marks_limit: tokio::sync::Semaphore::new(1),
             quick_reel: crate::quick_reel::QuickReelManager::new(),
             inference_limit: tokio::sync::Semaphore::new(1),
+            full_inference: crate::inference_full::FullInferenceManager::new(),
         };
         (root, state)
     }
