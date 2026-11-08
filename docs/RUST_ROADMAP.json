@@ -1,8 +1,8 @@
 {
     "schema":  "volley-rust-stage-roadmap/1",
     "plannedTotal":  85,
-    "lastRecorded":  55,
-    "nextStage":  56,
+    "lastRecorded":  56,
+    "nextStage":  57,
     "estimateNote":  "85 — текущий ориентир планирования, не обещание неизменного объема; этап != готовая подсистема. При пересмотре плана обновлять JSON, Markdown и журнал в одном коммите.",
     "stages":  [
                    {
@@ -447,10 +447,11 @@
                    },
                    {
                        "number":  56,
-                       "title":  "Единая политика ручного назначения, исключения и отмены",
+                       "title":  "Rust-only executable entrypoint and retirement of Python application tree",
                        "area":  "Игроки",
-                       "status":  "planned",
-                       "acceptance":  "One mutation policy with tests for collision, stale revision, and exclusions"
+                       "status":  "recorded",
+                       "acceptance":  "The primary Windows launcher runs only Rust on 8765; no tracked Python application sources or old browser tests remain, the original Git checkpoint and model assets are preserved, and Rust HTTP/build/guard tests pass",
+                       "journalSection":  56
                    },
                    {
                        "number":  57,

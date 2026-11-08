@@ -1,3 +1,5 @@
+> As of 2026-11-09 the active launcher is Rust only, on loopback port 8765. Python was removed from this branch but remains in the immutable checkpoint. The Rust application is still incomplete; preserve isolated writes and do not claim full feature parity.
+
 # volley-app — Rust-native Volleyball Studio
 
 **Development only; full rewrite is not finished.** This is a standalone Rust backend (Axum/Tokio), not a Python subprocess bridge. It occupies a separate loopback port (`8875`) and has no production `/api/health` until the complete replacement exists. Existing Python/hybrid Studio on `8765` must not be interrupted.

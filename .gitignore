@@ -93,3 +93,6 @@ node_modules/
 # Compiled Rust artifacts are local build products
 /rust/**/target/
 /rust/target/
+
+# Editor-generated timestamped backups (never part of a migration commit)
+*.bak.*

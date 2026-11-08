@@ -37,6 +37,7 @@ mod touch_preview;
 mod versioned_store;
 
 use axum::{
+    response::Redirect,
     routing::{get, post},
     Json, Router,
 };
@@ -147,6 +148,7 @@ async fn rewrite_status(
 
 fn app(state: Arc<AppState>) -> Router {
     Router::new()
+        .route("/", get(|| async { Redirect::temporary("/studio/rust") }))
         // This is not /api/health: do not fool the production UI's API gate
         // into believing this partial Rust rewrite is ready.
         .route("/internal/rewrite-status", get(rewrite_status))

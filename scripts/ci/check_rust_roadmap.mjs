@@ -122,7 +122,7 @@ function render(roadmap){
     "- Нельзя создавать второго владельца ReID, привязок, золотых отметок или монтажа.",
     "- Новые/старые форматы поддерживаются адаптерами, а не двумя бизнес-реализациями.",
     "- Завершение этапа требует тестов, коммита, записи в журнале и обновлённой карты.",
-    "- Python Studio, основная ветка и оригиналы видео до финального сравнения не затрагиваются.",
+    "- The Python baseline is preserved only by the immutable Git checkpoint. Active application, launcher and UI are Rust-only; original recordings and user caches remain untouched.",
     "- Готовность приложения подтверждается только реальными матчами и критериями паритета.",
     "");
   return result.join("\n");

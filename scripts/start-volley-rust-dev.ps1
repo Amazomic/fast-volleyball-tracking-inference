@@ -1,11 +1,11 @@
 <#
-Starts only the Rust development server in WSL. Never starts or stops the
-production Python Studio on :8765. Ctrl+C stops this foreground session.
+Starts the sole Rust Studio backend in WSL. Never starts or stops any
+legacy Python process. Ctrl+C stops this foreground session.
 #>
 [CmdletBinding()]
 param(
     [string]$Distro = "Ubuntu-25.04",
-    [string]$Bind = "127.0.0.1:8875",
+    [string]$Bind = "127.0.0.1:8765",
     [string]$DataRoot = "",
     [switch]$ReadOnly,
     [switch]$CheckOnly
@@ -15,14 +15,39 @@ if ($Bind -notmatch '^127\.0\.0\.1:([0-9]{2,5})$') {
     throw "The Rust development server must bind to 127.0.0.1:<port>."
 }
 $port = [int]$Matches[1]
-if ($port -eq 8765 -or $port -lt 1024 -or $port -gt 65535) {
-    throw "Choose an unprivileged port other than 8765."
+if ($port -lt 1024 -or $port -gt 65535) {
+    throw "Choose a valid unprivileged port."
 }
 if ($ReadOnly -and $DataRoot) {
     throw "ReadOnly and DataRoot are mutually exclusive."
 }
 if ($DataRoot -and ($DataRoot -notmatch '^/' -or $DataRoot -match '(^|/)\.\.(/|$)')) {
     throw "DataRoot must be an absolute WSL path without parent traversal."
+}
+# Fail closed if any process already serves this port. A valid Rust instance
+# is reused; legacy Python or unknown listeners are never killed/replaced.
+if (-not $CheckOnly) {
+    $socket = New-Object System.Net.Sockets.TcpClient
+    try {
+        $socket.Connect("127.0.0.1", $port)
+        try {
+            $existing = Invoke-RestMethod -Uri ("http://127.0.0.1:{0}/internal/rewrite-status" -f $port) -TimeoutSec 3 -ErrorAction Stop
+        }
+        catch {
+            throw "Port $port is occupied by a server that does not identify as Rust Studio. Stop it manually after its jobs finish."
+        }
+        if ($existing.name -notlike 'Volleyball Studio*Rust*' -or -not $existing.pid) {
+            throw "Port $port belongs to an unrecognized service, refusing to start a second application."
+        }
+        Write-Host ("Rust Studio is already running at http://127.0.0.1:{0}/ (PID {1})." -f $port, $existing.pid)
+        return
+    }
+    catch [System.Net.Sockets.SocketException] {
+        # The port is free; the Rust binary will acquire it exclusively.
+    }
+    finally {
+        $socket.Dispose()
+    }
 }
 $repo = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $repoWsl = (& wsl.exe -d $Distro --exec wslpath -a $repo)

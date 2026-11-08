@@ -1,3 +1,5 @@
+> 2026-11-09: This branch has a Rust-only executable and no Python application source. The old code is in the frozen Git checkpoint; legacy on-disk evidence remains a read-only compatibility format. Product completion is not implied.
+
 # Rust migration — canonical architecture and anti-duplication contract
 
 **Status:** binding architecture for branch migration/rust-2026-11-07. Full rewrite is NOT COMPLETE. Preserve master, the pre-Rust checkpoint and all user media.

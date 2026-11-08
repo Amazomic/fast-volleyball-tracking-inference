@@ -13,3 +13,16 @@ db-data/
 uploads/
 old_models/
 reels/
+
+# The Docker context must never contain local Rust builds, user data or backups.
+rust/target/
+**/target/
+results/
+project/
+*.bak.*
+*.log
+*.mp4
+*.mov
+*.mkv
+nul
+_hold*_tmp.py

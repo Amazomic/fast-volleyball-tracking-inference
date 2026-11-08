@@ -275,6 +275,9 @@ mod tests {
         });
         let html = get(addr, "/studio/rust").await;
         assert!(html.starts_with("HTTP/1.1 200 OK"));
+        let home = get(addr, "/").await;
+        assert!(home.starts_with("HTTP/1.1 307 Temporary Redirect"));
+        assert!(home.to_lowercase().contains("location: /studio/rust"));
         assert!(html.to_lowercase().contains("content-security-policy:"));
         assert!(html.contains("id=\"studio-rallies\""));
         let css = get(addr, "/studio/rust/app.css").await;
