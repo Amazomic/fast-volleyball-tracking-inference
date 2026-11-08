@@ -12,6 +12,7 @@ mod inference_fusion;
 mod inference_native;
 mod inference_stream;
 mod montage;
+mod native_player_tracks;
 mod native_rally_marks;
 mod native_rally_preview;
 mod playback;
@@ -124,6 +125,7 @@ async fn rewrite_status(
             "POST /api/montage/native/start-from-rally-candidates (explicit manual selection, original media)",
             "GET /api/cpu/native/touches (read isolated Touch snapshot manifest)",
             "GET /api/cpu/native/retrack (read isolated tracking manifest)",
+            "GET/POST /api/players/native/tracks (manual provisional Track ID links for a selected CPU replay)",
             "POST /api/cpu/touch-preview (read-only RAVEL diagnostics)",
             "POST /api/players/continuity-preview (read-only geometry candidates)",
             "POST /api/players/reid-native/preview (saved embeddings, read-only)",
@@ -175,6 +177,10 @@ fn app(state: Arc<AppState>) -> Router {
         .route("/api/analysis-runs", get(analysis_runs::get_runs))
         .route("/api/players/library", get(catalog::get_library))
         .route("/api/players/library/native", post(player_catalog::edit))
+        .route(
+            "/api/players/native/tracks",
+            get(native_player_tracks::read).post(native_player_tracks::edit),
+        )
         .route("/api/project-create", post(projects::create_project))
         .route("/api/project-update", post(projects::update_project))
         .route(

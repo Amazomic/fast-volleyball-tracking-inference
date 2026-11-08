@@ -74,7 +74,7 @@ fn checked_registry_path(
     Ok(path)
 }
 
-fn load(state: &AppState, for_write: bool) -> Result<(Value, String), ApiError> {
+pub(crate) fn load(state: &AppState, for_write: bool) -> Result<(Value, String), ApiError> {
     let path = checked_registry_path(state, for_write)?;
     let bytes = match fs::read(&path) {
         Ok(value) => value,
