@@ -11,7 +11,7 @@ pipeline is **project → prepared video → immutable VballNet/RAVEL GPU eviden
 versioned CPU player tracks/Touch/rallies → reviewed players → original-quality montage**.
 FFmpeg, ONNX Runtime and CUDA are native external runtimes, not Python components.
 
-**Rust-миграция: 60/85; следующий 61/85 (плановый объём).**
+**Rust-миграция: 61/85; следующий 62/85 (плановый объём).**
 [Stage map](docs/RUST_ROADMAP.md) ·
 [Migration journal](docs/RUST_MIGRATION.md) ·
 [Architecture and owners](docs/RUST_ARCHITECTURE.md).
@@ -33,6 +33,17 @@ The launcher forwards this explicit path to WSL, where the C ABI loads
 the bundled ov/person-reidentification-retail-0287.xml and .bin model.
 POST /api/players/native/embeddings requires project_id, video, replay_id,
 expected_source_sha256 and 1–8 track_ids from GET /api/players/native/tracks.
+Confirmed athlete photos can now be manually stored and undone using
+POST /api/players/native/references with actions read, enroll and undo.
+Enrollment requires an exact replay SHA, an existing manually confirmed
+Track ID assignment to the selected athlete and an expected photo-album
+revision; no automatic enrollment is permitted. JPEGs and metadata are
+versioned in the isolated WSL Rust data root under
+players/native_reference_photos/<player_id>/ (never in original results/).
+Read a stored JPEG via GET /api/players/native/reference-photo, scoped by
+project_id, player_id and reference_id. The album is global to the athlete
+so it can be reused across projects; it does not yet store model-specific
+embeddings or silently rebind historical Track IDs.
 It returns **provisional** 256-dimensional BGR feature vectors and the
 fingerprint of both model files and preprocessing. It does not enroll,
 recognize or assign an athlete automatically. No embedding cache is yet saved.
@@ -81,7 +92,7 @@ The native Rust GPU→CPU pipeline and experimental analysis/player/preview/
 montage UI exist, with immutable replay artifacts. Detection-based tracks and
 Touch/rally proposals are not yet verified player identities or authoritative
 game events. Remaining work includes complete Quick Reel GPU/CPU/render
-orchestration, image-based ReID reference enrollment, comprehensive browser
+orchestration, photo-based ReID reference embedding matching, comprehensive browser
 UI/UX and real-match acceptance, automatic game-event classification and
 release packaging. The former Python UI/features have **not** all been
 reimplemented; no fallback is supplied.

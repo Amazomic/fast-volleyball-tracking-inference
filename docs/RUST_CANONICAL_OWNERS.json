@@ -24,6 +24,14 @@
       ],
       "routes": [
         {
+          "path": "/api/players/native/references",
+          "handler": "native_player_tracks::references"
+        },
+        {
+          "path": "/api/players/native/reference-photo",
+          "handler": "native_player_tracks::reference_photo"
+        },
+        {
           "path": "/api/players/native/embeddings",
           "handler": "native_player_tracks::embeddings"
         },
@@ -36,7 +44,12 @@
           "handler": "reid_group_edits::group_edits"
         }
       ],
-      "stores": []
+      "stores": [
+        {
+          "source": "native",
+          "path": "players/native_reference_photos/<player_id>/index.json"
+        }
+      ]
     },
     {
       "id": "evidence_source",

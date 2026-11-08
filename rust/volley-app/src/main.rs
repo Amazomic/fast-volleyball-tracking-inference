@@ -194,6 +194,14 @@ fn app(state: Arc<AppState>) -> Router {
             "/api/players/native/embeddings",
             post(native_player_tracks::embeddings),
         )
+        .route(
+            "/api/players/native/references",
+            post(native_player_tracks::references),
+        )
+        .route(
+            "/api/players/native/reference-photo",
+            get(native_player_tracks::reference_photo),
+        )
         .route("/api/project-create", post(projects::create_project))
         .route("/api/project-update", post(projects::update_project))
         .route(

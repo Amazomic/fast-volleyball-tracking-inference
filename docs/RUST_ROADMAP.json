@@ -1,8 +1,8 @@
 {
     "schema":  "volley-rust-stage-roadmap/1",
     "plannedTotal":  85,
-    "lastRecorded":  60,
-    "nextStage":  61,
+    "lastRecorded":  61,
+    "nextStage":  62,
     "estimateNote":  "85 — текущий ориентир планирования, не обещание неизменного объема; этап != готовая подсистема. При пересмотре плана обновлять JSON, Markdown и журнал в одном коммите.",
     "stages":  [
                    {
@@ -489,7 +489,8 @@
                        "number":  61,
                        "title":  "Сохранение фотоэталонов игрока с проверкой источника",
                        "area":  "ReID",
-                       "status":  "planned",
+                       "status":  "recorded",
+                       "journalSection":  61,
                        "acceptance":  "Explicit manual photo enrollment, undo, versioned storage, stale-source refusal"
                    },
                    {

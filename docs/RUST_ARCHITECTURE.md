@@ -1,3 +1,9 @@
+> Stage 61: the global athlete album uses only isolated Rust writes in
+> players/native_reference_photos/<player_id>/index.json with bounded JPEG
+> blobs, manually reviewed source replay metadata, CAS revision, per-athlete
+> lock, and explicit undo. The enrollment API refuses unlinked or excluded
+> Track IDs, changed SHA-replays and removed project athletes. No photo
+> reference triggers an automatic player assignment.
 > Stage 60: volley-inference/src/reid_openvino.rs loads bundled 0287 XML/BIN
 > through OpenVINO native C ABI. FFmpeg crop BGR24 -> f32 CHW 1x3x256x128 ->
 > 256 float32 L2-normalized visual features. Both weights and preprocessing

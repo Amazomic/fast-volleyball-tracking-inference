@@ -21,6 +21,12 @@ launcher option -OpenvinoLibrary /absolute/wsl/path/libopenvino_c.so.
 Run cargo test --workspace --offline with VOLLEY_TEST_OPENVINO_C_LIB set
 to the same native .so to execute the real-model smoke test. These
 temporary, SHA-bound vectors are only visual suggestions, not identities.
+Manually reviewed native player reference JPEGs have a separate, versioned,
+reversible global athlete album under the isolated Rust data root. Use
+POST /api/players/native/references (read/enroll/undo) and GET
+/api/players/native/reference-photo; enrollment requires an already confirmed
+Track ID assignment in that exact SHA-verified CPU replay. References are
+photos, not auto-confirmed identities and not yet computed embedding caches.
 This is a **partial rewrite**, not a claim of complete product parity.
 Existing Python source is retained only in Git history/checkpoint; legacy
 media and snapshots remain readable through Rust data adapters but are

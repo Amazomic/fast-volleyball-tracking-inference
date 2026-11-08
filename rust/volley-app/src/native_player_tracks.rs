@@ -14,11 +14,14 @@ use axum::{
     http::HeaderMap,
     Json,
 };
+use fs2::FileExt;
 use serde::Deserialize;
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use std::{
     collections::{BTreeMap, BTreeSet},
-    fs,
+    fs::{self, OpenOptions},
+    io::Write,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -910,6 +913,460 @@ pub async fn embeddings(
     })))
 }
 
+/// A real photo may enter an athlete's global album only after an explicit
+/// manual Track ID link has already been committed in this exact CPU replay.
+/// Photo references never mutate that identity link or any model evidence.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReferenceRequest {
+    project_id: String,
+    player_id: String,
+    action: String, // read, enroll, undo
+    #[serde(default)]
+    expected_revision: Option<String>,
+    #[serde(default)]
+    video: Option<String>,
+    #[serde(default)]
+    replay_id: Option<String>,
+    #[serde(default)]
+    track_id: Option<u64>,
+    #[serde(default)]
+    expected_source_sha256: Option<String>,
+    #[serde(default)]
+    reference_id: Option<String>,
+}
+const MAX_REFERENCE_INDEX: u64 = 256 * 1024;
+const MAX_PHOTO_BYTES: usize = 3_000_000;
+const MAX_PLAYER_PHOTOS: usize = 64;
+
+fn checked_reference_folder(
+    state: &AppState,
+    player_id: &str,
+    create: bool,
+) -> Result<PathBuf, ApiError> {
+    if !valid_player_id(player_id) {
+        return Err(storage::bad_request("Invalid global athlete ID"));
+    }
+    if create && !state.writes_enabled {
+        return Err(storage::conflict(
+            "Saving athlete photos requires isolated Rust storage",
+        ));
+    }
+    let base = state.data_root.join("players");
+    let references = base.join("native_reference_photos");
+    let target = references.join(player_id);
+    for folder in [&base, &references, &target] {
+        match fs::symlink_metadata(folder) {
+            Ok(meta) if meta.file_type().is_symlink() || !meta.is_dir() => {
+                return Err(storage::bad_request("Unsafe athlete photo directory"));
+            }
+            Ok(_) => (),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound && create => {
+                fs::create_dir(folder)
+                    .map_err(|e| storage::internal(format!("Create reference directory: {e}")))?;
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(target.clone()),
+            Err(e) => {
+                return Err(storage::internal(format!("Check reference directory: {e}")));
+            }
+        }
+    }
+    Ok(target)
+}
+fn check_reference_id(id: &str) -> bool {
+    id.len() == 24
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+}
+fn references_doc(raw: Option<&[u8]>, player_id: &str) -> Result<Value, ApiError> {
+    let Some(bytes) = raw else {
+        return Ok(json!({"schema":"volley-native-player-references/1",
+            "player_id":player_id,"photos":[]}));
+    };
+    let value: Value = serde_json::from_slice(bytes)
+        .map_err(|_| storage::bad_request("Corrupted athlete photo index"))?;
+    if value["schema"] != "volley-native-player-references/1"
+        || value["player_id"] != player_id
+        || value["photos"]
+            .as_array()
+            .is_none_or(|v| v.len() > MAX_PLAYER_PHOTOS)
+    {
+        return Err(storage::bad_request(
+            "Invalid athlete reference photo schema",
+        ));
+    }
+    let mut seen = BTreeSet::new();
+    for photo in value["photos"].as_array().expect("validated photos array") {
+        let id = photo["id"]
+            .as_str()
+            .ok_or_else(|| storage::bad_request("Photo ID missing"))?;
+        if !check_reference_id(id)
+            || !seen.insert(id.to_owned())
+            || photo["filename"] != format!("ref-{id}.jpg")
+            || photo["image_sha256"].as_str().is_none_or(|v| !valid_sha(v))
+            || photo["source_replay_sha256"]
+                .as_str()
+                .is_none_or(|v| !valid_sha(v))
+            || photo["manually_enrolled"] != true
+            || photo["track_id"].as_u64().is_none_or(|n| n == 0)
+        {
+            return Err(storage::bad_request("Invalid saved reference photo"));
+        }
+    }
+    Ok(value)
+}
+fn reference_player(state: &AppState, project_id: &str, player_id: &str) -> Result<(), ApiError> {
+    storage::project_id(project_id)?;
+    if !valid_player_id(player_id) {
+        return Err(storage::bad_request("Invalid athlete ID"));
+    }
+    let project = projects::existing_project(state, project_id)?;
+    if !project["player_ids"]
+        .as_array()
+        .is_some_and(|rows| rows.iter().any(|r| r.as_str() == Some(player_id)))
+    {
+        return Err(storage::bad_request(
+            "Athlete does not belong to selected project",
+        ));
+    }
+    let (catalog, _) = player_catalog::load(state, false)?;
+    if !catalog["players"]
+        .as_array()
+        .is_some_and(|rows| rows.iter().any(|r| r["id"] == player_id))
+    {
+        return Err(storage::conflict(
+            "Athlete was removed from the global roster",
+        ));
+    }
+    Ok(())
+}
+fn verified_reference_source(state: &AppState, req: &ReferenceRequest) -> Result<(), ApiError> {
+    let video = req
+        .video
+        .as_deref()
+        .ok_or_else(|| storage::bad_request("Select a source video for enrollment"))?;
+    let replay_id = req
+        .replay_id
+        .as_deref()
+        .ok_or_else(|| storage::bad_request("Select a native replay"))?;
+    let id = req
+        .track_id
+        .ok_or_else(|| storage::bad_request("Select a native Track ID"))?;
+    let sha = req
+        .expected_source_sha256
+        .as_deref()
+        .filter(|s| valid_sha(s))
+        .ok_or_else(|| storage::bad_request("Supply verified CPU replay SHA-256"))?;
+    let ctx = source(state, &req.project_id, video, replay_id)?;
+    if ctx.source_sha != sha || !ctx.known.contains_number(id) {
+        return Err(storage::conflict(
+            "Source replay changed; repeat manual photo enrollment",
+        ));
+    }
+    let bytes = existing(&ctx.sidecar).map_err(storage::bad_request)?;
+    let document = validated(bytes.as_deref(), &ctx).map_err(storage::bad_request)?;
+    if document["assignments"][id.to_string()].as_str() != Some(&req.player_id) {
+        return Err(storage::conflict(
+            "The selected Track ID must first be explicitly reviewed and linked to this athlete",
+        ));
+    }
+    Ok(())
+}
+fn reference_response(state: &AppState, req: &ReferenceRequest) -> Result<Value, ApiError> {
+    reference_player(state, &req.project_id, &req.player_id)?;
+    let folder = checked_reference_folder(state, &req.player_id, false)?;
+    let raw =
+        versioned_store::read_optional_bounded(&folder.join("index.json"), MAX_REFERENCE_INDEX)
+            .map_err(storage::bad_request)?;
+    let doc = references_doc(raw.as_deref(), &req.player_id)?;
+    Ok(json!({
+        "schema":"volley-native-player-references/1",
+        "project_id":req.project_id,"player_id":req.player_id,
+        "revision":revision(raw.as_deref()),
+        "photos":doc["photos"],"count":doc["photos"].as_array().map_or(0,Vec::len),
+        "writable":state.writes_enabled,
+        "automatic_reid_binding":false
+    }))
+}
+fn edit_references(
+    state: &AppState,
+    req: &ReferenceRequest,
+    jpeg: Option<&[u8]>,
+) -> Result<Value, ApiError> {
+    if !state.writes_enabled {
+        return Err(storage::conflict(
+            "Athlete photos require isolated Rust storage",
+        ));
+    }
+    reference_player(state, &req.project_id, &req.player_id)?;
+    let expected = req
+        .expected_revision
+        .as_deref()
+        .filter(|s| versioned_store::valid_revision(s))
+        .ok_or_else(|| {
+            storage::bad_request("Read photo album and provide its expected_revision")
+        })?;
+    let _project_lock = if req.action == "enroll" {
+        Some(project_archive::archive_guard(state, &req.project_id)?)
+    } else {
+        None
+    };
+    if req.action == "enroll" {
+        verified_reference_source(state, req)?;
+    }
+    let folder = checked_reference_folder(state, &req.player_id, true)?;
+    let lockfile = folder.join(".references.lock");
+    if fs::symlink_metadata(&lockfile)
+        .ok()
+        .is_some_and(|m| m.file_type().is_symlink())
+    {
+        return Err(storage::bad_request("Photo album lock is a symlink"));
+    }
+    let lock = OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .open(&lockfile)
+        .map_err(|e| storage::internal(format!("Reference lock open: {e}")))?;
+    lock.lock_exclusive()
+        .map_err(|e| storage::internal(format!("Reference lock: {e}")))?;
+    let index = folder.join("index.json");
+    let bytes = versioned_store::read_optional_bounded(&index, MAX_REFERENCE_INDEX)
+        .map_err(storage::bad_request)?;
+    if versioned_store::expect_revision(bytes.as_deref(), expected).is_err() {
+        return Err(storage::conflict(
+            "Photo album changed; refresh its revision",
+        ));
+    }
+    let mut doc = references_doc(bytes.as_deref(), &req.player_id)?;
+    let items = doc["photos"].as_array_mut().expect("validated photo album");
+    match req.action.as_str() {
+        "enroll" => {
+            if items.len() >= MAX_PLAYER_PHOTOS {
+                return Err(storage::conflict(
+                    "Athlete already has the maximum number of reference photos",
+                ));
+            }
+            let jpeg = jpeg.ok_or_else(|| storage::bad_request("No verified player photo"))?;
+            if jpeg.len() < 100
+                || jpeg.len() > MAX_PHOTO_BYTES
+                || !jpeg.starts_with(&[0xff, 0xd8])
+                || !jpeg.ends_with(&[0xff, 0xd9])
+            {
+                return Err(storage::bad_request("Invalid JPEG reference photo"));
+            }
+            let sha = format!("{:x}", Sha256::digest(jpeg));
+            let source = req
+                .expected_source_sha256
+                .as_ref()
+                .expect("verified source");
+            let tid = req.track_id.expect("verified Track ID");
+            let mut digest = Sha256::new();
+            digest.update(req.player_id.as_bytes());
+            digest.update(req.project_id.as_bytes());
+            digest.update(req.video.as_ref().expect("verified video").as_bytes());
+            digest.update(req.replay_id.as_ref().expect("verified replay").as_bytes());
+            digest.update(tid.to_le_bytes());
+            digest.update(source.as_bytes());
+            digest.update(sha.as_bytes());
+            let id = format!("{:x}", digest.finalize())[..24].to_owned();
+            if items.iter().any(|v| v["id"] == id) {
+                return Err(storage::conflict(
+                    "This exact photo is already in the athlete album",
+                ));
+            }
+            let filename = format!("ref-{id}.jpg");
+            let path = folder.join(&filename);
+            let mut out = OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&path)
+                .map_err(|e| {
+                    storage::conflict(format!(
+                        "Reference photo already exists or cannot be created: {e}"
+                    ))
+                })?;
+            let created = (|| -> std::io::Result<()> {
+                out.write_all(jpeg)?;
+                out.sync_all()
+            })();
+            drop(out);
+            if let Err(e) = created {
+                let _ = fs::remove_file(&path);
+                return Err(storage::internal(format!("Write reference photo: {e}")));
+            }
+            items.push(json!({
+                "id":id,"filename":filename,"image_sha256":sha,
+                "project_id":req.project_id,"video":req.video,"replay_id":req.replay_id,
+                "track_id":tid,"source_replay_sha256":source,
+                "manually_enrolled":true,"saved_utc":chrono::Utc::now().to_rfc3339(),
+            }));
+            if let Err(e) =
+                versioned_store::write_json_checked(&folder, &index, &doc, MAX_REFERENCE_INDEX)
+            {
+                let _ = fs::remove_file(path);
+                return Err(storage::bad_request(e));
+            }
+        }
+        "undo" => {
+            let id = req
+                .reference_id
+                .as_deref()
+                .filter(|s| check_reference_id(s))
+                .ok_or_else(|| storage::bad_request("Supply reference_id to undo"))?;
+            let before = items.len();
+            items.retain(|v| v["id"].as_str() != Some(id));
+            if items.len() == before {
+                return Err(storage::conflict("Photo reference was already removed"));
+            }
+            versioned_store::write_json_checked(&folder, &index, &doc, MAX_REFERENCE_INDEX)
+                .map_err(storage::bad_request)?;
+            // The index is authoritative; removing its entry immediately
+            // prevents deleted photos from being used for ReID enrollment.
+            let path = folder.join(format!("ref-{id}.jpg"));
+            if let Ok(meta) = fs::symlink_metadata(&path) {
+                if meta.file_type().is_symlink() || !meta.is_file() {
+                    return Err(storage::bad_request("Unsafe leftover reference photo"));
+                }
+                fs::remove_file(&path)
+                    .map_err(|e| storage::internal(format!("Unlink old reference photo: {e}")))?;
+            }
+        }
+        _ => return Err(storage::bad_request("Unknown photo reference action")),
+    }
+    // Return the revision AFTER the atomic index write, including the entire
+    // reviewed album snapshot. Neither source evidence nor assignments changed.
+    let new = versioned_store::read_optional_bounded(&index, MAX_REFERENCE_INDEX)
+        .map_err(storage::bad_request)?;
+    let verified = references_doc(new.as_deref(), &req.player_id)?;
+    Ok(json!({
+        "schema":"volley-native-player-references/1",
+        "project_id":req.project_id,"player_id":req.player_id,
+        "revision":revision(new.as_deref()),
+        "photos":verified["photos"],"count":verified["photos"].as_array().map_or(0,Vec::len),
+        "writable":true,"automatic_reid_binding":false
+    }))
+}
+pub async fn references(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(req): Json<ReferenceRequest>,
+) -> ApiResult<Value> {
+    storage::validate_origin(&headers)?;
+    if !matches!(req.action.as_str(), "read" | "enroll" | "undo") {
+        return Err(storage::bad_request(
+            "Expected photo action read, enroll or undo",
+        ));
+    }
+    let _slot = state
+        .identity_limit
+        .acquire()
+        .await
+        .map_err(|e| storage::internal(format!("Photo reference gate: {e}")))?;
+    if req.action == "read" {
+        let snapshot = state.clone();
+        return Ok(Json(
+            tokio::task::spawn_blocking(move || reference_response(&snapshot, &req))
+                .await
+                .map_err(|e| storage::internal(format!("Reference read task: {e}")))??,
+        ));
+    }
+    if req.action == "enroll" {
+        if !state.writes_enabled {
+            return Err(storage::conflict(
+                "Photo enrollment requires isolated Rust storage",
+            ));
+        }
+        let snapshot = state.clone();
+        let source_req = req.clone();
+        tokio::task::spawn_blocking(move || {
+            let _lock = project_archive::archive_guard(&snapshot, &source_req.project_id)?;
+            reference_player(&snapshot, &source_req.project_id, &source_req.player_id)?;
+            verified_reference_source(&snapshot, &source_req)
+        })
+        .await
+        .map_err(|e| storage::internal(format!("Photo source verification: {e}")))??;
+        let photo = photo(
+            State(state.clone()),
+            Query(PhotoQuery {
+                project_id: req.project_id.clone(),
+                video: req.video.clone().expect("verified photo video"),
+                replay_id: req.replay_id.clone().expect("verified photo replay"),
+                track_id: req.track_id.expect("verified photo ID"),
+            }),
+        )
+        .await?;
+        let bytes = axum::body::to_bytes(photo.into_body(), MAX_PHOTO_BYTES)
+            .await
+            .map_err(|_| storage::bad_request("Photo is larger than allowed"))?;
+        let snapshot = state.clone();
+        let reply =
+            tokio::task::spawn_blocking(move || edit_references(&snapshot, &req, Some(&bytes)))
+                .await
+                .map_err(|e| storage::internal(format!("Photo enrollment task: {e}")))??;
+        return Ok(Json(reply));
+    }
+    let snapshot = state.clone();
+    let reply = tokio::task::spawn_blocking(move || edit_references(&snapshot, &req, None))
+        .await
+        .map_err(|e| storage::internal(format!("Photo removal task: {e}")))??;
+    Ok(Json(reply))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReferencePhotoQuery {
+    project_id: String,
+    player_id: String,
+    reference_id: String,
+}
+pub async fn reference_photo(
+    State(state): State<Arc<AppState>>,
+    Query(req): Query<ReferencePhotoQuery>,
+) -> Result<axum::response::Response, ApiError> {
+    let snapshot = state.clone();
+    let content = tokio::task::spawn_blocking(move || -> Result<Vec<u8>, ApiError> {
+        reference_player(&snapshot, &req.project_id, &req.player_id)?;
+        if !check_reference_id(&req.reference_id) {
+            return Err(storage::bad_request("Invalid reference photo ID"));
+        }
+        let folder = checked_reference_folder(&snapshot, &req.player_id, false)?;
+        let raw =
+            versioned_store::read_optional_bounded(&folder.join("index.json"), MAX_REFERENCE_INDEX)
+                .map_err(storage::bad_request)?;
+        let doc = references_doc(raw.as_deref(), &req.player_id)?;
+        let item = doc["photos"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|v| v["id"].as_str() == Some(&req.reference_id))
+            .ok_or_else(|| storage::not_found("Reference photo was removed"))?;
+        let path = folder.join(format!("ref-{}.jpg", req.reference_id));
+        let bytes = versioned_store::read_optional_bounded(&path, MAX_PHOTO_BYTES as u64)
+            .map_err(storage::bad_request)?
+            .ok_or_else(|| storage::conflict("Reference JPEG vanished"))?;
+        if bytes.len() < 100
+            || bytes.len() > MAX_PHOTO_BYTES
+            || !bytes.starts_with(&[0xff, 0xd8])
+            || !bytes.ends_with(&[0xff, 0xd9])
+            || format!("{:x}", Sha256::digest(&bytes))
+                != item["image_sha256"].as_str().unwrap_or("")
+        {
+            return Err(storage::conflict("Reference photo bytes are corrupt"));
+        }
+        Ok(bytes)
+    })
+    .await
+    .map_err(|e| storage::internal(format!("Read photo task: {e}")))??;
+    use axum::{body::Body, http::header};
+    axum::response::Response::builder()
+        .header(header::CONTENT_TYPE, "image/jpeg")
+        .header(header::CACHE_CONTROL, "private, no-store")
+        .header(header::X_CONTENT_TYPE_OPTIONS, "nosniff")
+        .body(Body::from(content))
+        .map_err(|e| storage::internal(format!("Reference photo response: {e}")))
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1168,6 +1625,30 @@ mod tests {
             fs::read(replay_dir.join("tracked_frames.jsonl")).unwrap(),
             source_bytes
         );
+        assert!(verified_reference_source(
+            &state,
+            &ReferenceRequest {
+                project_id: id.into(),
+                player_id: "abcdef012345".into(),
+                action: "enroll".into(),
+                expected_revision: Some("absent".into()),
+                video: Some(video.into()),
+                replay_id: Some(replay.into()),
+                track_id: Some(7),
+                expected_source_sha256: Some(source_sha.clone()),
+                reference_id: None
+            }
+        )
+        .is_err());
+        let reassigned = change(
+            &state,
+            &TrackEdit {
+                expected_revision: restored["revision"].as_str().unwrap().into(),
+                ..assign.clone()
+            },
+        )
+        .unwrap();
+        assert_eq!(reassigned["assigned_count"], 1);
         assert!(!repo.join("results").exists());
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
@@ -1195,9 +1676,132 @@ mod tests {
                 .unwrap();
             assert!(bytes.starts_with(&[0xff, 0xd8]));
             assert!(bytes.len() > 100);
-            // This optional integration test runs the *actual* native C-ABI
-            // model on a verified synthetic CPU replay and a real FFmpeg crop.
-            // It cannot attribute an athlete from the resulting vector.
+            let read_album = ReferenceRequest {
+                project_id: id.into(),
+                player_id: "abcdef012345".into(),
+                action: "read".into(),
+                expected_revision: None,
+                video: None,
+                replay_id: None,
+                track_id: None,
+                expected_source_sha256: None,
+                reference_id: None,
+            };
+            let empty = references(
+                State(shared.clone()),
+                HeaderMap::new(),
+                Json(read_album.clone()),
+            )
+            .await
+            .unwrap()
+            .0;
+            assert_eq!(empty["revision"], "absent");
+            assert_eq!(empty["count"], 0);
+            let enroll = ReferenceRequest {
+                action: "enroll".into(),
+                expected_revision: Some("absent".into()),
+                video: Some(video.into()),
+                replay_id: Some(replay.into()),
+                track_id: Some(7),
+                expected_source_sha256: Some(source_sha.clone()),
+                ..read_album.clone()
+            };
+            let album = references(
+                State(shared.clone()),
+                HeaderMap::new(),
+                Json(enroll.clone()),
+            )
+            .await
+            .unwrap()
+            .0;
+            assert_eq!(album["count"], 1);
+            assert_eq!(album["photos"][0]["manually_enrolled"], true);
+            assert_eq!(album["photos"][0]["track_id"], 7);
+            assert_eq!(album["photos"][0]["source_replay_sha256"], source_sha);
+            let photo_id = album["photos"][0]["id"].as_str().unwrap().to_owned();
+            let stored_photo = reference_photo(
+                State(shared.clone()),
+                Query(ReferencePhotoQuery {
+                    project_id: id.into(),
+                    player_id: "abcdef012345".into(),
+                    reference_id: photo_id.clone(),
+                }),
+            )
+            .await
+            .unwrap();
+            let copied = axum::body::to_bytes(stored_photo.into_body(), MAX_PHOTO_BYTES)
+                .await
+                .unwrap();
+            assert!(copied.starts_with(&[0xff, 0xd8]));
+            assert!(copied.ends_with(&[0xff, 0xd9]));
+            assert_eq!(
+                format!("{:x}", Sha256::digest(&copied)),
+                album["photos"][0]["image_sha256"].as_str().unwrap()
+            );
+            let album_path = data.join("players/native_reference_photos/abcdef012345");
+            assert!(album_path.join(format!("ref-{photo_id}.jpg")).is_file());
+            assert!(references(
+                State(shared.clone()),
+                HeaderMap::new(),
+                Json(enroll.clone())
+            )
+            .await
+            .is_err());
+            assert!(references(
+                State(shared.clone()),
+                HeaderMap::new(),
+                Json(ReferenceRequest {
+                    expected_revision: Some(album["revision"].as_str().unwrap().into()),
+                    expected_source_sha256: Some("0".repeat(64)),
+                    ..enroll.clone()
+                })
+            )
+            .await
+            .is_err());
+            let undone = references(
+                State(shared.clone()),
+                HeaderMap::new(),
+                Json(ReferenceRequest {
+                    action: "undo".into(),
+                    expected_revision: Some(album["revision"].as_str().unwrap().into()),
+                    video: None,
+                    replay_id: None,
+                    track_id: None,
+                    expected_source_sha256: None,
+                    reference_id: Some(photo_id.clone()),
+                    ..read_album.clone()
+                }),
+            )
+            .await
+            .unwrap()
+            .0;
+            assert_eq!(undone["count"], 0);
+            assert_ne!(undone["revision"], album["revision"]);
+            assert!(!album_path.join(format!("ref-{photo_id}.jpg")).exists());
+            assert!(reference_photo(
+                State(shared.clone()),
+                Query(ReferencePhotoQuery {
+                    project_id: id.into(),
+                    player_id: "abcdef012345".into(),
+                    reference_id: photo_id,
+                })
+            )
+            .await
+            .is_err());
+            assert!(references(
+                State(shared.clone()),
+                HeaderMap::new(),
+                Json(ReferenceRequest {
+                    action: "undo".into(),
+                    expected_revision: Some(album["revision"].as_str().unwrap().into()),
+                    reference_id: Some("0".repeat(24)),
+                    ..read_album.clone()
+                })
+            )
+            .await
+            .is_err()); // This optional integration test runs the *actual* native C-ABI
+                        // model on a verified synthetic CPU replay and a real FFmpeg crop.
+                        // It cannot attribute an athlete from the resulting vector.
             if std::env::var("VOLLEY_OPENVINO_C_LIB").is_ok() {
                 let fixture_models = Path::new(env!("CARGO_MANIFEST_DIR"))
                     .join("../..")
@@ -1265,6 +1869,33 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
+    #[test]
+    fn reference_album_schema_rejects_stale_or_unreviewed_photos() {
+        let athlete = "abcdef012345";
+        let initial = references_doc(None, athlete).unwrap();
+        assert_eq!(initial["photos"], json!([]));
+        let valid = json!({"schema":"volley-native-player-references/1",
+        "player_id":athlete,"photos":[{
+            "id":"0123456789ab0123456789ab",
+            "filename":"ref-0123456789ab0123456789ab.jpg",
+            "image_sha256":"a".repeat(64),
+            "source_replay_sha256":"b".repeat(64),
+            "track_id":7,"manually_enrolled":true
+        }]});
+        assert!(references_doc(Some(&serde_json::to_vec(&valid).unwrap()), athlete).is_ok());
+        let mut wrong = valid.clone();
+        wrong["photos"][0]["manually_enrolled"] = json!(false);
+        assert!(references_doc(Some(&serde_json::to_vec(&wrong).unwrap()), athlete).is_err());
+        let mut wrong = valid.clone();
+        wrong["photos"][0]["filename"] = json!("../secret.jpg");
+        assert!(references_doc(Some(&serde_json::to_vec(&wrong).unwrap()), athlete).is_err());
+        let mut wrong = valid.clone();
+        wrong["photos"]
+            .as_array_mut()
+            .unwrap()
+            .push(valid["photos"][0].clone());
+        assert!(references_doc(Some(&serde_json::to_vec(&wrong).unwrap()), athlete).is_err());
+    }
     #[test]
     fn photo_crop_is_bounded_and_rejects_corrupted_geometry() {
         assert_eq!(crop_box([0.2, 0.1, 0.4, 0.7], 640, 360).unwrap().len(), 4);
