@@ -537,6 +537,50 @@ pub async fn status(
     Ok(Json(data))
 }
 
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ActiveQuery {
+    project_id: String,
+}
+
+/// Read-only reconnect point for the browser after reload or tab switches.
+/// Does not create or restart GPU inference, and never exposes another
+/// project's running job.
+pub async fn active(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<ActiveQuery>,
+) -> ApiResult<Value> {
+    storage::project_id(&query.project_id)?;
+    projects::existing_project(&state, &query.project_id)?;
+    let guard = state.full_inference.current.lock().await;
+    Ok(Json(active_for_project(&query.project_id, guard.as_ref())))
+}
+
+/// Scoped serializer, independent of HTTP state. A job owned by another
+/// project must look idle (no ID, model or video metadata leakage).
+fn active_for_project(project_id: &str, job: Option<&Active>) -> Value {
+    let status = job
+        .filter(|a| a.project_id == project_id)
+        .map(|a| snapshot(&a.status));
+    if let Some(status) = status {
+        if terminal(&status.phase) {
+            json!({"schema":"volley-native-active-gpu/1",
+                "project_id":project_id,"active":false,
+                "phase":status.phase,"last_job_id":status.job_id})
+        } else {
+            json!({"schema":"volley-native-active-gpu/1",
+                "project_id":project_id,"active":true,
+                "job_id":status.job_id,"video":status.video,
+                "model":status.model,"phase":status.phase,
+                "progress_percent":status.progress_percent,
+                "decoded_frames":status.decoded_frames})
+        }
+    } else {
+        json!({"schema":"volley-native-active-gpu/1",
+            "project_id":project_id,"active":false,"phase":"idle"})
+    }
+}
+
 pub async fn cancel(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -594,6 +638,43 @@ pub(crate) async fn stop_for_project_archive(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn active_gpu_status_reconnect_is_project_scoped_and_never_starts_job() {
+        let project_id = "123456abcdef";
+        let job = Active {
+            id: "abcdef0123456789abcdef0123456789".into(),
+            project_id: project_id.into(),
+            cancel: Arc::new(AtomicBool::new(false)),
+            status: Arc::new(StdMutex::new(JobStatus {
+                job_id: "abcdef0123456789abcdef0123456789".into(),
+                project_id: project_id.into(),
+                video: "fixture.mp4".into(),
+                model: ModelKind::Ball,
+                phase: "running".into(),
+                windows: 4,
+                decoded_frames: 36,
+                progress_percent: 32.5,
+                error: None,
+                output_manifest: None,
+            })),
+        };
+        let active = active_for_project(project_id, Some(&job));
+        assert_eq!(active["schema"], "volley-native-active-gpu/1");
+        assert_eq!(active["active"], true);
+        assert_eq!(active["job_id"], job.id);
+        assert_eq!(active["progress_percent"], 32.5);
+        let foreign = active_for_project("fedcba654321", Some(&job));
+        assert_eq!(foreign["active"], false);
+        assert_eq!(foreign["phase"], "idle");
+        assert!(foreign.get("job_id").is_none());
+        assert!(foreign.get("video").is_none());
+        assert_eq!(active_for_project(project_id, None)["active"], false);
+        job.status.lock().unwrap().phase = "complete".into();
+        let ended = active_for_project(project_id, Some(&job));
+        assert_eq!(ended["active"], false);
+        assert_eq!(ended["phase"], "complete");
+        assert_eq!(ended["last_job_id"], job.id);
+    }
     #[test]
     fn raw_jsonl_is_append_only_and_hashable() {
         let root = std::env::temp_dir().join(format!("volley-full-gpu-writer-{}", Uuid::new_v4()));

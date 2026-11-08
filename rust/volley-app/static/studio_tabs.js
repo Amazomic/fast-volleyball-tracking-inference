@@ -227,6 +227,7 @@
     }
     ui.video.value=videos.includes(old)?old:(videos.length===1?videos[0]:"");
     await loadOverview();
+    await restoreGpu();
   };
   const pollGpu=async()=>{
     if(!state.gpuJob)return;
@@ -252,6 +253,32 @@
       ui.gpuCancel.disabled=true;
       failure(e);
     }
+  };
+  // Reattach to an already-running native GPU job after a browser refresh.
+  // No start request or GPU operation happens during this read-only probe.
+  const restoreGpu=async()=>{
+    if(state.gpuJob)return;
+    const project=projectId();
+    if(!project||state.tab!=="analysis")return;
+    const generation=state.analysisGeneration;
+    const currentVideo=ui.video.value;
+    const reply=await get("/api/inference/native/full/active",{project_id:project});
+    if(generation!==state.analysisGeneration||state.tab!=="analysis"||
+      project!==projectId()||currentVideo!==ui.video.value)return;
+    if(reply.schema!=="volley-native-active-gpu/1"||
+      reply.project_id!==project)throw Error("Неизвестный статус GPU-задачи");
+    if(reply.active!==true)return;
+    if(typeof reply.job_id!=="string"||!/^[a-f0-9]{32}$/.test(reply.job_id)){
+      throw Error("Некорректный ID активного GPU-запуска");
+    }
+    state.gpuJob=reply.job_id;
+    state.gpuProject=project;
+    ui.ball.disabled=true;ui.ravel.disabled=true;
+    ui.gpuCancel.disabled=false;
+    announce("Подключено к уже работающему GPU-инференсу, новый запуск не требуется.");
+    stopGpuPolling();
+    await pollGpu();
+    if(state.gpuJob)state.gpuTimer=setInterval(pollGpu,1800);
   };
   const startGpu=async model=>{
     if(state.gpuJob){
@@ -371,6 +398,10 @@
   ui.ravel.addEventListener("click",()=>startGpu("players"));
   ui.gpuCancel.addEventListener("click",cancelGpu);
   ui.project.addEventListener("change",()=>{
+    state.analysisGeneration++;
+    if(state.tab==="analysis")loadVideos().catch(failure);
+  });
+  window.addEventListener("volley:project-ready",()=>{
     state.analysisGeneration++;
     if(state.tab==="analysis")loadVideos().catch(failure);
   });

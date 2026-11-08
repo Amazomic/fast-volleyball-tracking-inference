@@ -152,6 +152,7 @@
     ui.project.value=rows.some(x=>x.id===prev)?prev:
       (rows.length===1?rows[0].id:"");
     s.project=ui.project.value;
+    window.dispatchEvent(new Event("volley:project-ready"));
     await loadRuns(s.project===prev?s.run:"");
   };
   const loadRuns=async(preferred="")=>{

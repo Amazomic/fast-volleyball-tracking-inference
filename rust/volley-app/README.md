@@ -400,3 +400,7 @@ node scripts/ci/test_volley_web_wasm.mjs
 ```
 
 The pinned `.wasm` is intentionally tracked so a normal backend build serves a working module without requiring the developer machine to have rustup wasm target installed. The full frontend is **not** yet written in WASM: API/DOM logic is still a small JavaScript bridge pending later migration and proper graphical browser testing.
+
+### GPU progress reconnect on browser reload
+
+The experimental Analysis tab resumes a **currently running** native RAVEL or VballNet job after page reload by reading `GET /api/inference/native/full/active?project_id=<project>`. The Rust server validates project ownership and returns `{ "schema":"volley-native-active-gpu/1", "active":true, "job_id":..., "phase":..., "progress_percent":... }`, or `active:false` when idle. The endpoint is read-only and does not cause a new GPU inference job. Polling and cancel continue to use the same job ID. Jobs interrupted by a full server restart remain marked interrupted; this is not job checkpoint/resume functionality.

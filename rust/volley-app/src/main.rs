@@ -120,6 +120,7 @@ async fn rewrite_status(
             "GET/POST /api/cpu/native/rallies/marks (revisioned gold candidates)",
             "GET /studio/rust (standalone experimental preview/montage UI)",
             "GET /api/studio/rust/analysis-overview (metadata-only native GPU/CPU stage inventory)",
+            "GET /api/inference/native/full/active (read-only reconnect to running GPU job)",
             "POST /api/montage/native/start-from-rally-candidates (explicit manual selection, original media)",
             "GET /api/cpu/native/touches (read isolated Touch snapshot manifest)",
             "GET /api/cpu/native/retrack (read isolated tracking manifest)",
@@ -221,6 +222,10 @@ fn app(state: Arc<AppState>) -> Router {
         .route(
             "/api/inference/native/full/start",
             post(inference_full::start),
+        )
+        .route(
+            "/api/inference/native/full/active",
+            get(inference_full::active),
         )
         .route(
             "/api/inference/native/full/status",
