@@ -4,6 +4,7 @@ pub mod frame_windows;
 pub mod montage;
 pub mod preparation;
 pub mod preview;
+pub mod raw_decoder;
 
 use serde::Serialize;
 use serde_json::Value;
