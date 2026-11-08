@@ -354,7 +354,9 @@ mod tests {
         let peaks = select_touch_peaks(
             &predictions,
             PeakConfig {
-                threshold: 0.2,
+                // A single 0.95 event averages to 0.19 with five-frame
+                // zero-padded smoothing; threshold 0.2 would suppress it.
+                threshold: 0.18,
                 smooth: 5,
                 min_gap: 10,
             },
@@ -364,6 +366,27 @@ mod tests {
         assert!(peaks.iter().any(|r| (r.frame_index as i32 - 90).abs() <= 2));
         assert!(peaks.iter().all(|r| r.track_id.is_none()));
     }
+    #[test]
+    fn isolated_touch_below_smoothed_threshold_is_not_confirmed() {
+        let candidates = [TouchCandidate {
+            frame: 90,
+            probability: 0.95,
+            bbox: [0., 0., 4., 4.],
+        }];
+        // Python np.convolve([...,0.95], ones(5)/5, "same") peaks
+        // at 0.19, so threshold 0.20 must reject this sparse event.
+        let peaks = select_touch_peaks(
+            &candidates,
+            PeakConfig {
+                threshold: 0.2,
+                smooth: 5,
+                min_gap: 10,
+            },
+        )
+        .unwrap();
+        assert!(peaks.is_empty());
+    }
+
     #[test]
     fn low_iou_never_creates_an_identity() {
         let mut peaks = vec![TouchPeak {
