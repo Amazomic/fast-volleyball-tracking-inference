@@ -32,10 +32,10 @@ const SOURCE_FILE: &str = "detections.jsonl";
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct FuseRequest {
-    project_id: String,
-    video: String,
-    ravel_job_id: String,
-    vball_job_id: String,
+    pub(crate) project_id: String,
+    pub(crate) video: String,
+    pub(crate) ravel_job_id: String,
+    pub(crate) vball_job_id: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -293,7 +293,7 @@ fn write_fused(
     Ok((format!("{:x}", hash.finalize()), totals))
 }
 
-fn do_fusion(state: &AppState, request: &FuseRequest) -> Result<Value, ApiError> {
+pub(crate) fn do_fusion(state: &AppState, request: &FuseRequest) -> Result<Value, ApiError> {
     if !state.writes_enabled {
         return Err(storage::conflict(
             "GPU fusion writes require isolated VOLLEY_RUST_DATA_ROOT",

@@ -752,6 +752,7 @@ mod tests {
         fs::create_dir_all(repo.join("project")).unwrap();
         fs::create_dir_all(repo.join("models")).unwrap();
         fs::create_dir_all(data.join("projects").join(id)).unwrap();
+        let mut completed_jobs = Vec::new();
         for model in [ModelKind::Ball, ModelKind::Players] {
             let onnx = model.filename();
             let source = source_models.join(onnx);
@@ -873,7 +874,39 @@ mod tests {
                 "Complete {model:?} {device:?} native JSONL job: {} bytes SHA256 verified",
                 evidence.len()
             );
+            completed_jobs.push(job_id);
         }
+        // The end-to-end native CPU entry point must verify both real CUDA
+        // model hashes before publishing the paired raw frame stream.
+        let merged = crate::inference_fusion::do_fusion(
+            &state,
+            &crate::inference_fusion::FuseRequest {
+                project_id: id.into(),
+                video: video.into(),
+                vball_job_id: completed_jobs[0].clone(),
+                ravel_job_id: completed_jobs[1].clone(),
+            },
+        )
+        .unwrap();
+        assert_eq!(merged["schema"], "volley-native-gpu-fusion/1");
+        assert_eq!(merged["emitted_frames"], 18);
+        assert_eq!(merged["windows"], 2);
+        assert_eq!(merged["player_track_ids_confirmed"], false);
+        assert_eq!(merged["cpu_processing_complete"], false);
+        let output = data
+            .join("projects")
+            .join(id)
+            .join("native_gpu_fusions")
+            .join(merged["fusion_id"].as_str().unwrap())
+            .join("frames.jsonl");
+        let fused = fs::read(&output).unwrap();
+        let digest = format!("{:x}", Sha256::digest(&fused));
+        assert_eq!(merged["sha256"].as_str(), Some(digest.as_str()));
+        assert_eq!(fused.iter().filter(|&&byte| byte == 10u8).count(), 18);
+        println!(
+            "Real {device:?} RAVEL/VballNet fusion: 18 verified frame rows, {} bytes",
+            fused.len()
+        );
         assert_eq!(fs::metadata(&original).unwrap().len(), source_size);
         assert!(!repo.join("results").exists());
         fs::remove_dir_all(root).unwrap();
