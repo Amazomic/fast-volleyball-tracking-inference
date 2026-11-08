@@ -333,7 +333,7 @@ to `POST /api/quick-reel/native/start`. Track progress through `GET /api/quick-r
 
 ## Experimental native ONNX clip kernel
 
-The native `volley-inference` crate uses ONNX Runtime 1.22's **dynamic** C ABI. Deploy an actual matching `onnxruntime.dll` (Windows) or `libonnxruntime.so` (Linux) and set `ORT_DYLIB_PATH`, including working CUDA/CuDNN provider dependencies for GPU mode. The current WSL build does **not** have a validated ONNX Runtime/CUDA shared library; compilation is not evidence that GPU execution is operational. There is no Python inference fallback.
+The native `volley-inference` crate uses ONNX Runtime 1.22's **dynamic** C ABI. Deploy an actual matching `onnxruntime.dll` (Windows) or `libonnxruntime.so` (Linux) and set `ORT_DYLIB_PATH`, including working CUDA/CuDNN provider dependencies for GPU mode. A targeted CPU/CUDA smoke with the installed native ORT 1.31.1 libraries succeeded on RTX 5070 Ti (see `scripts/ci/smoke_rust_ort.sh`), including an actual forward pass for both models; deployment still requires an ABI-compatible ORT library and installed CUDA/CuDNN dependencies. Compilation alone is not evidence that a new target machine works. There is no Python inference fallback.
 
 To inspect the model contracts, call `POST /api/inference/native/preflight`:
 
@@ -366,3 +366,7 @@ After separate model jobs complete for the same project/video at **stride 9**, c
 ### CPU-only provisional Track ID replay (no GPU rerun)
 
 After a verified RAVEL/VballNet fusion, `POST /api/cpu/native/retrack` with `{"project_id":"<12 hex>","video":"match.mp4","fusion_id":"<32 hex>","settings":{"min_player_score":0.30,"nms_iou":0.88,"max_gap_frames":12,"min_assignment_score":0.48,"ambiguity_margin":0.11}}`. `settings` can be omitted for defaults; each explicit replay creates its own isolated `native_cpu_replays/<replay_id>/tracked_frames.jsonl` with a SHA-256 manifest. Inspect via `GET /api/cpu/native/retrack?project_id=...&replay_id=...`. The IDs are **provisional machine tracklets**, not reviewed athlete identities. Two simultaneous players never share a single ID, and ambiguous/long gaps remain for subsequent review. Neither the source fusion nor the expensive GPU model runs are rewritten.
+
+### Recalculate motion-gated Touch proposals without GPU
+
+Run `POST /api/cpu/native/touches` with `{ "project_id":"<12 hex>", "video":"match.mp4", "replay_id":"<32 hex>", "settings": { "threshold":0.50, "smooth":5, "min_gap":10, "max_reach_ratio":0.35, "min_interval_sec":0.35 } }`. Settings are optional; each request creates a new immutable `native_cpu_touch_runs/<touch_id>/touch_candidates.jsonl` with its own SHA-256 manifest. Inspect `GET /api/cpu/native/touches?project_id=...&touch_id=...`. Source player Track IDs are provisional, physical contact signals are **candidates only**, and action types/athlete ownership are not automatically confirmed. The CPU stage requires all three: RAVEL temporal signal, proximity/reach and a speed or direction change after motion/gravity analysis. It rejects spurious Touch near VballNet/RAVEL source switches and does not invoke the GPU again.

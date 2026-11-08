@@ -936,6 +936,32 @@ mod tests {
             "Native {device:?} models -> fusion -> CPU tracking: {} bytes SHA256 verified",
             replay.len()
         );
+        let touch_run = crate::cpu_touches::process(
+            &state,
+            &crate::cpu_touches::TouchRequest {
+                project_id: id.into(),
+                video: video.into(),
+                replay_id: cpu_replay["replay_id"].as_str().unwrap().into(),
+                settings: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(touch_run["schema"], "volley-native-cpu-touch-proposals/1");
+        assert_eq!(touch_run["frames"], 18);
+        assert_eq!(touch_run["contacts_authoritatively_confirmed"], false);
+        assert_eq!(touch_run["athlete_identities_verified"], false);
+        assert_eq!(touch_run["cpu_processing_complete"], false);
+        let touch_path = data
+            .join("projects")
+            .join(id)
+            .join("native_cpu_touch_runs")
+            .join(touch_run["touch_id"].as_str().unwrap())
+            .join("touch_candidates.jsonl");
+        let touch_bytes = fs::read(touch_path).unwrap();
+        let touch_hash = format!("{:x}", Sha256::digest(&touch_bytes));
+        assert_eq!(touch_run["sha256"].as_str(), Some(touch_hash.as_str()));
+        println!("Native {device:?} complete GPU -> fusion -> tracklet -> motion Touch replay: {} events",
+            touch_run["touch_candidates"]);
         assert_eq!(fs::metadata(&original).unwrap().len(), source_size);
         assert!(!repo.join("results").exists());
         fs::remove_dir_all(root).unwrap();

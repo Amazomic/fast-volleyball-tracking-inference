@@ -2,6 +2,7 @@
 mod analysis_runs;
 mod catalog;
 mod cpu_retrack;
+mod cpu_touches;
 mod history;
 mod inference_clip;
 mod inference_evidence;
@@ -106,6 +107,8 @@ async fn rewrite_status(
             "POST /api/inference/native/fuse (verify and merge two raw model runs)",
             "GET /api/inference/native/fusion (isolated fusion manifest)",
             "POST /api/cpu/native/retrack (CPU provisional Track ID snapshot)",
+            "POST /api/cpu/native/touches (CPU-only motion-gated Touch candidates)",
+            "GET /api/cpu/native/touches (read isolated Touch snapshot manifest)",
             "GET /api/cpu/native/retrack (read isolated tracking manifest)",
             "POST /api/cpu/touch-preview (read-only RAVEL diagnostics)",
             "POST /api/players/continuity-preview (read-only geometry candidates)",
@@ -201,6 +204,10 @@ fn app(state: Arc<AppState>) -> Router {
         .route(
             "/api/cpu/native/retrack",
             post(cpu_retrack::replay).get(cpu_retrack::status),
+        )
+        .route(
+            "/api/cpu/native/touches",
+            post(cpu_touches::run).get(cpu_touches::status),
         )
         .route("/api/cpu/touch-preview", post(touch_preview::touch_preview))
         .route(

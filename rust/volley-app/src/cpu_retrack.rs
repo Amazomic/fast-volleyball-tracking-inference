@@ -31,13 +31,13 @@ const MAX_INPUT_BYTES: u64 = 64 * 1024 * 1024 * 1024;
 const MAX_ROW_BYTES: usize = 512 * 1024;
 const OUTPUT_FILE: &str = "tracked_frames.jsonl";
 
-fn opaque_id(id: &str) -> bool {
+pub(crate) fn opaque_id(id: &str) -> bool {
     id.len() == 32
         && id
             .bytes()
             .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())
 }
-fn safe_file(folder: &Path, name: &str, limit: u64) -> Result<PathBuf, String> {
+pub(crate) fn safe_file(folder: &Path, name: &str, limit: u64) -> Result<PathBuf, String> {
     let path = folder.join(name);
     let info = fs::symlink_metadata(&path).map_err(|e| format!("Read CPU input {name}: {e}"))?;
     if info.file_type().is_symlink() || !info.is_file() || info.len() > limit {
@@ -45,7 +45,7 @@ fn safe_file(folder: &Path, name: &str, limit: u64) -> Result<PathBuf, String> {
     }
     Ok(path)
 }
-fn safe_folder(path: &Path) -> Result<(), String> {
+pub(crate) fn safe_folder(path: &Path) -> Result<(), String> {
     let info = fs::symlink_metadata(path).map_err(|e| format!("Read folder: {e}"))?;
     if info.file_type().is_symlink() || !info.is_dir() {
         return Err("CPU input folder must be a real directory".into());
@@ -79,12 +79,12 @@ struct FusedFrame {
     touches_confirmed: bool,
 }
 
-struct BoundedReader {
+pub(crate) struct BoundedReader {
     reader: BufReader<File>,
     hash: Sha256,
 }
 impl BoundedReader {
-    fn open(path: &Path) -> Result<Self, String> {
+    pub(crate) fn open(path: &Path) -> Result<Self, String> {
         Ok(Self {
             reader: BufReader::new(
                 File::open(path).map_err(|e| format!("Open source frames: {e}"))?,
@@ -92,7 +92,7 @@ impl BoundedReader {
             hash: Sha256::new(),
         })
     }
-    fn line(&mut self) -> Result<Option<Vec<u8>>, String> {
+    pub(crate) fn line(&mut self) -> Result<Option<Vec<u8>>, String> {
         let mut line = Vec::with_capacity(2048);
         loop {
             let chunk = self
@@ -121,7 +121,7 @@ impl BoundedReader {
             }
         }
     }
-    fn finish(self) -> String {
+    pub(crate) fn finish(self) -> String {
         format!("{:x}", self.hash.finalize())
     }
 }
