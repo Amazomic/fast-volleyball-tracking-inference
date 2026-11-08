@@ -1,0 +1,11 @@
+[package]
+name = "volley-web"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Minimal Rust/WASM UI selection state engine for Volleyball Studio"
+
+[lib]
+crate-type = ["rlib", "cdylib"]
+
+[dependencies]
