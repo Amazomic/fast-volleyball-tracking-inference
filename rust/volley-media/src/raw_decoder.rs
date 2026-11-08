@@ -191,10 +191,163 @@ pub fn decode_windows(
     })
 }
 
+/// Stream an entire prepared video without loading it into RAM or asking
+/// FFmpeg to seek for each window. Only whole nine-frame clips are emitted;
+/// any final 1..8 frames that cannot form a full window are left unused.
+/// The result is valid only after the FFmpeg process exits successfully.
+pub fn decode_full_video(
+    source: &Path,
+    pixels: ModelPixels,
+    stride: usize,
+    cancelled: &AtomicBool,
+    mut consume: impl FnMut(RawWindow) -> Result<(), String>,
+) -> Result<DecodeSummary, String> {
+    if !(1..=CLIP_FRAMES).contains(&stride) {
+        return Err("Full-video decode stride must be between 1 and 9".into());
+    }
+    if cancelled.load(Ordering::Acquire) {
+        return Err("cancelled".into());
+    }
+    if !source.is_file() {
+        return Err("Prepared source video is not a file".into());
+    }
+    let (w, h, channels, format) = pixels.dimensions();
+    let mut ff = Command::new("ffmpeg");
+    ff.args([
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-nostdin",
+        "-threads",
+        "4",
+    ])
+    .arg("-i")
+    .arg(source)
+    .args(["-map", "0:v:0", "-an", "-sn", "-dn"])
+    .args([
+        "-vf",
+        &format!("scale={w}:{h}:flags=bilinear,format={format}"),
+    ])
+    .args(["-pix_fmt", format, "-f", "rawvideo", "pipe:1"]);
+    ff.stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = ManagedChild(
+        ff.spawn()
+            .map_err(|e| format!("FFmpeg full-video launch failed: {e}"))?,
+    );
+    let stdout = child.0.stdout.take().ok_or("FFmpeg stdout missing")?;
+    let stderr = child.0.stderr.take().ok_or("FFmpeg stderr missing")?;
+    let errors_reader = stderr_tail(stderr);
+    let result = (|| -> Result<DecodeSummary, String> {
+        let mut reader = FrameWindows::new(stdout, w * h * channels, stride)
+            .map_err(|e| format!("Video frame reader: {e}"))?;
+        let mut produced = 0usize;
+        loop {
+            if cancelled.load(Ordering::Acquire) {
+                return Err("cancelled".into());
+            }
+            let Some(window) = reader
+                .next_window()
+                .map_err(|e| format!("Video raw-frame decoding: {e}"))?
+            else {
+                break;
+            };
+            if window.first_frame != (produced as u64) * stride as u64 {
+                return Err("Full-video frame sequence is not monotonic".into());
+            }
+            consume(window)?;
+            produced += 1;
+        }
+        if cancelled.load(Ordering::Acquire) {
+            return Err("cancelled".into());
+        }
+        if produced == 0 {
+            return Err("Video does not contain a complete nine-frame model window".into());
+        }
+        let status = child.0.wait().map_err(|e| format!("Wait FFmpeg: {e}"))?;
+        if !status.success() {
+            return Err(format!("FFmpeg exited with {status}"));
+        }
+        Ok(DecodeSummary {
+            first_frame: 0,
+            windows: produced,
+            decoded_frames: reader.decoded_frames(),
+            stride,
+        })
+    })();
+    if result.is_err() {
+        let _ = child.0.kill();
+        let _ = child.0.wait();
+    }
+    let reported = errors_reader
+        .join()
+        .unwrap_or_else(|_| "FFmpeg stderr reader panicked".into());
+    result.map_err(|e| {
+        if reported.trim().is_empty() {
+            e
+        } else {
+            format!(
+                "{e}: {}",
+                reported.trim().chars().take(500).collect::<String>()
+            )
+        }
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::{fs, process::Command};
+    #[test]
+    fn full_video_stream_covers_complete_windows_only_and_can_cancel() {
+        if Command::new("ffmpeg").arg("-version").output().is_err() {
+            return;
+        }
+        let root =
+            std::env::temp_dir().join(format!("volley-full-raw-windows-{}", std::process::id()));
+        fs::create_dir_all(&root).unwrap();
+        let source = root.join("synthetic.mp4");
+        let status = Command::new("ffmpeg")
+            .args([
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "testsrc2=size=64x64:rate=30:duration=0.6",
+                "-an",
+                "-c:v",
+                "mpeg4",
+                "-y",
+            ])
+            .arg(&source)
+            .status()
+            .unwrap();
+        assert!(status.success());
+        let cancelled = AtomicBool::new(false);
+        let mut frame_ids = Vec::new();
+        let summary = decode_full_video(&source, ModelPixels::BallGray, 4, &cancelled, |win| {
+            assert_eq!(win.data.len(), 9 * 512 * 288);
+            frame_ids.push(win.first_frame);
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(frame_ids, vec![0, 4, 8]);
+        assert_eq!(summary.windows, 3);
+        assert_eq!(summary.decoded_frames, 18);
+        // A separate invocation fails instead of inventing a complete
+        // full-video result from an interrupted callback.
+        let aborted = AtomicBool::new(false);
+        let result = decode_full_video(&source, ModelPixels::BallGray, 9, &aborted, |_| {
+            aborted.store(true, Ordering::Release);
+            Ok(())
+        });
+        assert!(result.unwrap_err().contains("cancelled"));
+        let _ = fs::remove_dir_all(root);
+    }
+
     #[test]
     fn bounded_window_schedule_checks_range() {
         assert_eq!(checked_total_frames(0, 3, 9).unwrap(), 27);
