@@ -56,6 +56,12 @@ pub struct ReidReport {
     pub threshold_percent: u8,
     pub method: &'static str,
     pub similarity_type: &'static str,
+    /// High-cosine pairs vetoed because two tracks are visible simultaneously.
+    pub co_visible_veto_count: usize,
+    /// High-cosine pairs blocked by distinct confirmed athlete owners.
+    pub confirmed_owner_veto_count: usize,
+    /// High-cosine pairs that are too visually ambiguous to propose safely.
+    pub ambiguous_lookalike_veto_count: usize,
     pub confirmed: bool,
 }
 
@@ -308,12 +314,25 @@ pub fn build_groups(
         .map(|i| (i, BTreeSet::from([i])))
         .collect::<HashMap<_, _>>();
     let mut accepted = Vec::new();
+    let mut co_visible_veto_count = 0usize;
+    let mut confirmed_owner_veto_count = 0usize;
+    let mut ambiguous_lookalike_veto_count = 0usize;
     for candidate in candidates {
         let Candidate { i, j, sim } = candidate;
-        if !compatible(tracks[i], tracks[j], owners)
-            || ambiguous(i, j, sim, &matrix, &tracks)
-            || ambiguous(j, i, sim, &matrix, &tracks)
+        if overlap(tracks[i], tracks[j]) {
+            co_visible_veto_count += 1;
+            continue;
+        }
+        if owners
+            .get(&tracks[i].id)
+            .zip(owners.get(&tracks[j].id))
+            .is_some_and(|(a, b)| a != b)
         {
+            confirmed_owner_veto_count += 1;
+            continue;
+        }
+        if ambiguous(i, j, sim, &matrix, &tracks) || ambiguous(j, i, sim, &matrix, &tracks) {
+            ambiguous_lookalike_veto_count += 1;
             continue;
         }
         if mode == FeatureMode::ColorFallback {
@@ -418,6 +437,9 @@ pub fn build_groups(
         threshold_percent,
         method: mode.as_str(),
         similarity_type: "cosine_similarity_not_probability",
+        co_visible_veto_count,
+        confirmed_owner_veto_count,
+        ambiguous_lookalike_veto_count,
         confirmed: false,
     })
 }
@@ -485,6 +507,59 @@ mod tests {
             },
             other
         ]));
+    }
+    #[test]
+    fn two_identical_appearance_lookalikes_never_merge_when_covisible() {
+        // Synthetic beach-volleyball fixture: two almost identical players
+        // are on the court together, then each reacquires a new Track ID.
+        // Unreviewed appearance cosine alone cannot safely disambiguate them.
+        let tracks = vec![
+            track(1, 0, 30),
+            track(2, 0, 30),
+            track(3, 40, 70),
+            track(4, 40, 70),
+        ];
+        let vectors = vec![
+            feat(1, &[1.0, 0.0]),
+            feat(2, &[0.9999, 0.01]),
+            feat(3, &[1.0, 0.0]),
+            feat(4, &[0.9999, 0.01]),
+        ];
+        let report = build_groups(
+            &vectors,
+            &tracks,
+            &HashMap::new(),
+            &HashSet::new(),
+            FeatureMode::OpenVino,
+            90,
+        )
+        .unwrap();
+        assert!(
+            report.groups.is_empty(),
+            "Ambiguous lookalikes must remain separate"
+        );
+        assert!(!report.confirmed);
+        assert!(report.co_visible_veto_count >= 2);
+        assert!(report.ambiguous_lookalike_veto_count >= 1);
+        assert_eq!(report.unmatched_ids, ["1", "2", "3", "4"]);
+    }
+    #[test]
+    fn distinct_manual_owners_override_identical_high_cosine() {
+        let tracks = vec![track(11, 0, 10), track(22, 11, 30)];
+        let vectors = vec![feat(11, &[1.0, 0.0]), feat(22, &[1.0, 0.0])];
+        let owner = HashMap::from([(11, "person-a".to_owned()), (22, "person-b".to_owned())]);
+        let report = build_groups(
+            &vectors,
+            &tracks,
+            &owner,
+            &HashSet::new(),
+            FeatureMode::OpenVino,
+            95,
+        )
+        .unwrap();
+        assert_eq!(report.confirmed_owner_veto_count, 1);
+        assert!(report.groups.is_empty());
+        assert!(!report.confirmed);
     }
     #[test]
     fn overlapping_players_never_become_same_person() {

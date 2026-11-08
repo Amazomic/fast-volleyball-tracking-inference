@@ -1,8 +1,8 @@
 {
     "schema":  "volley-rust-stage-roadmap/1",
     "plannedTotal":  85,
-    "lastRecorded":  64,
-    "nextStage":  65,
+    "lastRecorded":  65,
+    "nextStage":  66,
     "estimateNote":  "85 — текущий ориентир планирования, не обещание неизменного объема; этап != готовая подсистема. При пересмотре плана обновлять JSON, Markdown и журнал в одном коммите.",
     "stages":  [
                    {
@@ -521,8 +521,9 @@
                        "number":  65,
                        "title":  "Проверка одновременной видимости и отсутствия подмены игроков",
                        "area":  "ReID",
-                       "status":  "planned",
-                       "acceptance":  "Co-occurrence blocks incorrect merges, rejects lookalikes in sample fixture"
+                       "status":  "recorded",
+                       "acceptance":  "Co-occurrence blocks incorrect merges, rejects lookalikes in sample fixture",
+                       "journalSection":  65
                    },
                    {
                        "number":  66,

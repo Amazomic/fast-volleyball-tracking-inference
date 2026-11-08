@@ -1007,6 +1007,9 @@ fn review_response(
         "threshold_percent":threshold,"writable":can_write,
         "groups":preview["groups"],"unmatched_ids":preview["unmatched_ids"],
         "embedded_count":preview["embedded_count"],
+        "co_visible_veto_count":preview["co_visible_veto_count"],
+        "confirmed_owner_veto_count":preview["confirmed_owner_veto_count"],
+        "ambiguous_lookalike_veto_count":preview["ambiguous_lookalike_veto_count"],
         "suppressed_ids":doc.suppressed_ids,
         "similarity_type":"cosine_similarity_not_probability",
         "auto_assign_enabled":false,"confirmed":false

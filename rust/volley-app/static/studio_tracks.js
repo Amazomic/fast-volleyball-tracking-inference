@@ -295,7 +295,10 @@
       item.append(label,choose);reviewGroups.append(item);
     }
     reviewNote("Групп: "+groups.length+" · признаков: "+record.embedded_count+
-      " · автоматическая привязка отключена.");
+      " · отклонено: совместно в кадре "+(record.co_visible_veto_count||0)+
+      ", разные подтверждённые игроки "+(record.confirmed_owner_veto_count||0)+
+      ", визуальная неоднозначность "+(record.ambiguous_lookalike_veto_count||0)+
+      " · автопривязка отключена.");
   };
   const reviewLoad=async()=>{
     if(!reviewReady()){reviewNote("Выберите CPU-версию и порог 55–99%.",true);return;}
