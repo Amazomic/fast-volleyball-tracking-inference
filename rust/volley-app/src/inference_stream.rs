@@ -24,8 +24,8 @@ use volley_media::{
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ScanRequest {
-    project_id: String,
-    video: String,
+    pub(crate) project_id: String,
+    pub(crate) video: String,
     model: ModelKind,
     #[serde(default)]
     first_frame: u64,
@@ -80,7 +80,7 @@ fn checked_range(request: &ScanRequest, duration: f64) -> Result<(u64, u64), Str
     Ok((request.first_frame, end))
 }
 
-fn source_stamp(path: &std::path::Path) -> Result<(u64, u128), String> {
+pub(crate) fn source_stamp(path: &std::path::Path) -> Result<(u64, u128), String> {
     let meta = fs::metadata(path).map_err(|e| format!("Source file changed: {e}"))?;
     let ns = meta
         .modified()
@@ -188,6 +188,7 @@ pub async fn scan(
             "first_frame":summary.first_frame,
             "decoded_frames":summary.decoded_frames,
             "stride":summary.stride,
+            "prepared_source":{"size_bytes":before.0,"mtime_ns":before.1},
             "tensor_layout":layout,
             "proposals":proposals,
             "raw_model_candidates_only":true,

@@ -3,6 +3,7 @@ mod analysis_runs;
 mod catalog;
 mod history;
 mod inference_clip;
+mod inference_evidence;
 mod inference_native;
 mod inference_stream;
 mod montage;
@@ -93,6 +94,8 @@ async fn rewrite_status(
             "POST /api/inference/native/preflight (read-only model + optional ONNX sessions)",
             "POST /api/inference/native/clip-preview (one actual 9-frame window, read-only)",
             "POST /api/inference/native/window-scan (bounded multi-window ONNX diagnostic, read-only)",
+            "POST /api/inference/native/evidence/save (isolated raw candidate snapshot)",
+            "GET /api/inference/native/evidence (read/list isolated snapshots)",
             "POST /api/cpu/touch-preview (read-only RAVEL diagnostics)",
             "POST /api/players/continuity-preview (read-only geometry candidates)",
             "POST /api/players/reid-native/preview (saved embeddings, read-only)",
@@ -158,6 +161,14 @@ fn app(state: Arc<AppState>) -> Router {
         .route(
             "/api/inference/native/window-scan",
             post(inference_stream::scan),
+        )
+        .route(
+            "/api/inference/native/evidence/save",
+            post(inference_evidence::save),
+        )
+        .route(
+            "/api/inference/native/evidence",
+            get(inference_evidence::read),
         )
         .route("/api/cpu/touch-preview", post(touch_preview::touch_preview))
         .route(

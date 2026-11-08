@@ -25,7 +25,7 @@ pub struct ArchiveRequest {
 /// This per-project lock is advisory across Rust Studio instances. It is
 /// intentionally separate from the short-lived registry mutex and held for
 /// the entire archive/cancellation transaction.
-fn archive_guard(state: &AppState, id: &str) -> Result<File, ApiError> {
+pub(crate) fn archive_guard(state: &AppState, id: &str) -> Result<File, ApiError> {
     if !state.writes_enabled {
         return Err(storage::conflict(
             "Архивирование Rust-проекта требует отдельного VOLLEY_RUST_DATA_ROOT",

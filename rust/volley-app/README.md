@@ -82,6 +82,8 @@ POST /api/quick-reel/native/cancel  cancel only the currently active Quick Reel
 POST /api/inference/native/preflight    inspect VballNet/RAVEL sidecars, optionally open ORT sessions
 POST /api/inference/native/clip-preview  one real 9-frame ONNX inference from a project prepared video
 POST /api/inference/native/window-scan   multi-window FFmpeg→persistent ONNX scan (1–120 windows; no cache writes)
+POST /api/inference/native/evidence/save  isolated immutable raw-model candidate snapshot (not GPU run)
+GET  /api/inference/native/evidence?project_id=...&evidence_id=...  list/read bounded snapshots
 POST /api/cpu/touch-preview          read-only RAVEL Touch proposals and motion-confirmed contacts for explicit run/video
 ```
 
