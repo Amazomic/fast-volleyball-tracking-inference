@@ -1,6 +1,6 @@
 # Volleyball Studio — complete Rust rewrite coverage
 
-Status: **IMPLEMENTATION IN PROGRESS — NOT COMPLETE**. Owner decision 2026-11-07: finish ALL Rust functionality, **then** run complete testing/adaptation, **then** compare with the frozen Python version. This inventory is a coverage map, not a release checklist performed incrementally. Keep actual completion truthful.
+Status: **IMPLEMENTATION IN PROGRESS — NOT COMPLETE**. Architecture and single-owner rules: [RUST_ARCHITECTURE.md](RUST_ARCHITECTURE.md); machine-checkable feature owners: [RUST_CANONICAL_OWNERS.json](RUST_CANONICAL_OWNERS.json). Every new stage must begin with history/route/schema discovery, then run `node scripts/ci/check_rust_ownership.mjs --self-test` before committing. Owner decision 2026-11-07: finish ALL Rust functionality, **then** run complete testing/adaptation, **then** compare with the frozen Python version. This inventory is a coverage map, not a release checklist performed incrementally. Keep actual completion truthful.
 
 ## Definition of complete
 
