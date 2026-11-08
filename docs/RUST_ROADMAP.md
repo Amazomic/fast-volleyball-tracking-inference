@@ -1,0 +1,223 @@
+# Дорожная карта Rust-миграции Volleyball Studio
+
+Источник данных: `docs/RUST_ROADMAP.json`. Команда генерации: `node scripts/ci/check_rust_roadmap.mjs --write`; проверка: `node scripts/ci/check_rust_roadmap.mjs --check --self-test`.
+
+## Общий прогресс
+
+**Последний записанный этап: 53 / 85. Следующий: 54 / 85.**
+
+В журнале: 47 практических этапов и 6 начальных архитектурных разделов. Осталось по текущему плану: 32.
+
+**Важно:** счётчик описывает покрытие дорожной карты, а НЕ процент готовности продукта. У старых этапов могли остаться неподключённые адаптеры и незавершённая функциональность.
+
+85 — текущий ориентир планирования, не обещание неизменного объема; этап != готовая подсистема. При пересмотре плана обновлять JSON, Markdown и журнал в одном коммите.
+
+После тестов и коммита следующего этапа добавьте запись в `docs/RUST_MIGRATION.md`, переведите соответствующий JSON-пункт в `recorded`, обновите `lastRecorded`/`nextStage` и повторно сгенерируйте карту. Изменение числа этапов требует явного пересмотра плана и общей проверки.
+
+## Все 85 этапов
+
+Статусы: **Основа** = архитектурная запись, **Записан** = результат/частичный шаг в журнале, **План** = ещё не реализовано.
+
+### Основание и правила
+
+| Этап | Состояние | Задача / критерий |
+|---:|---|---|
+| 1 / 85 | Основа | Target architecture and safety contract |
+| 2 / 85 | Основа | Complete rewrite plan — replaces incremental test gates |
+| 3 / 85 | Основа | Final evaluation and rollback protocol |
+| 4 / 85 | Основа | Stage log (append, never silently rewrite historic results) |
+| 5 / 85 | Основа | Handoff to the next AI / engineer |
+| 6 / 85 | Основа | Superseding decision |
+
+### Существующие CPU-функции
+
+| Этап | Состояние | Задача / критерий |
+|---:|---|---|
+| 7 / 85 | Записан | R01 initial implementation checkpoint |
+| 8 / 85 | Записан | Full rewrite continuation: native project/catalog/history/media layers |
+| 9 / 85 | Записан | Native Rust video-preparation lifecycle |
+| 10 / 85 | Записан | Rust-native HTTP preview and prepared MP4 streaming |
+| 11 / 85 | Записан | Native-source manual montage engine and sandbox API |
+| 12 / 85 | Записан | Native CPU-evidence rally reconstruction and selection |
+| 13 / 85 | Записан | Rust-only RAVEL Touch peak and motion diagnostic |
+| 14 / 85 | Записан | Native provisional player continuity and safe Touch grouping |
+| 15 / 85 | Записан | Rust-native cached ReID comparison |
+| 16 / 85 | Записан | Isolated Rust manual player identities |
+| 17 / 85 | Записан | Native manual ReID candidate group merge/split |
+| 18 / 85 | Записан | Native CPU player touch/action statistics |
+| 19 / 85 | Записан | Native personalized full-rally montage selection |
+| 20 / 85 | Записан | Native gold-marked rallies and montage filters |
+| 21 / 85 | Записан | Rust Quick Reel independent selection, preparation and job state |
+
+### Нативный GPU/ONNX
+
+| Этап | Состояние | Задача / критерий |
+|---:|---|---|
+| 22 / 85 | Записан | Native ONNX Runtime one-clip GPU inference kernel |
+| 23 / 85 | Записан | Native global player catalog editor |
+| 24 / 85 | Записан | Safe WSL Rust developer launch command |
+| 25 / 85 | Записан | Isolated Rust project archival and task cancellation |
+| 26 / 85 | Записан | Bounded raw-frame streaming windows and shared ONNX input layout |
+| 27 / 85 | Записан | Single-FFmpeg raw-frame window streaming |
+| 28 / 85 | Записан | Persistent ONNX session over bounded native FFmpeg stream |
+| 29 / 85 | Записан | Versioned isolated native ONNX proposal evidence |
+| 30 / 85 | Записан | Touch smoothing regression fixture corrected; full Rust unit suite green |
+| 31 / 85 | Записан | Native RAVEL-013/VballNet ONNX detection decoder |
+| 32 / 85 | Записан | Full prepared-video FFmpeg streaming input for native ONNX |
+| 33 / 85 | Записан | Expose unconfirmed per-frame detections from native ONNX scans |
+| 34 / 85 | Записан | Native full-video model detection job lifecycle |
+| 35 / 85 | Записан | Actual ORT CPU/CUDA inference and isolated full-video GPU smoke |
+| 36 / 85 | Записан | Verified RAVEL + VballNet source fusion into isolated CPU replay frames |
+| 37 / 85 | Записан | End-to-end native CUDA model fusion smoke |
+
+### CPU-трекинг и предпросмотр
+
+| Этап | Состояние | Задача / критерий |
+|---:|---|---|
+| 38 / 85 | Записан | Provisional CPU Track ID reconstruction from RAVEL boxes |
+| 39 / 85 | Записан | Isolated CPU replay of provisional player tracks from immutable GPU fusion |
+| 40 / 85 | Записан | CPU physical Touch gating for native fused detections |
+| 41 / 85 | Записан | Full native CPU motion-gated Touch proposal replay |
+| 42 / 85 | Записан | Streaming ball-supported provisional rally reconstruction |
+| 43 / 85 | Записан | Native CPU rally snapshot linked to verified Track ID and Touch inputs |
+| 44 / 85 | Записан | Conservative event evidence labels and safe provisional clip boundaries |
+| 45 / 85 | Записан | Verified native rally preview and manual original-source montage route |
+| 46 / 85 | Записан | Rust-served first standalone preview/montage UI, native gold marks and global filtered paging |
+
+### Rust/WASM UI и игроки
+
+| Этап | Состояние | Задача / критерий |
+|---:|---|---|
+| 47 / 85 | Записан | First real Rust/WebAssembly client engine compiled and executed |
+| 48 / 85 | Записан | Native Analysis and Players tabs with explicit GPU/CPU version flow |
+| 49 / 85 | Записан | GPU job progress survives Rust Studio page reload |
+| 50 / 85 | Записан | Standalone native provisional Track ID ↔ project player manual registry |
+| 51 / 85 | Записан | Native Track ID manual review UI and verified crop-on-demand photo |
+
+### Защита архитектуры
+
+| Этап | Состояние | Задача / критерий |
+|---:|---|---|
+| 52 / 85 | Записан | Duplication audit, canonical ownership map and mandatory no-repeat gate |
+| 53 / 85 | Записан | Remove duplicated mutable sidecar implementations, preserve legacy/native schemas |
+
+### Контракты
+
+| Этап | Состояние | Задача / критерий |
+|---:|---|---|
+| 54 / 85 | План | Типизированный EvidenceSource и проверка происхождения. Критерий: Единый legacy/native дискриминатор с тестами разных FPS, SHA и track-id scope |
+
+### Игроки
+
+| Этап | Состояние | Задача / критерий |
+|---:|---|---|
+| 55 / 85 | План | Два адаптера чтения Track ID для одного identity-сервиса. Критерий: Legacy/natively source readers implement one review input contract without copying IDs |
+| 56 / 85 | План | Единая политика ручного назначения, исключения и отмены. Критерий: One mutation policy with tests for collision, stale revision, and exclusions |
+| 57 / 85 | План | Перевод старых и нативных API на общий identity-сервис. Критерий: Both route contracts persist existing JSON and pass old-project test fixtures |
+
+### ReID
+
+| Этап | Состояние | Задача / критерий |
+|---:|---|---|
+| 58 / 85 | План | Проверка совпадений и конфликтов визуальных ReID предложений. Критерий: Candidate score is distinguishable from verified identity; no overlap conflict |
+
+### Игроки
+
+| Этап | Состояние | Задача / критерий |
+|---:|---|---|
+| 59 / 85 | План | Общие подтверждённые identity решения для статистики и монтажа. Критерий: Consumers access same reviewed identity snapshot across both source readers |
+
+### ReID
+
+| Этап | Состояние | Задача / критерий |
+|---:|---|---|
+| 60 / 85 | План | Извлечение ReID embeddings из новых native Track ID. Критерий: One specified encoder, checkpoint fingerprint, tested embedding vectors |
+| 61 / 85 | План | Сохранение фотоэталонов игрока с проверкой источника. Критерий: Explicit manual photo enrollment, undo, versioned storage, stale-source refusal |
+| 62 / 85 | План | Версионирование модели embeddings и инвалидирование кеша. Критерий: Model versions cannot be compared across spaces; cache verified |
+| 63 / 85 | План | Общий ReID cosine и предложения между группами Track ID. Критерий: Use existing volley-core algorithm; test similarity against fixtures |
+| 64 / 85 | План | Ручная проверка ReID групп и порога автопредложений. Критерий: UI review/merge/split with explicit consent and conflict-safe revision |
+| 65 / 85 | План | Проверка одновременной видимости и отсутствия подмены игроков. Критерий: Co-occurrence blocks incorrect merges, rejects lookalikes in sample fixture |
+
+### Трекинг
+
+| Этап | Состояние | Задача / критерий |
+|---:|---|---|
+| 66 / 85 | План | Консервативная непрерывность Track ID при разрыве 3–4 секунды. Критерий: Configurable bounded gap, crossing collision tests and review-only guesses |
+
+### Касания
+
+| Этап | Состояние | Задача / критерий |
+|---:|---|---|
+| 67 / 85 | План | Единая траектория мяча и анализ экстремумов изменения движения. Критерий: Reuses existing core geometry and zero GPU reruns |
+| 68 / 85 | План | Подтверждение физически обоснованных касаний вместо геометрии. Критерий: Gated Touch data linked to rally and player snapshots; no false authority |
+
+### Розыгрыши
+
+| Этап | Состояние | Задача / критерий |
+|---:|---|---|
+| 69 / 85 | План | Сопоставление границ розыгрышей native/legacy. Критерий: Deterministic stable source intervals and annotated boundary tests |
+| 70 / 85 | План | Единая политика золотых отметок и прежние сохранения. Критерий: Adapters preserve existing IDs/stores without silent remap |
+| 71 / 85 | План | Единый selector розыгрышей для предпросмотра и монтажа. Критерий: One typed selection API consuming both formats |
+
+### События
+
+| Этап | Состояние | Задача / критерий |
+|---:|---|---|
+| 72 / 85 | План | Классификация подач, атак и блоков по подтверждённым событиям. Критерий: No fabricated actions when evidence insufficient |
+
+### Статистика
+
+| Этап | Состояние | Задача / критерий |
+|---:|---|---|
+| 73 / 85 | План | Пересчёт касаний конкретных игроков по всему проекту. Критерий: Verified athlete stats track provenance and avoid double count |
+| 74 / 85 | План | Панели статистики игрока и качества событий в UI. Критерий: Correct event counts and source-version diagnostics |
+
+### Монтаж
+
+| Этап | Состояние | Задача / критерий |
+|---:|---|---|
+| 75 / 85 | План | Единый рендер/монтаж из оригинала для обоих форматов. Критерий: One FFmpeg exporter, source resolution/quality tests |
+| 76 / 85 | План | Автонарезка лучших атак выбранного игрока. Критерий: Uses verified identity/action and manual override; cancels cleanly |
+| 77 / 85 | План | Вертикальный монтаж, аудиодорожка и проверка качества MP4. Критерий: Correct aspect and synchronized audio with 100% original clip extraction |
+
+### Quick Reel
+
+| Этап | Состояние | Задача / критерий |
+|---:|---|---|
+| 78 / 85 | План | Независимый Quick Reel: свежий GPU→CPU→монтаж. Критерий: Reuses only media preparation; no project inference reuse |
+| 79 / 85 | План | Quick Reel: выбор файла, отмена, прогресс и скачивание. Критерий: Full client flow, no stale file picker or duplicate jobs |
+
+### Совместимость
+
+| Этап | Состояние | Задача / критерий |
+|---:|---|---|
+| 80 / 85 | План | Совместимость старых проектов и безопасная очистка/архивация. Критерий: Reopen real old project; no user data destruction |
+
+### Интерфейс
+
+| Этап | Состояние | Задача / критерий |
+|---:|---|---|
+| 81 / 85 | План | Полноценный Rust/WASM интерфейс с RU/EN и настройками. Критерий: No legacy JS feature gaps; browser navigation and loading tests |
+
+### Развёртывание
+
+| Этап | Состояние | Задача / критерий |
+|---:|---|---|
+| 82 / 85 | План | Windows/WSL/Docker сборка, ресурсы и один рабочий экземпляр. Критерий: Stable launch/stop/restart, no Python service dependency |
+
+### Приёмка
+
+| Этап | Состояние | Задача / критерий |
+|---:|---|---|
+| 83 / 85 | План | Регрессионный аудит security, SHA, cancellation и кеша. Критерий: All CI gates, fault injection, cancellation, bounded RAM/VRAM |
+| 84 / 85 | План | Полный тест на размеченных матчах и сравнение с Python. Критерий: Measured touch/Track ID/rally quality, speed, GPU/RAM, montage fidelity |
+| 85 / 85 | План | Финальный выбор Rust-релиза или безопасного отката. Критерий: Accepted results, selected commit, reversible user-data-safe rollout |
+
+## Неизменяемые правила процесса
+
+- Перед каждым этапом проверять Git-историю, владельцев функций и уже написанный код.
+- Нельзя создавать второго владельца ReID, привязок, золотых отметок или монтажа.
+- Новые/старые форматы поддерживаются адаптерами, а не двумя бизнес-реализациями.
+- Завершение этапа требует тестов, коммита, записи в журнале и обновлённой карты.
+- Python Studio, основная ветка и оригиналы видео до финального сравнения не затрагиваются.
+- Готовность приложения подтверждается только реальными матчами и критериями паритета.

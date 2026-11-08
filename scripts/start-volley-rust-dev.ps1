@@ -44,6 +44,12 @@ mode="$5"
 cd "$repo/rust"
 if [ -f "$HOME/.cargo/env" ]; then source "$HOME/.cargo/env"; fi
 if [ "$operation" = check ]; then
+  if ! command -v node >/dev/null 2>&1; then
+    echo "Node.js is required for the Rust ownership audit in -CheckOnly mode" >&2
+    exit 1
+  fi
+  node "$repo/scripts/ci/check_rust_ownership.mjs" --self-test
+  node "$repo/scripts/ci/check_rust_roadmap.mjs" --check --self-test
   exec cargo check --workspace --offline
 fi
 export VOLLEY_RUST_BIND="$bind"
@@ -59,7 +65,24 @@ exec cargo run --offline -p volley-app
 $script = $script.Replace("`r`n", "`n")
 $wslDataArg = if ($DataRoot) { $DataRoot } else { "__default__" }
 Write-Host "Volleyball Studio Rust ($operation): $Bind, WSL $Distro, mode=$readOnlyFlag"
-& wsl.exe -d $Distro --exec bash -c $script "volley-rust" $repoWsl $Bind $wslDataArg $operation $readOnlyFlag
-if ($LASTEXITCODE -ne 0) {
-    throw "Rust developer launcher failed with exit code $LASTEXITCODE."
+# PowerShell 5.1 on Windows splits multiline bash -c arguments and pipes
+# native stdin as CRLF. Write an ephemeral UTF-8/LF script and run it as an
+# actual file through WSL. Settings stay positional argv, never shell source.
+$tmp = Join-Path $env:TEMP ("volley-rust-launch-" + [guid]::NewGuid().ToString("N") + ".sh")
+try {
+    [System.IO.File]::WriteAllText(
+        $tmp, $script.Replace("`r`n", "`n"),
+        (New-Object System.Text.UTF8Encoding($false))
+    )
+    $tmpWsl = (& wsl.exe -d $Distro --exec wslpath -a $tmp)
+    if ($LASTEXITCODE -ne 0 -or -not $tmpWsl) {
+        throw "Cannot translate temporary Rust launcher to WSL."
+    }
+    & wsl.exe -d $Distro --exec bash $tmpWsl.Trim() $repoWsl $Bind $wslDataArg $operation $readOnlyFlag
+    if ($LASTEXITCODE -ne 0) {
+        throw "Rust developer launcher failed with exit code $LASTEXITCODE."
+    }
+}
+finally {
+    Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
 }

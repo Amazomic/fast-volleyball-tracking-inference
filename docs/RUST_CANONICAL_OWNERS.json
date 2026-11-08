@@ -187,7 +187,7 @@
     {
       "id": "versioned_sidecar",
       "owner": "rust/volley-app/src/versioned_store.rs",
-      "status": "planned",
+      "status": "partial",
       "adapters": [],
       "routes": [],
       "stores": []

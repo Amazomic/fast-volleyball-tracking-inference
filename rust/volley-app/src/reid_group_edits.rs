@@ -5,6 +5,7 @@
 use crate::{
     analysis_runs, projects, rallies, reid_native,
     storage::{self, ApiError, ApiResult},
+    versioned_store::{self, revision},
     AppState,
 };
 use axum::{extract::State, http::HeaderMap, Json};
@@ -14,8 +15,7 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{
     collections::{BTreeSet, HashMap, HashSet},
-    fs::{self, File, OpenOptions},
-    io::Read,
+    fs::{self, OpenOptions},
     path::{Path, PathBuf},
     sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
@@ -93,31 +93,7 @@ fn unique_ids(values: &[String]) -> Result<Vec<String>, ApiError> {
 }
 
 fn read_raw(path: &Path) -> Result<Option<Vec<u8>>, ApiError> {
-    if let Ok(meta) = fs::symlink_metadata(path) {
-        if meta.file_type().is_symlink() || !meta.is_file() || meta.len() > MAX_GROUP_BYTES {
-            return Err(storage::bad_request(
-                "Неверный или слишком большой файл ReID-групп",
-            ));
-        }
-    }
-    let file = match File::open(path) {
-        Ok(file) => file,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(storage::internal(format!("ReID file: {error}"))),
-    };
-    let mut bytes = Vec::new();
-    file.take(MAX_GROUP_BYTES + 1)
-        .read_to_end(&mut bytes)
-        .map_err(|error| storage::internal(format!("Cannot read ReID groups: {error}")))?;
-    if bytes.len() as u64 > MAX_GROUP_BYTES {
-        return Err(storage::bad_request("ReID group file exceeds 16 MiB"));
-    }
-    Ok(Some(bytes))
-}
-
-fn revision(data: Option<&[u8]>) -> String {
-    data.map(|buf| format!("{:x}", Sha256::digest(buf)))
-        .unwrap_or_else(|| "absent".to_owned())
+    versioned_store::read_optional_bounded(path, MAX_GROUP_BYTES).map_err(storage::bad_request)
 }
 
 fn source_info(path: &Path) -> Result<(SystemTime, u64, Value), ApiError> {
@@ -651,7 +627,12 @@ fn compute(state: &AppState, req: GroupEditRequest) -> Result<Value, ApiError> {
         &excluded,
     )?;
     verify_source(&ctx)?;
-    storage::write_json_atomic(&ctx.group_file, &doc)?;
+    let parent = ctx
+        .group_file
+        .parent()
+        .ok_or_else(|| storage::internal("ReID group directory missing"))?;
+    versioned_store::write_json_checked(parent, &ctx.group_file, &doc, MAX_GROUP_BYTES)
+        .map_err(storage::bad_request)?;
     let updated =
         read_raw(&ctx.group_file)?.ok_or_else(|| storage::internal("ReID group write vanished"))?;
     let mut answer = response(&ctx, doc, revision(Some(&updated)), true);

@@ -42,6 +42,14 @@ def main(argv: list[str] | None = None) -> int:
         node = shutil.which("node")
         if not node:
             parser.error("Node.js not found; install Node.js 22+ or use --skip-ui")
+        # Prevent repeat implementations and stale X/Y stage claims in normal
+        # local PR checks, not only when using the Rust-only launcher.
+        for label, script in (
+            ("Rust canonical ownership", "scripts/ci/check_rust_ownership.mjs"),
+            ("Rust stage roadmap", "scripts/ci/check_rust_roadmap.mjs"),
+        ):
+            if not check(label, [node, script, "--self-test"]):
+                return 1
         for source in sorted((ROOT / "scripts/volleyball_ui/static").glob("*.js")):
             if not check("JavaScript syntax", [node, "--check", str(source)]):
                 return 1

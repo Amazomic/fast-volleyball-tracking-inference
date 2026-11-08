@@ -6,6 +6,7 @@ use crate::{
     cpu_retrack::{opaque_id, safe_file, safe_folder, BoundedReader},
     inference_stream, player_catalog, preparation, project_archive, projects,
     storage::{self, ApiError, ApiResult},
+    versioned_store::{self, revision},
     AppState,
 };
 use axum::{
@@ -15,7 +16,6 @@ use axum::{
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
-use sha2::{Digest, Sha256};
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
@@ -273,22 +273,8 @@ fn source(
         can_write: state.writes_enabled,
     })
 }
-fn revision(bytes: Option<&[u8]>) -> String {
-    bytes
-        .map(|b| format!("{:x}", Sha256::digest(b)))
-        .unwrap_or_else(|| "absent".into())
-}
 fn existing(sidecar: &Path) -> Result<Option<Vec<u8>>, String> {
-    match fs::symlink_metadata(sidecar) {
-        Ok(meta) if meta.file_type().is_symlink() || !meta.is_file() || meta.len() > MAX_LINKS => {
-            Err("Unsafe or oversized native track assignment file".into())
-        }
-        Ok(_) => fs::read(sidecar)
-            .map(Some)
-            .map_err(|e| format!("Read track assignment: {e}")),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(e) => Err(format!("Check player assignment: {e}")),
-    }
+    versioned_store::read_optional_bounded(sidecar, MAX_LINKS)
 }
 fn base_document(ctx: &Inputs) -> Value {
     json!({
@@ -427,7 +413,7 @@ fn change(state: &AppState, req: &TrackEdit) -> Result<Value, ApiError> {
             "Choose 1–200 unique IDs and a valid edit action",
         ));
     }
-    if req.expected_revision != "absent" && !valid_sha(&req.expected_revision) {
+    if !versioned_store::valid_revision(&req.expected_revision) {
         return Err(storage::bad_request("Invalid assignment revision"));
     }
     let ctx = source(state, &req.project_id, &req.video, &req.replay_id)?;
@@ -452,8 +438,7 @@ fn change(state: &AppState, req: &TrackEdit) -> Result<Value, ApiError> {
         ));
     }
     let before = existing(&ctx.sidecar).map_err(storage::bad_request)?;
-    let old_revision = revision(before.as_deref());
-    if old_revision != req.expected_revision {
+    if versioned_store::expect_revision(before.as_deref(), &req.expected_revision).is_err() {
         return Err(storage::conflict(
             "Track bindings changed; refresh the revision",
         ));
@@ -511,21 +496,8 @@ fn change(state: &AppState, req: &TrackEdit) -> Result<Value, ApiError> {
             .sidecar
             .parent()
             .ok_or_else(|| storage::internal("Link directory missing"))?;
-        match fs::symlink_metadata(parent) {
-            Ok(meta) if meta.file_type().is_symlink() || !meta.is_dir() => {
-                return Err(storage::bad_request("Unsafe assignment directory"))
-            }
-            Ok(_) => (),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => fs::create_dir(parent)
-                .map_err(|e| storage::internal(format!("Create assignment folder: {e}")))?,
-            Err(e) => return Err(storage::internal(format!("Inspect assignment folder: {e}"))),
-        }
-        if fs::symlink_metadata(&ctx.sidecar)
-            .is_ok_and(|m| m.file_type().is_symlink() || !m.is_file())
-        {
-            return Err(storage::bad_request("Unsafe Track ID assignment target"));
-        }
-        storage::write_json_atomic(&ctx.sidecar, &doc)?;
+        versioned_store::write_json_checked(parent, &ctx.sidecar, &doc, MAX_LINKS)
+            .map_err(storage::bad_request)?;
     }
     let new = existing(&ctx.sidecar).map_err(storage::bad_request)?;
     page(
@@ -695,6 +667,7 @@ pub async fn photo(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sha2::{Digest, Sha256};
     fn fixture() -> (PathBuf, Vec<u8>, String) {
         let root = std::env::temp_dir().join(format!("native-ids-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(&root).unwrap();

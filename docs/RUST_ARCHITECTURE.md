@@ -20,7 +20,7 @@ Every input must declare source_kind (legacy_cpu_cache OR native_gpu_cpu_replay)
 
 ## Feature ownership and what is genuinely duplicated
 
-Machine-readable ledger: docs/RUST_CANONICAL_OWNERS.json; mandatory audit: scripts/ci/check_rust_ownership.mjs.
+Machine-readable ledger: docs/RUST_CANONICAL_OWNERS.json; mandatory audit: scripts/ci/check_rust_ownership.mjs. The **complete numbered roadmap**, including the last recorded stage X / planned total Y, next stage and explicit future acceptance criteria, is docs/RUST_ROADMAP.md (generated from docs/RUST_ROADMAP.json). Its consistency gate is scripts/ci/check_rust_roadmap.mjs --check --self-test. The current 85-stage denominator is a planning estimate, not an indication of finished-feature percentage.
 
 | Domain | Canonical implementation | Adapters; preserve until migrated | Action |
 |---|---|---|---|
@@ -39,7 +39,7 @@ Machine-readable ledger: docs/RUST_CANONICAL_OWNERS.json; mandatory audit: scrip
 
 ## Mandatory workflow for EVERY new stage / every AI handoff
 
-**0. INVENTORY FIRST.** Read this file, docs/RUST_REWRITE_SCOPE.md, last 5 sections of docs/RUST_MIGRATION.md and inspect git log --all for the feature. Search all Rust modules, routes, event structs and stores for related functionality. Run the ownership audit. Classify the request as EXISTS / LEGACY-ADAPTER-ONLY / PARTIAL-NATIVE / MISSING. If it already exists: extend its canonical owner or create only a typed source adapter. Do not implement a parallel module.
+**0. INVENTORY FIRST.** Read this file, docs/RUST_ROADMAP.md (current X / total Y and numbered remaining stages), docs/RUST_REWRITE_SCOPE.md, last 5 sections of docs/RUST_MIGRATION.md and inspect git log --all for the feature. Search all Rust modules, routes, event structs and stores for related functionality. Run both the ownership audit and roadmap consistency gate. Classify the request as EXISTS / LEGACY-ADAPTER-ONLY / PARTIAL-NATIVE / MISSING. If it already exists: extend its canonical owner or create only a typed source adapter. Do not implement a parallel module.
 
 **1. CONTRACT BEFORE CODE.** Identify owner ledger row; input source kind, schema, version and time coordinates; immutable input and mutable sidecar path; exactly which stages are provisional; consumer list, old-project compatibility and tested migrations. Any new endpoint or schema must update the machine ledger in the SAME commit. If functionality crosses two stores, define the adapter boundary explicitly.
 
@@ -47,7 +47,7 @@ Machine-readable ledger: docs/RUST_CANONICAL_OWNERS.json; mandatory audit: scrip
 
 **3. VERIFY.** Run cargo fmt --all -- --check, cargo test --workspace --offline, cargo check --workspace --offline -q, node scripts/ci/check_rust_ownership.mjs, and targeted Rust/WASM + JavaScript checks for UI modifications. For inference changes run real CUDA smoke; for storage changes use an isolated real-MP4 integration fixture. Check source bytes and invariant statuses, not just HTTP 200. Final full match/benchmark comparison is only after whole rewrite per owner decision.
 
-**4. COMMIT AND PUBLISH EVERY COHERENT STAGE.** Commit code + test + ownership ledger + diary together, record SHA and active branch. Verify published Git tree exactly matches local tree before advancing the migration ref. Never alter master, production port 8765 or original user video/cache. Do not let later agents repeat work only because the diary says PARTIAL.
+**4. COMMIT AND PUBLISH EVERY COHERENT STAGE.** Commit code + test + ownership ledger + migration diary + updated 1-to-N roadmap together; a recorded stage must show its number out of the planned total (e.g. 53 / 85), the next stage and the remaining tasks. Run node scripts/ci/check_rust_roadmap.mjs --check --self-test. Record SHA and active branch. Verify published Git tree exactly matches local tree before advancing the migration ref. Never alter master, production port 8765 or original user video/cache. Do not let later agents repeat work only because the diary says PARTIAL.
 
 **5. MARK COMPLETENESS HONESTLY.** COMPLETE means canonical service works on new native evidence, preserves previously saved projects with a tested adapter, connects all consumers and UI, and passes focused tests. Otherwise PARTIAL. Handoff must name tested commit SHA, affected paths, open adapters, and next step.
 

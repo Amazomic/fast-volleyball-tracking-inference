@@ -5,6 +5,7 @@
 use crate::{
     analysis_runs, projects, rallies, reid_native,
     storage::{self, ApiError, ApiResult},
+    versioned_store::{self, revision as ident_revision},
     AppState,
 };
 use axum::{extract::State, http::HeaderMap, Json};
@@ -14,8 +15,7 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap, HashSet},
-    fs::{self, File, OpenOptions},
-    io::Read,
+    fs::{self, OpenOptions},
     path::{Path, PathBuf},
     sync::{Arc, Mutex, OnceLock},
     time::{SystemTime, UNIX_EPOCH},
@@ -81,37 +81,8 @@ fn value_id(value: &Value) -> Option<String> {
     };
     numeric_id(&id).map(|n| n.to_string())
 }
-fn ident_revision(raw: Option<&[u8]>) -> String {
-    match raw {
-        Some(bytes) => format!("{:x}", Sha256::digest(bytes)),
-        None => "absent".to_owned(),
-    }
-}
 fn raw_file(path: &Path) -> Result<Option<Vec<u8>>, ApiError> {
-    if let Ok(meta) = fs::symlink_metadata(path) {
-        if meta.file_type().is_symlink() || !meta.is_file() {
-            return Err(storage::bad_request(
-                "Player identities cannot be a symlink",
-            ));
-        }
-        if meta.len() > MAX_IDENTITIES_BYTES {
-            return Err(storage::bad_request("Player identities exceed 16 MiB"));
-        }
-    }
-    let reader = match File::open(path) {
-        Ok(file) => file,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(err) => return Err(storage::internal(format!("Open identities: {err}"))),
-    };
-    let mut bytes = Vec::new();
-    reader
-        .take(MAX_IDENTITIES_BYTES + 1)
-        .read_to_end(&mut bytes)
-        .map_err(|err| storage::internal(format!("Read identities: {err}")))?;
-    if bytes.len() as u64 > MAX_IDENTITIES_BYTES {
-        return Err(storage::bad_request("Player identities exceed size limit"));
-    }
-    Ok(Some(bytes))
+    versioned_store::read_optional_bounded(path, MAX_IDENTITIES_BYTES).map_err(storage::bad_request)
 }
 fn parse_document(raw: Option<&[u8]>) -> Result<Value, ApiError> {
     let Some(bytes) = raw else {
@@ -744,7 +715,12 @@ fn calculate(state: &AppState, req: IdentityRequest) -> Result<Value, ApiError> 
         guard_group_assignment(&ctx, &data, &ids)?;
     }
     apply(&mut data, &req, &ctx, &ids)?;
-    storage::write_json_atomic(&ctx.identity_path, &data)?;
+    let parent = ctx
+        .identity_path
+        .parent()
+        .ok_or_else(|| storage::internal("Player identity directory missing"))?;
+    versioned_store::write_json_checked(parent, &ctx.identity_path, &data, MAX_IDENTITIES_BYTES)
+        .map_err(storage::bad_request)?;
     let updated = raw_file(&ctx.identity_path)?
         .ok_or_else(|| storage::internal("Written identity JSON missing"))?;
     let mut payload = present(&ctx, &data, ident_revision(Some(&updated)))?;

@@ -5,6 +5,7 @@
 use crate::{
     analysis_runs, projects, rallies,
     storage::{self, ApiError, ApiResult},
+    versioned_store::{self, revision},
     AppState,
 };
 use axum::{extract::State, http::HeaderMap, Json};
@@ -14,8 +15,7 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{
     collections::HashSet,
-    fs::{self, File, OpenOptions},
-    io::Read,
+    fs::{self, OpenOptions},
     path::Path,
     sync::Arc,
 };
@@ -80,33 +80,7 @@ fn document_path(state: &AppState, project_id: &str) -> std::path::PathBuf {
         .join("rally_marks.json")
 }
 fn read_bytes(path: &Path) -> Result<Option<Vec<u8>>, ApiError> {
-    if let Ok(meta) = fs::symlink_metadata(path) {
-        if !meta.is_file() || meta.file_type().is_symlink() || meta.len() > MAX_MARKS_BYTES {
-            return Err(storage::bad_request(
-                "Файл золотых отметок повреждён или слишком большой",
-            ));
-        }
-    }
-    let file = match File::open(path) {
-        Ok(f) => f,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(e) => return Err(storage::internal(format!("Open rally marks: {e}"))),
-    };
-    let mut data = Vec::new();
-    file.take(MAX_MARKS_BYTES + 1)
-        .read_to_end(&mut data)
-        .map_err(|e| storage::internal(format!("Read rally marks: {e}")))?;
-    if data.len() as u64 > MAX_MARKS_BYTES {
-        return Err(storage::bad_request(
-            "Превышен размер списка золотых отметок",
-        ));
-    }
-    Ok(Some(data))
-}
-fn revision(bytes: Option<&[u8]>) -> String {
-    bytes
-        .map(|data| format!("{:x}", Sha256::digest(data)))
-        .unwrap_or_else(|| "absent".into())
+    versioned_store::read_optional_bounded(path, MAX_MARKS_BYTES).map_err(storage::bad_request)
 }
 fn parse(bytes: Option<&[u8]>) -> Result<Value, ApiError> {
     let Some(bytes) = bytes else {
@@ -278,7 +252,7 @@ fn mutate(state: &AppState, req: &MarksRequest) -> Result<Value, ApiError> {
     lock.lock_exclusive()
         .map_err(|e| storage::internal(format!("Cannot lock rally marks: {e}")))?;
     let old = read_bytes(&path)?;
-    if revision(old.as_deref()) != expected {
+    if versioned_store::expect_revision(old.as_deref(), expected).is_err() {
         return Err(storage::conflict(
             "Отметки изменились в другой вкладке; обновите карточки",
         ));
@@ -338,7 +312,8 @@ fn mutate(state: &AppState, req: &MarksRequest) -> Result<Value, ApiError> {
         }
     };
     let revision = if changed {
-        storage::write_json_atomic(&path, &doc)?;
+        versioned_store::write_json_checked(&project, &path, &doc, MAX_MARKS_BYTES)
+            .map_err(storage::bad_request)?;
         revision(read_bytes(&path)?.as_deref())
     } else {
         expected.to_owned()

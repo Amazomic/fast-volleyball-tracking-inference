@@ -4,6 +4,7 @@ use crate::{
     cpu_retrack::{opaque_id, safe_folder},
     native_rally_preview, project_archive, projects,
     storage::{self, ApiError, ApiResult},
+    versioned_store::{self, revision as digest},
     AppState,
 };
 use axum::{
@@ -13,8 +14,7 @@ use axum::{
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
-use sha2::{Digest, Sha256};
-use std::{collections::BTreeSet, fs, path::Path, sync::Arc};
+use std::{collections::BTreeSet, path::Path, sync::Arc};
 
 const MAX_FILE: u64 = 256 * 1024;
 const MAX_MARKS: usize = 5000;
@@ -41,27 +41,12 @@ fn valid_candidate(id: &str) -> bool {
             .bytes()
             .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
 }
-fn digest(bytes: Option<&[u8]>) -> String {
-    bytes
-        .map(|data| format!("{:x}", Sha256::digest(data)))
-        .unwrap_or_else(|| "absent".into())
-}
 fn bytes_for(root: &Path, run_id: &str) -> Result<Option<Vec<u8>>, String> {
     if !root.exists() {
         return Ok(None);
     }
     safe_folder(root)?;
-    let path = root.join(format!("{run_id}.json"));
-    match fs::symlink_metadata(&path) {
-        Ok(meta) if meta.file_type().is_symlink() || !meta.is_file() || meta.len() > MAX_FILE => {
-            Err("Unsafe or oversized native rally bookmark file".into())
-        }
-        Ok(_) => fs::read(path)
-            .map(Some)
-            .map_err(|e| format!("Read native bookmark file: {e}")),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(e) => Err(format!("Check native bookmark file: {e}")),
-    }
+    versioned_store::read_optional_bounded(&root.join(format!("{run_id}.json")), MAX_FILE)
 }
 fn decode(bytes: Option<&[u8]>, run_id: &str) -> Result<BTreeSet<String>, String> {
     let Some(raw) = bytes else {
@@ -107,31 +92,16 @@ fn render(
     })
 }
 fn store(root: &Path, run_id: &str, ids: &BTreeSet<String>) -> Result<(), String> {
-    match fs::symlink_metadata(root) {
-        Ok(meta) if meta.file_type().is_symlink() || !meta.is_dir() => {
-            return Err("Unsafe native rally marks directory".into())
-        }
-        Ok(_) => {}
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            fs::create_dir(root).map_err(|e| format!("Create marks root: {e}"))?
-        }
-        Err(e) => return Err(format!("Check marks root: {e}")),
-    }
-    let path = root.join(format!("{run_id}.json"));
-    // Always recheck the target; atomic writing itself must never follow a
-    // malicious preexisting symlink.
-    if fs::symlink_metadata(&path).is_ok_and(|m| m.file_type().is_symlink() || !m.is_file()) {
-        return Err("Unsafe native rally marks destination".into());
-    }
-    storage::write_json_atomic(
-        &path,
+    versioned_store::write_json_checked(
+        root,
+        &root.join(format!("{run_id}.json")),
         &json!({
             "schema":"volley-native-rally-marks/1",
             "rally_run_id":run_id,
             "candidate_ids":ids,
         }),
+        MAX_FILE,
     )
-    .map_err(|e| format!("Save native rally bookmarks: {e:?}"))
 }
 /// Internal, validation-only access for a run already checked under the
 /// project archive guard. Does not reenter the preview verifier.
@@ -203,8 +173,7 @@ fn change(state: &AppState, request: &SetMark) -> Result<Value, ApiError> {
         .join(&request.project_id)
         .join("native_rally_marks");
     let existing = bytes_for(&root, &request.rally_run_id).map_err(storage::bad_request)?;
-    let before = digest(existing.as_deref());
-    if before != request.expected_revision {
+    if versioned_store::expect_revision(existing.as_deref(), &request.expected_revision).is_err() {
         return Err(storage::conflict(
             "Gold marks changed; refresh before editing",
         ));
@@ -263,6 +232,8 @@ pub async fn set(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sha2::{Digest, Sha256};
+    use std::fs;
     #[test]
     fn mark_storage_revision_and_duplicate_protection() {
         let root = std::env::temp_dir().join(format!("volley-rally-gold-{}", uuid::Uuid::new_v4()));

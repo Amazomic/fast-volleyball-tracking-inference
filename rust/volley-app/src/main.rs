@@ -34,6 +34,7 @@ mod storage;
 mod studio_analysis;
 mod studio_web;
 mod touch_preview;
+mod versioned_store;
 
 use axum::{
     routing::{get, post},
