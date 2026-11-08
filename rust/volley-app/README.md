@@ -4,12 +4,13 @@
 
 ## Workspace
 
-The four maintained crates share `rust/Cargo.toml` and `rust/Cargo.lock`:
+The five maintained crates share `rust/Cargo.toml` and `rust/Cargo.lock`:
 
 - `volley-core`: deterministic geometry and motion kernels (historic S01/S02a).
 - `volley-media`: FFprobe metadata, rotation, target resolution, H.264/30 FPS readiness, schema-2 SHA256 prepared identities, JPEG preview rendering, bounded nine-frame raw-video windowing and original-quality montage planning.
 - `volley-app`: standalone HTTP server, JSON project/catalog/history APIs, isolated preparation and manual montage jobs, audio upload, FFmpeg orchestration and byte-range MP4 streaming.
-- `volley-inference`: native ONNX Runtime model sessions and one-clip execution; complete GPU streaming remains pending.
+- `volley-inference`: native ONNX Runtime model sessions, full-video raw GPU jobs and RAVEL/VballNet decoding.
+- `volley-web`: first real Rust/WebAssembly browser state engine for manual rally selection, with further client migration pending.
 
 For Windows, use the isolated WSL development launcher from the repository root:
 
@@ -100,7 +101,7 @@ POST /api/cpu/touch-preview          read-only RAVEL Touch proposals and motion-
 
 These routes are implementations of persisted formats, not a claim of complete API parity. Rust project creation/update now queues native preparation. Compatible original MP4s are reused without recoding; other sources are converted by native FFmpeg to H.264/30 FPS/YUV420P and stored in the separate content-addressed development cache. One converter runs at a time; file locks prevent duplicate publication, status tracks FFmpeg progress, and cancellation is persisted per project until an explicit retry. Existing projects may use legacy storage conventions not fully supported; player catalog loading does not yet run legacy photo/identity backfills.
 
-**Not implemented:** gold right-click context-menu UI, complete player/ball overlays or auto-follow/vertical crop, audio mixing with source sound, complete browser montage UI contract, cross-project adoption of old prepared results, general uploads, complete model/GPU inference and CPU touch inference, live ReID embedding extraction/manual photo operations, native report UI, on-demand fallback video segments, Quick Reel GPU/CPU inference and final export, full API, Rust/WASM browser UI and desktop packaging.
+**Not implemented:** complete gold right-click context-menu UI beyond the existing toggle, complete player/ball overlays or auto-follow/vertical crop, audio mixing with source sound, complete browser montage UI contract, cross-project adoption of old prepared results, general uploads, complete model/GPU inference and CPU touch inference, live ReID embedding extraction/manual photo operations, native report UI, on-demand fallback video segments, Quick Reel GPU/CPU inference and final export, full API, complete Rust/WASM browser UI parity and desktop packaging.
 
 Development compilation/smoke probes are allowed. User-directed order: finish all Rust functionality **first**, then comprehensive tests/adaptation, then compare final Rust vs saved Python; rollback to `checkpoint/pre-rust-2026-11-07` if needed. See `docs/RUST_REWRITE_SCOPE.md` and `docs/RUST_MIGRATION.md`.
 
@@ -381,4 +382,21 @@ Use `POST /api/cpu/native/rallies` with `{"project_id":"<12 hex>","video":"match
 
 ### Experimental Rust UI: project → CPU rallies → gold → manual montage
 
-On the **standalone Rust development server only**, open `http://127.0.0.1:8875/studio/rust`. This is the first self-contained Rust/Axum-served RU page, **not** the historical Python Studio site. It currently uses static HTML/CSS and a small same-origin JavaScript bridge, because only the Linux Rust target is installed in the current environment; real Rust/WASM frontend work is still pending. All security-sensitive business and data access operations run on the native Rust server. The page loads `GET /api/projects`, `GET /api/cpu/native/rallies/runs?project_id=...`, `GET /api/cpu/native/rallies/preview?project_id=...&rally_run_id=...&offset=0&limit=24&gold_filter=all|marked|unmarked`, `GET/POST /api/cpu/native/rallies/marks` and `POST /api/montage/native/start-from-rally-candidates`. Context/right-click on a rally card or use ☆/★ to store a gold bookmark for this exact saved run; marks require the previously returned SHA-256 revision and a writable **isolated** Rust data root. Filtering is server-side across the **entire** run before pagination. Choose whole rally IDs for manual montage; clips are reverified and rendered by the native Rust backend from original video, not the analysis proxy. The video element uses the prepared MP4 streaming route and may remain unavailable if that source has not been prepared in this sandbox. Project/run dropdowns are empty until you create isolated Rust project analyses and persist CPU rally snapshots. Real serve/attack scoring and auto montage are not yet supported; this UI cannot be presented as production-ready.
+On the **standalone Rust development server only**, open `http://127.0.0.1:8875/studio/rust`. This is the first self-contained Rust/Axum-served RU page, **not** the historical Python Studio site. It uses Rust-served static HTML/CSS, the real Rust/WebAssembly rally-selection engine, and a remaining same-origin JavaScript DOM/HTTP bridge; full Rust/WASM frontend replacement is still pending. All security-sensitive business and data access operations run on the native Rust server. The page loads `GET /api/projects`, `GET /api/cpu/native/rallies/runs?project_id=...`, `GET /api/cpu/native/rallies/preview?project_id=...&rally_run_id=...&offset=0&limit=24&gold_filter=all|marked|unmarked`, `GET/POST /api/cpu/native/rallies/marks` and `POST /api/montage/native/start-from-rally-candidates`. Context/right-click on a rally card or use ☆/★ to store a gold bookmark for this exact saved run; marks require the previously returned SHA-256 revision and a writable **isolated** Rust data root. Filtering is server-side across the **entire** run before pagination. Choose whole rally IDs for manual montage; clips are reverified and rendered by the native Rust backend from original video, not the analysis proxy. The video element uses the prepared MP4 streaming route and may remain unavailable if that source has not been prepared in this sandbox. Project/run dropdowns are empty until you create isolated Rust project analyses and persist CPU rally snapshots. Real serve/attack scoring and auto montage are not yet supported; this UI cannot be presented as production-ready.
+
+### Native Analysis and Players tabs (R06/R07, partial)
+
+In `http://127.0.0.1:8875/studio/rust`, use the **Анализ** tab to choose a source video, inspect the independently saved GPU models/fusion/Track ID/Touch/rally versions, explicitly start one native CUDA model, and trigger each CPU-only processing stage from verified previous outputs. The overview endpoint is `GET /api/studio/rust/analysis-overview?project_id=<12 hex>&video=<name>`; it reports bounded `metadata_only:true` lists, not proof that raw source checksums have just been verified. Specific processing endpoints perform that full verification. The **Игроки** tab calls the native global `POST /api/players/library/native` with action `read`/`create`/`rename`; saved updates require the returned `expected_revision`. This is not yet an automatic ReID/photo assignment UI.
+
+The manual preview's selected rally ID list is now **really Rust/WebAssembly**, not the earlier JavaScript Map. `rust/volley-web/src/lib.rs` compiles with `wasm32-unknown-unknown` to the deployed `rust/volley-app/static/volley_web.wasm`. Browser script `rust/volley-app/static/studio.js` loads the same-origin binary and calls the exported integer ABI through WASM memory. If the module fails to load, selection and montage are unavailable; no JavaScript identity-state fallback silently replaces it. Build/test:
+
+```bash
+cd rust
+cargo test -p volley-web --offline
+cargo build -p volley-web --release --target wasm32-unknown-unknown --offline
+cmp target/wasm32-unknown-unknown/release/volley_web.wasm volley-app/static/volley_web.wasm
+cd ..
+node scripts/ci/test_volley_web_wasm.mjs
+```
+
+The pinned `.wasm` is intentionally tracked so a normal backend build serves a working module without requiring the developer machine to have rustup wasm target installed. The full frontend is **not** yet written in WASM: API/DOM logic is still a small JavaScript bridge pending later migration and proper graphical browser testing.

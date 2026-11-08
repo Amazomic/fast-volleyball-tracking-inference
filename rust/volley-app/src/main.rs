@@ -30,6 +30,7 @@ mod reid_group_edits;
 mod reid_native;
 mod reid_npz;
 mod storage;
+mod studio_analysis;
 mod studio_web;
 mod touch_preview;
 
@@ -118,6 +119,7 @@ async fn rewrite_status(
             "GET /api/cpu/native/rallies/runs (browse isolated provisional snapshots)",
             "GET/POST /api/cpu/native/rallies/marks (revisioned gold candidates)",
             "GET /studio/rust (standalone experimental preview/montage UI)",
+            "GET /api/studio/rust/analysis-overview (metadata-only native GPU/CPU stage inventory)",
             "POST /api/montage/native/start-from-rally-candidates (explicit manual selection, original media)",
             "GET /api/cpu/native/touches (read isolated Touch snapshot manifest)",
             "GET /api/cpu/native/retrack (read isolated tracking manifest)",
@@ -145,8 +147,17 @@ fn app(state: Arc<AppState>) -> Router {
         .route("/internal/rewrite-status", get(rewrite_status))
         .route("/studio/rust", get(studio_web::index))
         .route("/studio/rust/app.js", get(studio_web::js))
+        .route("/studio/rust/tabs.js", get(studio_web::tabs_js))
+        .route(
+            "/studio/rust/selection.wasm",
+            get(studio_web::selection_wasm),
+        )
         .route("/studio/rust/app.css", get(studio_web::css))
         .route("/api/cpu/native/rallies/runs", get(studio_web::runs))
+        .route(
+            "/api/studio/rust/analysis-overview",
+            get(studio_analysis::get),
+        )
         .route(
             "/api/cpu/native/rallies/marks",
             get(native_rally_marks::get).post(native_rally_marks::set),

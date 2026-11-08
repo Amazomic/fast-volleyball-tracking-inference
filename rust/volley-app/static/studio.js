@@ -50,6 +50,64 @@
   const length=item=>(Math.max(0,
     (Number(item.detected_end_frame)-Number(item.detected_start_frame)+1)/30)).toFixed(1)+" с";
   const valid=id=>typeof id==="string"&&/^[a-f0-9]{24}$/.test(id);
+  // Manual selection is stored and ordered inside real Rust/WebAssembly.
+  // JavaScript stores only the human-readable labels for selected IDs.
+  let wasmReady=false;
+  class RustSelection {
+    constructor(exports){
+      this.exports=exports;
+      this.labels=new Map();
+      this.encoder=new TextEncoder();
+      this.decoder=new TextDecoder();
+      if(exports.volley_web_api_version()!==1||
+        !exports.memory ||exports.volley_selection_limit()!==80){
+        throw Error("Неверная версия Rust/WASM модуля выбора");
+      }
+      exports.volley_selection_clear();
+    }
+    use(id,fn){
+      if(!valid(id))return 0;
+      const ptr=this.exports.volley_id_buffer_ptr();
+      const destination=new Uint8Array(this.exports.memory.buffer,ptr,24);
+      destination.set(this.encoder.encode(id));
+      return fn();
+    }
+    get size(){return this.exports.volley_selection_count();}
+    has(id){return this.use(id,()=>this.exports.volley_selection_contains())===1;}
+    set(id,label){
+      const rc=this.use(id,()=>this.exports.volley_selection_add());
+      if(rc!==1)throw Error(rc===-1?
+        "Максимум 80 розыгрышей для одного монтажа":"Неверный ID розыгрыша");
+      this.labels.set(id,label);return this;
+    }
+    delete(id){
+      const found=this.has(id);
+      this.use(id,()=>this.exports.volley_selection_remove());
+      this.labels.delete(id);return found;
+    }
+    clear(){this.exports.volley_selection_clear();this.labels.clear();}
+    keys(){
+      const ids=[];
+      for(let i=0;i<this.size;i++){
+        if(this.exports.volley_selection_at(i)!==1)throw Error("Rust/WASM: ошибка чтения выбора");
+        const ptr=this.exports.volley_id_buffer_ptr();
+        const text=this.decoder.decode(new Uint8Array(this.exports.memory.buffer,ptr,24));
+        ids.push(text);
+      }
+      return ids.values();
+    }
+    values(){return Array.from(this.keys(),id=>this.labels.get(id)).values();}
+  }
+  const loadRustSelection=async()=>{
+    const response=await fetch("/studio/rust/selection.wasm",{
+      credentials:"same-origin",cache:"no-store"
+    });
+    if(!response.ok)throw Error("Модуль Rust/WASM недоступен: HTTP "+response.status);
+    const bytes=await response.arrayBuffer();
+    const module=await WebAssembly.instantiate(bytes,{});
+    s.selected=new RustSelection(module.instance.exports);
+    wasmReady=true;renderSelection();cards();
+  };
   const clearVideo=()=>{
     ui.video.pause();ui.video.removeAttribute("src");ui.video.load();
     s.videoKey="";s.current="";s.stopAt=null;
@@ -68,7 +126,7 @@
     ui.selectionText.textContent=s.selected.size?
       "Выбрано "+s.selected.size+" розыгрышей. Монтаж из оригинального видео в порядке выбора.":
       "Выберите один или несколько розыгрышей. Классификация атак и подач пока недоступна.";
-    ui.render.disabled=s.busy||!s.run||s.selected.size===0;
+    ui.render.disabled=!wasmReady||s.busy||!s.run||s.selected.size===0;
   };
   const reset=()=>{
     s.generation++;s.run="";s.video="";s.items=[];s.total=0;s.filtered=0;s.offset=0;
@@ -183,6 +241,7 @@
     }finally{s.busy=false;}
   };
   const toggleSelected=(item,add)=>{
+    if(!wasmReady){message("Модуль Rust/WASM ещё не загружен.","error");return;}
     const id=item.candidate_id;if(!valid(id))return;
     if(add&&s.selected.size>=80&&!s.selected.has(id)){
       message("В одном монтаже допускается не более 80 розыгрышей.","error");return;
@@ -264,6 +323,7 @@
       stats.append(touch,ball);
       const bottom=make("div","card-bottom"),label=make("label","pick");
       const check=make("input");check.type="checkbox";check.checked=s.selected.has(id);
+      check.disabled=!wasmReady;
       check.setAttribute("aria-label","Добавить в монтаж");
       check.addEventListener("change",e=>{e.stopPropagation();toggleSelected(item,check.checked);});
       label.append(check,document.createTextNode("В монтаж"));
@@ -309,7 +369,7 @@
     }catch(e){failed(e);}
   };
   const startMontage=async()=>{
-    if(s.busy||!s.run||!s.selected.size)return;
+    if(!wasmReady||s.busy||!s.run||!s.selected.size)return;
     const project=s.project,run=s.run,ids=Array.from(s.selected.keys());
     s.busy=true;ui.render.disabled=true;ui.download.classList.add("hidden");
     try{
@@ -361,6 +421,25 @@
   ui.video.addEventListener("error",()=>{
     if(s.videoKey)ui.viewDescription.textContent=
       "Видео недоступно для воспроизведения в этой Rust-версии. Проверьте подготовку видео.";
+  });
+  window.addEventListener("volley:open-native-rally",async event=>{
+    const target=event.detail||{};
+    if(typeof target.project!=="string"||typeof target.run!=="string"
+      ||target.project!==s.project)return;
+    try{
+      await loadRuns(target.run);
+      if(s.run===target.run){
+        document.getElementById("studio-nav-preview").click();
+        message("Открыта выбранная CPU-версия розыгрышей.","ok");
+      }else {
+        message("Выбранная версия не найдена в списке. Обновите данные.","error");
+      }
+    }catch(e){failed(e);}
+  });
+  loadRustSelection().catch(e=>{
+    wasmReady=false;
+    failed(new Error("Rust/WASM выбор недоступен: "+String(e.message||e)));
+    renderSelection();cards();
   });
   projects().catch(failed);
 })();

@@ -19,6 +19,8 @@ use std::{fs, sync::Arc, time::SystemTime};
 
 const CSS: &str = include_str!("../static/studio.css");
 const SCRIPT: &str = include_str!("../static/studio.js");
+const TABS_SCRIPT: &str = include_str!("../static/studio_tabs.js");
+const SELECTION_WASM: &[u8] = include_bytes!("../static/volley_web.wasm");
 const HTML: &str = include_str!("../static/studio.html");
 
 fn web_asset(mime: &'static str, contents: &'static str) -> Response {
@@ -36,7 +38,7 @@ fn web_asset(mime: &'static str, contents: &'static str) -> Response {
     response.headers_mut().insert(
         header::CONTENT_SECURITY_POLICY,
         HeaderValue::from_static(
-            "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; media-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
+            "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; connect-src 'self'; img-src 'self' data:; media-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
         ),
     );
     response
@@ -49,6 +51,24 @@ pub async fn css() -> Response {
 }
 pub async fn js() -> Response {
     web_asset("text/javascript; charset=utf-8", SCRIPT)
+}
+pub async fn tabs_js() -> Response {
+    web_asset("text/javascript; charset=utf-8", TABS_SCRIPT)
+}
+pub async fn selection_wasm() -> Response {
+    let mut response = SELECTION_WASM.to_vec().into_response();
+    response.headers_mut().insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/wasm"),
+    );
+    response.headers_mut().insert(
+        header::X_CONTENT_TYPE_OPTIONS,
+        HeaderValue::from_static("nosniff"),
+    );
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    response
 }
 
 #[derive(Debug, Deserialize)]
@@ -222,7 +242,7 @@ mod tests {
             stream.write_all(request.as_bytes()).await.unwrap();
             let mut reply = Vec::new();
             stream.read_to_end(&mut reply).await.unwrap();
-            String::from_utf8(reply).unwrap()
+            String::from_utf8_lossy(&reply).into_owned()
         }
         let root =
             std::env::temp_dir().join(format!("volley-studio-http-{}", uuid::Uuid::new_v4()));
@@ -260,6 +280,16 @@ mod tests {
         let js = get(addr, "/studio/rust/app.js").await;
         assert!(js.starts_with("HTTP/1.1 200 OK"));
         assert!(js.contains("rallies/marks"));
+        let tabs = get(addr, "/studio/rust/tabs.js").await;
+        assert!(tabs.starts_with("HTTP/1.1 200 OK"));
+        assert!(tabs.contains("/api/studio/rust/analysis-overview"));
+        assert!(tabs.contains("/api/players/library/native"));
+        let wasm = get(addr, "/studio/rust/selection.wasm").await;
+        assert!(wasm.starts_with("HTTP/1.1 200 OK"));
+        assert!(wasm.contains("application/wasm"));
+        assert!(SELECTION_WASM.len() > 1000);
+        assert_eq!(&SELECTION_WASM[..4], b"\0asm");
+        assert!(tabs.to_lowercase().contains("content-security-policy:"));
         let status = get(addr, "/internal/rewrite-status").await;
         assert!(status.contains("\"production_ready\":false"));
         let no_health = get(addr, "/api/health").await;
@@ -275,6 +305,10 @@ mod tests {
         assert!(page.headers().contains_key(header::CONTENT_SECURITY_POLICY));
         assert!(HTML.contains("id=\"studio-rallies\""));
         assert!(HTML.contains("id=\"studio-project\""));
+        assert!(HTML.contains("id=\"studio-analysis-view\""));
+        assert!(HTML.contains("id=\"studio-players-view\""));
+        assert!(HTML.contains("/studio/rust/tabs.js"));
+        assert!(!TABS_SCRIPT.contains("innerHTML"));
         assert!(!HTML.contains("http://127.0.0.1:8765"));
         assert!(SCRIPT.contains("textContent"));
         assert!(!SCRIPT.contains("innerHTML"));
