@@ -15,7 +15,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeSet, HashMap, HashSet},
     fs,
     path::{Path, PathBuf},
     sync::Arc,
@@ -37,6 +37,11 @@ pub struct PreviewQuery {
     pub offset: usize,
     #[serde(default = "default_limit")]
     pub limit: usize,
+    #[serde(default = "default_gold_filter")]
+    pub gold_filter: String,
+}
+fn default_gold_filter() -> String {
+    "all".into()
 }
 fn default_limit() -> usize {
     24
@@ -304,8 +309,15 @@ fn inspect_project(
 }
 #[derive(Clone)]
 enum Choice {
-    Page { offset: usize, limit: usize },
-    Manual { ids: Vec<String> },
+    Page {
+        offset: usize,
+        limit: usize,
+        filter: String,
+        marked: BTreeSet<String>,
+    },
+    Manual {
+        ids: Vec<String>,
+    },
 }
 struct PreviewContent {
     value: Value,
@@ -313,16 +325,25 @@ struct PreviewContent {
 }
 /// Hash-verify all source evidence; expose only 1..80 selected candidates.
 fn generate(run: &ValidatedRun, choice: Choice) -> Result<PreviewContent, String> {
-    let (offset, limit, manual) = match choice {
-        Choice::Page { offset, limit } => {
-            if limit == 0 || limit > MAX_PREVIEW || offset > MAX_RALLIES {
-                return Err("Invalid preview offset or page size".into());
+    let (offset, limit, manual, filter, marked) = match choice {
+        Choice::Page {
+            offset,
+            limit,
+            filter,
+            marked,
+        } => {
+            if limit == 0
+                || limit > MAX_PREVIEW
+                || offset > MAX_RALLIES
+                || !matches!(filter.as_str(), "all" | "marked" | "unmarked")
+            {
+                return Err("Invalid preview page size or gold filter".into());
             }
-            (offset, limit, None)
+            (offset, limit, None, filter, marked)
         }
         Choice::Manual { ids } => {
             validate_ids(&ids)?;
-            (0, ids.len(), Some(ids))
+            (0, ids.len(), Some(ids), "all".into(), BTreeSet::new())
         }
     };
     let mut reader = BoundedReader::open(&run.rally_file)?;
@@ -330,6 +351,8 @@ fn generate(run: &ValidatedRun, choice: Choice) -> Result<PreviewContent, String
     let mut intervals = Vec::<Interval>::new();
     let mut all_ids = HashMap::<String, usize>::new();
     let mut order = Vec::<String>::new();
+    let mut filtered_total = 0usize;
+    let mut page_indices = Vec::<usize>::new();
     while let Some(bytes) = reader.line()? {
         if intervals.len() >= MAX_RALLIES {
             return Err("Too many rally candidates".into());
@@ -369,7 +392,23 @@ fn generate(run: &ValidatedRun, choice: Choice) -> Result<PreviewContent, String
         let chosen = if let Some(ids) = manual.as_ref() {
             ids.iter().any(|id| id == &item.candidate_id)
         } else {
-            index >= offset && index < offset.saturating_add(limit)
+            let eligible = match filter.as_str() {
+                "marked" => marked.contains(&item.candidate_id),
+                "unmarked" => !marked.contains(&item.candidate_id),
+                _ => true,
+            };
+            if eligible {
+                let position = filtered_total;
+                filtered_total += 1;
+                if position >= offset && position < offset.saturating_add(limit) {
+                    page_indices.push(index);
+                    true
+                } else {
+                    false
+                }
+            } else {
+                false
+            }
         };
         if chosen {
             records.push(candidate);
@@ -399,7 +438,7 @@ fn generate(run: &ValidatedRun, choice: Choice) -> Result<PreviewContent, String
             })
             .collect::<Result<Vec<_>, _>>()?
     } else {
-        (offset.min(intervals.len())..offset.saturating_add(limit).min(intervals.len())).collect()
+        page_indices
     };
     let mut cards = Vec::<Value>::with_capacity(selected_indices.len());
     let mut clips = Vec::with_capacity(selected_indices.len());
@@ -487,6 +526,8 @@ fn generate(run: &ValidatedRun, choice: Choice) -> Result<PreviewContent, String
             "source_replay_id":run.replay_id,
             "source_touch_id":run.touch_id,
             "total_candidates":intervals.len(),
+            "filtered_candidates":if manual.is_some(){intervals.len()}else{filtered_total},
+            "gold_filter":filter,
             "offset":offset,
             "limit":limit,
             "items":cards,
@@ -502,6 +543,28 @@ fn generate(run: &ValidatedRun, choice: Choice) -> Result<PreviewContent, String
         clips,
     })
 }
+pub(crate) fn verify_run_or_candidate(
+    state: &AppState,
+    project_id: &str,
+    rally_run_id: &str,
+    candidate_id: Option<&str>,
+) -> Result<(), ApiError> {
+    let run = inspect_project(state, project_id, rally_run_id)?;
+    let selection = match candidate_id {
+        Some(id) => Choice::Manual {
+            ids: vec![id.to_owned()],
+        },
+        None => Choice::Page {
+            offset: 0,
+            limit: 1,
+            filter: "all".into(),
+            marked: BTreeSet::new(),
+        },
+    };
+    generate(&run, selection).map_err(storage::bad_request)?;
+    Ok(())
+}
+
 pub async fn preview(
     State(state): State<Arc<AppState>>,
     Query(query): Query<PreviewQuery>,
@@ -509,11 +572,18 @@ pub async fn preview(
     let result = tokio::task::spawn_blocking(move || -> Result<Value, ApiError> {
         let _guard = project_archive::archive_guard(&state, &query.project_id)?;
         let run = inspect_project(&state, &query.project_id, &query.rally_run_id)?;
+        let marked = crate::native_rally_marks::marked_for_run(
+            &state,
+            &query.project_id,
+            &query.rally_run_id,
+        )?;
         Ok(generate(
             &run,
             Choice::Page {
                 offset: query.offset,
                 limit: query.limit,
+                filter: query.gold_filter,
+                marked,
             },
         )
         .map_err(storage::bad_request)?
@@ -688,6 +758,8 @@ mod tests {
             Choice::Page {
                 offset: 1,
                 limit: 1,
+                filter: "all".into(),
+                marked: BTreeSet::new(),
             },
         )
         .unwrap();
@@ -709,6 +781,62 @@ mod tests {
         assert_eq!(page.value["automatic_montage_eligible"], false);
         fs::remove_dir_all(root).unwrap();
     }
+    #[test]
+    fn global_gold_filter_pages_over_the_full_saved_run() {
+        let (run, root) = fixture();
+        let first = expected_id(&run.replay_id, &run.touch_id, 30, 80);
+        let last = expected_id(&run.replay_id, &run.touch_id, 310, 380);
+        let marked = BTreeSet::from([first.clone(), last.clone()]);
+        let page = generate(
+            &run,
+            Choice::Page {
+                offset: 0,
+                limit: 1,
+                filter: "marked".into(),
+                marked: marked.clone(),
+            },
+        )
+        .unwrap();
+        assert_eq!(page.value["total_candidates"], 3);
+        assert_eq!(page.value["filtered_candidates"], 2);
+        assert_eq!(page.value["items"][0]["candidate_id"], first);
+        let second = generate(
+            &run,
+            Choice::Page {
+                offset: 1,
+                limit: 1,
+                filter: "marked".into(),
+                marked: marked.clone(),
+            },
+        )
+        .unwrap();
+        assert_eq!(second.value["filtered_candidates"], 2);
+        assert_eq!(second.value["items"][0]["candidate_id"], last);
+        let unmarked = generate(
+            &run,
+            Choice::Page {
+                offset: 0,
+                limit: 24,
+                filter: "unmarked".into(),
+                marked: marked.clone(),
+            },
+        )
+        .unwrap();
+        assert_eq!(unmarked.value["filtered_candidates"], 1);
+        assert_eq!(unmarked.value["items"][0]["detected_start_frame"], 95);
+        assert!(generate(
+            &run,
+            Choice::Page {
+                offset: 0,
+                limit: 24,
+                filter: "untrusted".into(),
+                marked
+            }
+        )
+        .is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn manual_select_by_immutable_ids_regardless_of_page_and_order() {
         let (run, root) = fixture();
@@ -793,7 +921,9 @@ mod tests {
             &run,
             Choice::Page {
                 offset: 0,
-                limit: 24
+                limit: 24,
+                filter: "all".into(),
+                marked: BTreeSet::new(),
             }
         )
         .is_err());
@@ -805,7 +935,9 @@ mod tests {
             &run,
             Choice::Page {
                 offset: 0,
-                limit: 24
+                limit: 24,
+                filter: "all".into(),
+                marked: BTreeSet::new(),
             }
         )
         .is_err());

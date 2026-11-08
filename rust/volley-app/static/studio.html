@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Volleyball Studio — Rust Preview</title>
+  <link rel="stylesheet" href="/studio/rust/app.css">
+  <script src="/studio/rust/app.js" defer></script>
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar" aria-label="Панель проекта">
+      <div class="brand"><span class="logo" aria-hidden="true">◈</span><div><strong>VOLLEYBALL</strong><span>STUDIO <i>RUST</i></span></div></div>
+      <div class="sidebar-heading">Проект и анализ</div>
+      <label class="field-label" for="studio-project">Проект</label>
+      <select id="studio-project" aria-label="Выберите проект"><option value="">Загрузка проектов…</option></select>
+      <label class="field-label" for="studio-run">CPU-версия розыгрышей</label>
+      <select id="studio-run" aria-label="Выберите сохранённый запуск"><option value="">Выберите проект</option></select>
+      <button id="studio-refresh" class="secondary full" type="button">↻ Обновить данные</button>
+      <div class="sidebar-divider"></div>
+      <div class="sidebar-heading">Навигация</div>
+      <nav class="menu">
+        <a class="active" href="/studio/rust" aria-current="page"><span>▣</span> Предпросмотр</a>
+        <a href="#studio-montage"><span>◧</span> Ручной монтаж</a>
+      </nav>
+      <div class="sidebar-foot">
+        <span class="dot"></span><span>Отдельная Rust-разработка</span>
+        <small>Данные исходного анализа не изменяются. Подтверждение событий игры ещё не реализовано.</small>
+      </div>
+    </aside>
+    <main class="main">
+      <header class="topbar">
+        <div class="breadcrumbs">Студия <span>›</span> <strong>Предпросмотр</strong></div>
+        <div class="dev-chip">ЭКСПЕРИМЕНТАЛЬНАЯ ВЕРСИЯ</div>
+      </header>
+      <div class="content">
+        <section class="intro">
+          <div><p class="eyebrow">01 / АНАЛИЗ МАТЧА</p><h1>Предпросмотр розыгрышей</h1><p>Просматривайте игровые отрезки, отмечайте лучшие и собирайте собственную нарезку из оригинальных видео.</p></div>
+          <div class="overview">
+            <div><strong id="studio-total">—</strong><span>Розыгрышей</span></div>
+            <div><strong id="studio-gold-count">—</strong><span>Золотых</span></div>
+            <div><strong id="studio-selected-count">0</strong><span>Для монтажа</span></div>
+          </div>
+        </section>
+        <div id="studio-banner" class="banner" role="status" aria-live="polite">Выберите проект и сохранённую CPU-версию розыгрышей.</div>
+        <section class="workspace">
+          <div class="section-bar">
+            <div><h2>Розыгрыши <small id="studio-page-caption"></small></h2><p>Левый клик — посмотреть. Правая кнопка на карточке — золотая отметка.</p></div>
+            <div class="toolbar">
+              <label class="sr-only" for="studio-filter">Фильтр</label>
+              <select id="studio-filter" aria-label="Фильтр видимых карточек"><option value="all">Все розыгрыши</option><option value="marked">Только золотые</option><option value="unmarked">Без золотой отметки</option></select>
+              <button id="studio-prev" class="secondary" type="button">‹</button>
+              <button id="studio-next" class="secondary" type="button">›</button>
+            </div>
+          </div>
+          <div class="viewer-layout">
+            <div>
+              <div id="studio-rallies" class="rally-grid" aria-live="polite"><div class="empty-state">Здесь появятся карточки после выбора CPU-анализа.</div></div>
+            </div>
+            <aside class="viewer-panel">
+              <div class="viewer-head"><strong>Просмотр видео</strong><span id="studio-video-time">—</span></div>
+              <div class="video-wrap"><video id="studio-video" controls preload="metadata" playsinline aria-label="Просмотр выбранного розыгрыша"></video><span id="studio-video-empty">Выберите карточку розыгрыша</span></div>
+              <div class="viewer-details">
+                <h3 id="studio-view-title">Розыгрыш не выбран</h3>
+                <p id="studio-view-description">Временная разметка пока предварительная. Откройте видео для проверки.</p>
+                <div id="studio-event-summary" class="event-summary"></div>
+              </div>
+            </aside>
+          </div>
+        </section>
+        <section id="studio-montage" class="montage-panel">
+          <div><p class="eyebrow">02 / РУЧНОЙ МОНТАЖ</p><h2>Выбранные розыгрыши</h2><p id="studio-selection-text">Выберите один или несколько розыгрышей. Автоматическая классификация атак и подач пока недоступна.</p><div id="studio-picked" class="picked-list"></div></div>
+          <div class="montage-controls">
+            <label for="studio-encoder" class="field-label">Кодирование</label>
+            <select id="studio-encoder"><option value="auto">Автоматически</option><option value="gpu">GPU</option><option value="cpu">CPU</option></select>
+            <label class="field-label" for="studio-music">Аудиотрек (необязательно)</label>
+            <input id="studio-music" type="file" accept=".mp3,.m4a,.wav,.flac,.aac,.ogg,.opus,audio/*">
+            <button id="studio-render" class="primary full" type="button" disabled>Создать монтаж <span>↗</span></button>
+            <div id="studio-job" class="job" role="status" aria-live="polite"></div>
+            <button id="studio-cancel" class="secondary full hidden" type="button">Отменить монтаж</button>
+            <a id="studio-download" class="download hidden" href="#" download>Скачать MP4</a>
+          </div>
+        </section>
+        <footer class="footer">Volleyball Studio — самостоятельный Rust backend. Отдельная версия для тестирования; Python Studio не затронута.</footer>
+      </div>
+    </main>
+  </div>
+</body>
+</html>

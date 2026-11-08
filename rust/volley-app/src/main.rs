@@ -12,6 +12,7 @@ mod inference_fusion;
 mod inference_native;
 mod inference_stream;
 mod montage;
+mod native_rally_marks;
 mod native_rally_preview;
 mod playback;
 mod player_catalog;
@@ -29,6 +30,7 @@ mod reid_group_edits;
 mod reid_native;
 mod reid_npz;
 mod storage;
+mod studio_web;
 mod touch_preview;
 
 use axum::{
@@ -113,6 +115,9 @@ async fn rewrite_status(
             "POST /api/cpu/native/rallies (rebuild provisional rally candidates)",
             "GET /api/cpu/native/rallies (read isolated rally manifest)",
             "GET /api/cpu/native/rallies/preview (verified paginated motion evidence and safe manual clips)",
+            "GET /api/cpu/native/rallies/runs (browse isolated provisional snapshots)",
+            "GET/POST /api/cpu/native/rallies/marks (revisioned gold candidates)",
+            "GET /studio/rust (standalone experimental preview/montage UI)",
             "POST /api/montage/native/start-from-rally-candidates (explicit manual selection, original media)",
             "GET /api/cpu/native/touches (read isolated Touch snapshot manifest)",
             "GET /api/cpu/native/retrack (read isolated tracking manifest)",
@@ -138,6 +143,14 @@ fn app(state: Arc<AppState>) -> Router {
         // This is not /api/health: do not fool the production UI's API gate
         // into believing this partial Rust rewrite is ready.
         .route("/internal/rewrite-status", get(rewrite_status))
+        .route("/studio/rust", get(studio_web::index))
+        .route("/studio/rust/app.js", get(studio_web::js))
+        .route("/studio/rust/app.css", get(studio_web::css))
+        .route("/api/cpu/native/rallies/runs", get(studio_web::runs))
+        .route(
+            "/api/cpu/native/rallies/marks",
+            get(native_rally_marks::get).post(native_rally_marks::set),
+        )
         .route("/api/projects", get(projects::get_projects))
         .route("/api/videos", get(catalog::get_videos))
         .route("/api/video-info", get(catalog::get_video_info))

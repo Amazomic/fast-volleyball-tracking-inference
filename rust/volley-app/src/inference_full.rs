@@ -1001,6 +1001,7 @@ mod tests {
                 rally_run_id: rally_run["rally_run_id"].as_str().unwrap().into(),
                 offset: 0,
                 limit: 24,
+                gold_filter: "all".into(),
             }),
         )
         .await
