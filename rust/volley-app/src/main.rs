@@ -1,6 +1,7 @@
 //! Rust-native Studio HTTP application. The replacement is still incomplete.
 mod analysis_runs;
 mod catalog;
+mod cpu_retrack;
 mod history;
 mod inference_clip;
 mod inference_evidence;
@@ -104,6 +105,8 @@ async fn rewrite_status(
             "POST /api/inference/native/full/cancel (model scan cancellation)",
             "POST /api/inference/native/fuse (verify and merge two raw model runs)",
             "GET /api/inference/native/fusion (isolated fusion manifest)",
+            "POST /api/cpu/native/retrack (CPU provisional Track ID snapshot)",
+            "GET /api/cpu/native/retrack (read isolated tracking manifest)",
             "POST /api/cpu/touch-preview (read-only RAVEL diagnostics)",
             "POST /api/players/continuity-preview (read-only geometry candidates)",
             "POST /api/players/reid-native/preview (saved embeddings, read-only)",
@@ -194,6 +197,10 @@ fn app(state: Arc<AppState>) -> Router {
         .route(
             "/api/inference/native/fusion",
             get(inference_fusion::manifest),
+        )
+        .route(
+            "/api/cpu/native/retrack",
+            post(cpu_retrack::replay).get(cpu_retrack::status),
         )
         .route("/api/cpu/touch-preview", post(touch_preview::touch_preview))
         .route(

@@ -907,6 +907,35 @@ mod tests {
             "Real {device:?} RAVEL/VballNet fusion: 18 verified frame rows, {} bytes",
             fused.len()
         );
+        let cpu_replay = crate::cpu_retrack::process(
+            &state,
+            &crate::cpu_retrack::ReplayRequest {
+                project_id: id.into(),
+                video: video.into(),
+                fusion_id: merged["fusion_id"].as_str().unwrap().into(),
+                settings: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(cpu_replay["schema"], "volley-native-cpu-tracking/1");
+        assert_eq!(cpu_replay["frames"], 18);
+        assert_eq!(cpu_replay["track_ids_provisional"], true);
+        assert_eq!(cpu_replay["touches_confirmed"], false);
+        assert_eq!(cpu_replay["cpu_processing_complete"], false);
+        let replay_path = data
+            .join("projects")
+            .join(id)
+            .join("native_cpu_replays")
+            .join(cpu_replay["replay_id"].as_str().unwrap())
+            .join("tracked_frames.jsonl");
+        let replay = fs::read(&replay_path).unwrap();
+        assert_eq!(replay.iter().filter(|&&byte| byte == 10u8).count(), 18);
+        let replay_hash = format!("{:x}", Sha256::digest(&replay));
+        assert_eq!(cpu_replay["sha256"].as_str(), Some(replay_hash.as_str()));
+        println!(
+            "Native {device:?} models -> fusion -> CPU tracking: {} bytes SHA256 verified",
+            replay.len()
+        );
         assert_eq!(fs::metadata(&original).unwrap().len(), source_size);
         assert!(!repo.join("results").exists());
         fs::remove_dir_all(root).unwrap();
