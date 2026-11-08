@@ -1,8 +1,8 @@
 {
     "schema":  "volley-rust-stage-roadmap/1",
     "plannedTotal":  85,
-    "lastRecorded":  57,
-    "nextStage":  58,
+    "lastRecorded":  58,
+    "nextStage":  59,
     "estimateNote":  "85 — текущий ориентир планирования, не обещание неизменного объема; этап != готовая подсистема. При пересмотре плана обновлять JSON, Markdown и журнал в одном коммите.",
     "stages":  [
                    {
@@ -465,7 +465,8 @@
                        "number":  58,
                        "title":  "Проверка совпадений и конфликтов визуальных ReID предложений",
                        "area":  "ReID",
-                       "status":  "planned",
+                       "status":  "recorded",
+                       "journalSection":  58,
                        "acceptance":  "Candidate score is distinguishable from verified identity; no overlap conflict"
                    },
                    {

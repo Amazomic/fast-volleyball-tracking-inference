@@ -94,6 +94,44 @@ fn compatible(a: &TrackInfo, b: &TrackInfo, owners: &HashMap<i64, String>) -> bo
     !overlap(a, b)
 }
 
+/// A saved manually grouped Track ID is only a suggestion. A group cannot
+/// contain co-visible tracks or two differently confirmed athletes, even
+/// when a legacy JSON sidecar claims it was merged by an operator.
+#[derive(Clone, Copy, Debug)]
+pub struct ManualGroupMember<'a> {
+    pub track_id: i64,
+    pub first_frame: i64,
+    pub last_frame: i64,
+    pub confirmed_owner: Option<&'a str>,
+}
+
+pub fn valid_manual_group(members: &[ManualGroupMember<'_>]) -> bool {
+    if !(2..=200).contains(&members.len()) {
+        return false;
+    }
+    let mut seen = HashSet::new();
+    for (i, a) in members.iter().enumerate() {
+        if a.track_id < 0
+            || a.first_frame < 0
+            || a.first_frame > a.last_frame
+            || a.confirmed_owner.is_some_and(str::is_empty)
+            || !seen.insert(a.track_id)
+        {
+            return false;
+        }
+        for b in members.iter().skip(i + 1) {
+            if a.first_frame <= b.last_frame && b.first_frame <= a.last_frame {
+                return false;
+            }
+            if let (Some(owner_a), Some(owner_b)) = (a.confirmed_owner, b.confirmed_owner) {
+                if owner_a != owner_b {
+                    return false;
+                }
+            }
+        }
+    }
+    true
+}
 fn normalized(vector: &[f32]) -> Option<Vec<f32>> {
     if vector.is_empty() || vector.len() > 4096 || vector.iter().any(|v| !v.is_finite()) {
         return None;
@@ -404,6 +442,49 @@ mod tests {
             id,
             vector: v.to_vec(),
         }
+    }
+    #[test]
+    fn manually_saved_groups_must_obey_physical_and_confirmed_identity_constraints() {
+        let a = ManualGroupMember {
+            track_id: 1,
+            first_frame: 0,
+            last_frame: 10,
+            confirmed_owner: Some("athlete-a"),
+        };
+        let b = ManualGroupMember {
+            track_id: 2,
+            first_frame: 11,
+            last_frame: 25,
+            confirmed_owner: Some("athlete-a"),
+        };
+        assert!(valid_manual_group(&[a, b]));
+        let simultaneous = ManualGroupMember {
+            first_frame: 10,
+            ..b
+        };
+        assert!(!valid_manual_group(&[a, simultaneous]));
+        let other = ManualGroupMember {
+            confirmed_owner: Some("athlete-b"),
+            ..b
+        };
+        assert!(!valid_manual_group(&[a, other]));
+        assert!(!valid_manual_group(&[a, a]));
+        assert!(!valid_manual_group(&[a]));
+        assert!(!valid_manual_group(&[
+            ManualGroupMember {
+                first_frame: 26,
+                last_frame: 25,
+                ..b
+            },
+            a
+        ]));
+        assert!(valid_manual_group(&[
+            ManualGroupMember {
+                confirmed_owner: None,
+                ..a
+            },
+            other
+        ]));
     }
     #[test]
     fn overlapping_players_never_become_same_person() {

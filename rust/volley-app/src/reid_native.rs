@@ -220,56 +220,104 @@ fn owner_constraints(
     (owners, conflicted)
 }
 
+/// Only validated, source-current manual groups are allowed to suppress new
+/// automatic suggestions. Corrupt/physically impossible historical groups
+/// remain on disk but are not presented as safe grouping evidence.
+fn vetted_manual_groups(
+    record: Option<&Value>,
+    stats: &[TrackInfo],
+    confirmed: &HashMap<i64, String>,
+    excluded: &HashSet<i64>,
+    conflicting: &HashSet<i64>,
+) -> (Vec<ReidGroup>, HashSet<i64>, usize) {
+    let mut vetted = Vec::new();
+    let mut pinned = HashSet::new();
+    let mut rejected = 0;
+    let index = stats
+        .iter()
+        .map(|track| (track.id, track))
+        .collect::<HashMap<_, _>>();
+    let Some(groups) = record.and_then(|doc| doc["groups"].as_array()) else {
+        return (vetted, pinned, rejected);
+    };
+    for group in groups {
+        if group["source"].as_str() != Some("manual") {
+            continue;
+        }
+        let Some(rows) = group["track_ids"].as_array() else {
+            rejected += 1;
+            continue;
+        };
+        let id = group["id"].as_str().filter(|id| {
+            !id.is_empty()
+                && id.len() <= 128
+                && id
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+        });
+        let mut ids = Vec::new();
+        let mut members = Vec::new();
+        let mut seen = HashSet::new();
+        let mut valid = (2..=200).contains(&rows.len()) && id.is_some();
+        if valid {
+            for row in rows {
+                let Some(tid) = int(row) else {
+                    valid = false;
+                    break;
+                };
+                let Some(track) = index.get(&tid) else {
+                    valid = false;
+                    break;
+                };
+                if !seen.insert(tid)
+                    || pinned.contains(&tid)
+                    || excluded.contains(&tid)
+                    || conflicting.contains(&tid)
+                {
+                    valid = false;
+                    break;
+                }
+                members.push(reid::ManualGroupMember {
+                    track_id: tid,
+                    first_frame: track.first_frame,
+                    last_frame: track.last_frame,
+                    confirmed_owner: confirmed.get(&tid).map(String::as_str),
+                });
+                ids.push(tid);
+            }
+        }
+        if !valid || !reid::valid_manual_group(&members) {
+            rejected += 1;
+            continue;
+        }
+        pinned.extend(ids.iter().copied());
+        ids.sort_unstable();
+        vetted.push(ReidGroup {
+            id: id.expect("checked manual group ID").to_owned(),
+            track_ids: ids.iter().map(ToString::to_string).collect(),
+            similarity: None,
+            source: "manual",
+        });
+    }
+    (vetted, pinned, rejected)
+}
+
 fn restore_manual_groups(
     report: &mut reid::ReidReport,
-    record: Option<Value>,
-    known: &HashSet<i64>,
-    excluded: &HashSet<i64>,
+    vetted: Vec<ReidGroup>,
+    pinned: &HashSet<i64>,
 ) {
-    let Some(record) = record else {
-        return;
-    };
-    let mut pinned = HashSet::new();
-    if let Some(groups) = record["groups"].as_array() {
-        for group in groups {
-            if group["source"].as_str() != Some("manual") {
-                continue;
-            }
-            let mut ids = group["track_ids"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .filter_map(int)
-                .filter(|id| known.contains(id) && !excluded.contains(id))
-                .collect::<Vec<_>>();
-            ids.sort_unstable();
-            ids.dedup();
-            ids.retain(|id| pinned.insert(*id));
-            if ids.len() < 2 {
-                continue;
-            }
-            let id = group["id"].as_str().unwrap_or("manual-preserved");
-            // This is a verified manual *group operation*, NOT proof of person
-            // identity; personal assignment remains separate.
-            report.groups.push(ReidGroup {
-                id: id.to_owned(),
-                track_ids: ids.iter().map(ToString::to_string).collect(),
-                similarity: None,
-                source: "manual",
-            });
-        }
-    }
     if pinned.is_empty() {
         return;
     }
     report.groups.retain(|group| {
-        group.source == "manual"
-            || group.track_ids.iter().all(|tid| {
-                tid.parse::<i64>()
-                    .ok()
-                    .is_none_or(|id| !pinned.contains(&id))
-            })
+        group.track_ids.iter().all(|tid| {
+            tid.parse::<i64>()
+                .ok()
+                .is_none_or(|id| !pinned.contains(&id))
+        })
     });
+    report.groups.extend(vetted);
     let used = report
         .groups
         .iter()
@@ -280,7 +328,6 @@ fn restore_manual_groups(
         .groups
         .sort_by(|a, b| b.track_ids.len().cmp(&a.track_ids.len()));
 }
-
 fn py_quote(text: &str) -> String {
     let mut s = String::from("'");
     for c in text.chars() {
@@ -528,7 +575,6 @@ pub(crate) fn calculate(state: &AppState, request: ReidRequest) -> Result<Value,
     // Pinned/manual group members are never re-assigned to a different
     // automatic group when the threshold slider changes.
     let mut manual_excluded = HashSet::new();
-    let mut pinned = HashSet::new();
     if let Some(ref doc) = manual_doc {
         if let Some(rows) = doc["manual_excluded_ids"].as_array() {
             for row in rows {
@@ -537,18 +583,14 @@ pub(crate) fn calculate(state: &AppState, request: ReidRequest) -> Result<Value,
                 }
             }
         }
-        if let Some(rows) = doc["groups"].as_array() {
-            for group in rows {
-                if group["source"].as_str() == Some("manual") {
-                    for id in group["track_ids"].as_array().into_iter().flatten() {
-                        if let Some(id) = int(id) {
-                            pinned.insert(id);
-                        }
-                    }
-                }
-            }
-        }
     }
+    let (vetted_groups, pinned, rejected_manual_groups) = vetted_manual_groups(
+        manual_doc.as_ref(),
+        &stats,
+        &confirmed,
+        &excluded,
+        &conflicts,
+    );
     prohibited.extend(manual_excluded.iter().copied());
     prohibited.extend(pinned.iter().copied());
     let mut result = reid::build_groups(
@@ -560,7 +602,7 @@ pub(crate) fn calculate(state: &AppState, request: ReidRequest) -> Result<Value,
         request.threshold_percent,
     )
     .map_err(storage::bad_request)?;
-    restore_manual_groups(&mut result, manual_doc, &known, &excluded);
+    restore_manual_groups(&mut result, vetted_groups, &pinned);
     // A user-split ID remains visible as unassigned, not quietly erased
     // from the ReID table when the similarity threshold changes.
     for tid in &manual_excluded {
@@ -656,6 +698,7 @@ pub(crate) fn calculate(state: &AppState, request: ReidRequest) -> Result<Value,
         "excluded_track_ids":excluded.len(),
         "manual_split_ids":manual_excluded.len(),
         "manual_pinned_ids":pinned.len(),
+        "invalid_manual_groups_ignored":rejected_manual_groups,
         "conflicting_manual_assignments":conflicts.len(),
         "trusted_track_references":enrolled,
         "trusted_photo_references":refs.len().saturating_sub(enrolled),
@@ -684,4 +727,83 @@ pub async fn preview(
         .await
         .map_err(|e| storage::internal(format!("Rust ReID task failed: {e}")))??;
     Ok(Json(result))
+}
+
+#[cfg(test)]
+mod manual_group_tests {
+    use super::*;
+    fn track(id: i64, start: i64, end: i64) -> TrackInfo {
+        TrackInfo {
+            id,
+            first_frame: start,
+            last_frame: end,
+            detected_frames: 12,
+            start_center: [0.2, 0.2],
+            end_center: [0.2, 0.2],
+            fps: 30.0,
+        }
+    }
+    #[test]
+    fn restored_manual_groups_never_bypass_overlap_or_confirmed_owner_checks() {
+        let tracks = vec![
+            track(1, 0, 10),
+            track(2, 5, 15),
+            track(3, 20, 30),
+            track(4, 40, 50),
+        ];
+        let owners = HashMap::from([
+            (1, "athlete-a".to_owned()),
+            (2, "athlete-b".to_owned()),
+            (3, "athlete-a".to_owned()),
+            (4, "athlete-a".to_owned()),
+        ]);
+        let saved = json!({"groups":[
+            {"id":"manual-overlap","source":"manual","track_ids":["1","2"]},
+            {"id":"manual-safe","source":"manual","track_ids":["1","3"]},
+            {"id":"manual-duplicate","source":"manual","track_ids":["3","4"]},
+            {"id":"manual-distinct-owner","source":"manual","track_ids":["2","4"]}
+        ]});
+        let (groups, pinned, rejected) = vetted_manual_groups(
+            Some(&saved),
+            &tracks,
+            &owners,
+            &HashSet::new(),
+            &HashSet::new(),
+        );
+        assert_eq!(rejected, 3);
+        assert_eq!(pinned, HashSet::from([1, 3]));
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].track_ids, ["1", "3"]);
+        assert_eq!(groups[0].similarity, None);
+        assert_eq!(groups[0].source, "manual");
+    }
+    #[test]
+    fn rejected_manual_group_cannot_mask_tracks_from_auto_suggestions() {
+        let tracks = vec![track(1, 0, 10), track(2, 10, 15), track(3, 16, 30)];
+        let saved = json!({"groups":[
+            {"id":"manual-invalid","source":"manual","track_ids":["1","2"]},
+            {"id":"manual-valid","source":"manual","track_ids":["1","3"]}
+        ]});
+        let (groups, pinned, rejected) = vetted_manual_groups(
+            Some(&saved),
+            &tracks,
+            &HashMap::new(),
+            &HashSet::new(),
+            &HashSet::new(),
+        );
+        assert_eq!(rejected, 1);
+        assert_eq!(groups.len(), 1);
+        assert_eq!(pinned, HashSet::from([1, 3]));
+        assert!(!pinned.contains(&2));
+        let (none, empty, rejected) = vetted_manual_groups(
+            Some(&saved),
+            &tracks,
+            &HashMap::new(),
+            &HashSet::from([3]),
+            &HashSet::new(),
+        );
+        assert!(none.is_empty());
+        assert!(empty.is_empty());
+        assert_eq!(rejected, 2);
+    }
 }

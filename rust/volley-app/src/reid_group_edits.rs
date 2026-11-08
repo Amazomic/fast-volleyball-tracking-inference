@@ -20,6 +20,7 @@ use std::{
     sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
 };
+use volley_core::reid::{self, ManualGroupMember};
 
 const MAX_GROUP_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_IDS: usize = 200;
@@ -378,28 +379,26 @@ fn edit_groups(
         if ids.len() < 2 {
             return Err(storage::bad_request("Для объединения нужно минимум два ID"));
         }
-        let confirmed_owners = ids
+        let members = ids
             .iter()
-            .filter_map(|id| mapping.get(id))
-            .collect::<HashSet<_>>();
-        if confirmed_owners.len() > 1 {
+            .map(|id| {
+                let (first_frame, last_frame) = ctx.known[id];
+                Ok(ManualGroupMember {
+                    track_id: id
+                        .parse::<i64>()
+                        .map_err(|_| storage::bad_request("Invalid Track ID"))?,
+                    first_frame,
+                    last_frame,
+                    confirmed_owner: mapping.get(id).map(String::as_str),
+                })
+            })
+            .collect::<Result<Vec<_>, ApiError>>()?;
+        if !reid::valid_manual_group(&members) {
             return Err(storage::conflict(
-                "Нельзя объединять ID, привязанные к разным подтверждённым игрокам",
+                "Cannot combine co-visible Track IDs or distinct confirmed players",
             ));
         }
-        for (i, id) in ids.iter().enumerate() {
-            let (begin, end) = ctx.known[id];
-            for other in ids.iter().skip(i + 1) {
-                let (other_begin, other_end) = ctx.known[other];
-                if begin <= other_end && other_begin <= end {
-                    return Err(storage::conflict(
-                        "Одновременно видимые Track ID нельзя объединить в одного игрока",
-                    ));
-                }
-            }
-        }
     }
-
     let mut existing_excluded = doc["manual_excluded_ids"]
         .as_array()
         .into_iter()
