@@ -15,7 +15,10 @@ use std::{
     sync::{atomic::AtomicBool, Arc},
     time::UNIX_EPOCH,
 };
-use volley_inference::{Config, Device, Engine, ModelKind};
+use volley_inference::{
+    decode::{decode_ravel, decode_vball, DecodeConfig},
+    Config, Device, Engine, ModelKind,
+};
 use volley_media::{
     frame_windows::normalized_model_window,
     raw_decoder::{decode_windows, ModelPixels},
@@ -167,9 +170,15 @@ pub async fn scan(
                 } else {
                     touch_peaks(proposal, window.first_frame)?
                 };
+                let raw_detections = if request.model == ModelKind::Ball {
+                    decode_vball(&tensors, window.first_frame, 0.05)?
+                } else {
+                    decode_ravel(&tensors, window.first_frame, DecodeConfig::default())?
+                };
                 proposals.push(json!({
                     "first_frame":window.first_frame,
                     "candidate_frames":frames,
+                    "raw_detections":raw_detections,
                 }));
                 Ok(())
             },
