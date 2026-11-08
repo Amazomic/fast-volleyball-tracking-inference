@@ -9,6 +9,7 @@ pub mod continuity;
 pub mod fusion;
 pub mod motion;
 pub mod rallies;
+pub mod rally_reconstruction;
 pub mod reid;
 pub mod statistics;
 pub mod touch;
