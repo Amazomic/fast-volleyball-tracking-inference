@@ -14,6 +14,13 @@ Run `cargo fmt --all -- --check`, `cargo check --workspace --offline`
 and `cargo test --workspace --offline` from this directory. GPU smoke:
 `bash ../scripts/ci/smoke_rust_ort.sh /path/to/libonnxruntime.so cuda full`.
 
+OpenVINO person ReID uses volley-inference/src/reid_openvino.rs and the
+bundled ov/person-reidentification-retail-0287 model. Configure the absolute
+WSL path VOLLEY_OPENVINO_C_LIB and native LD_LIBRARY_PATH or pass the Windows
+launcher option -OpenvinoLibrary /absolute/wsl/path/libopenvino_c.so.
+Run cargo test --workspace --offline with VOLLEY_TEST_OPENVINO_C_LIB set
+to the same native .so to execute the real-model smoke test. These
+temporary, SHA-bound vectors are only visual suggestions, not identities.
 This is a **partial rewrite**, not a claim of complete product parity.
 Existing Python source is retained only in Git history/checkpoint; legacy
 media and snapshots remain readable through Rust data adapters but are

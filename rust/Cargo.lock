@@ -1054,9 +1054,11 @@ dependencies = [
 name = "volley-inference"
 version = "0.1.0"
 dependencies = [
+ "libloading",
  "ort",
  "serde",
  "serde_json",
+ "sha2",
 ]
 
 [[package]]

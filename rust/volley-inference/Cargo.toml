@@ -9,3 +9,5 @@ description = "Native ONNX Runtime inference for VballNetV4c and RAVEL-013"
 ort = { version = "=2.0.0-rc.10", default-features = false, features = ["std", "ndarray", "load-dynamic", "cuda"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+libloading = "0.8"
+sha2 = "0.10"

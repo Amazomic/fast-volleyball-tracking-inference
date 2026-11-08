@@ -17,10 +17,16 @@
       "status": "partial",
       "adapters": [
         "rust/volley-app/src/reid_native.rs",
+        "rust/volley-inference/src/reid_openvino.rs",
+        "rust/volley-app/src/native_player_tracks.rs",
         "rust/volley-app/src/reid_npz.rs",
         "rust/volley-app/src/reid_group_edits.rs"
       ],
       "routes": [
+        {
+          "path": "/api/players/native/embeddings",
+          "handler": "native_player_tracks::embeddings"
+        },
         {
           "path": "/api/players/reid-native/preview",
           "handler": "reid_native::preview"

@@ -2,6 +2,7 @@
 //! browser hooks or silent CUDA -> CPU fallback. The 9-frame clip is fed from
 //! a future native video decoder; source preprocessing is a separate stage.
 pub mod decode;
+pub mod reid_openvino;
 
 use ort::{
     execution_providers::{CPUExecutionProvider, CUDAExecutionProvider, ExecutionProvider},

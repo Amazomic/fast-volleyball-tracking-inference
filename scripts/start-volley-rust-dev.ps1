@@ -7,6 +7,7 @@ param(
     [string]$Distro = "Ubuntu-25.04",
     [string]$Bind = "127.0.0.1:8765",
     [string]$DataRoot = "",
+    [string]$OpenvinoLibrary = "",
     [switch]$ReadOnly,
     [switch]$CheckOnly
 )
@@ -18,7 +19,9 @@ $port = [int]$Matches[1]
 if ($port -lt 1024 -or $port -gt 65535) {
     throw "Choose a valid unprivileged port."
 }
-if ($ReadOnly -and $DataRoot) {
+if ($OpenvinoLibrary -and ($OpenvinoLibrary -notmatch '^/' -or $OpenvinoLibrary -match '(^|/)\.\.(/|$)')) {
+    throw "OpenvinoLibrary must be an absolute WSL shared-library path without parent traversal."
+}if ($ReadOnly -and $DataRoot) {
     throw "ReadOnly and DataRoot are mutually exclusive."
 }
 if ($DataRoot -and ($DataRoot -notmatch '^/' -or $DataRoot -match '(^|/)\.\.(/|$)')) {
@@ -66,6 +69,7 @@ bind="$2"
 data_root="$3"
 operation="$4"
 mode="$5"
+openvino_lib="$6"
 cd "$repo/rust"
 if [ -f "$HOME/.cargo/env" ]; then source "$HOME/.cargo/env"; fi
 if [ "$operation" = check ]; then
@@ -85,7 +89,18 @@ elif [ "$data_root" != "__default__" ]; then
 else
   export VOLLEY_RUST_DATA_ROOT="$HOME/.cache/volley-rust-sandbox"
 fi
-exec cargo run --offline -p volley-app
+if [ "$openvino_lib" != "__not_configured__" ]; then
+  if [ ! -f "$openvino_lib" ]; then
+    echo "Configured OpenVINO C library not found: $openvino_lib" >&2
+    exit 1
+  fi
+  export VOLLEY_OPENVINO_C_LIB="$openvino_lib"
+  if [ -n "$(printenv LD_LIBRARY_PATH || true)" ]; then
+    export LD_LIBRARY_PATH="$(dirname "$openvino_lib"):$LD_LIBRARY_PATH"
+  else
+    export LD_LIBRARY_PATH="$(dirname "$openvino_lib")"
+  fi
+fiexec cargo run --offline -p volley-app
 '@
 $script = $script.Replace("`r`n", "`n")
 $wslDataArg = if ($DataRoot) { $DataRoot } else { "__default__" }
@@ -103,7 +118,8 @@ try {
     if ($LASTEXITCODE -ne 0 -or -not $tmpWsl) {
         throw "Cannot translate temporary Rust launcher to WSL."
     }
-    & wsl.exe -d $Distro --exec bash $tmpWsl.Trim() $repoWsl $Bind $wslDataArg $operation $readOnlyFlag
+    $ovArg = if ($OpenvinoLibrary) { $OpenvinoLibrary } else { "__not_configured__" }
+    & wsl.exe -d $Distro --exec bash $tmpWsl.Trim() $repoWsl $Bind $wslDataArg $operation $readOnlyFlag $ovArg
     if ($LASTEXITCODE -ne 0) {
         throw "Rust developer launcher failed with exit code $LASTEXITCODE."
     }

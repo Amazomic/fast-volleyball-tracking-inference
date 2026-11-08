@@ -1,3 +1,8 @@
+> Stage 60: volley-inference/src/reid_openvino.rs loads bundled 0287 XML/BIN
+> through OpenVINO native C ABI. FFmpeg crop BGR24 -> f32 CHW 1x3x256x128 ->
+> 256 float32 L2-normalized visual features. Both weights and preprocessing
+> are SHA-256 fingerprinted. Native HTTP adapter binds the extraction to
+> exact verified replay SHA and remains read-only, without automatic identity.
 > Statistics/montage identity contract (2026-11-09):
 > rust/volley-core/src/identity_review.rs::resolve_reviewed is the single
 > source of confirmed Track ID owners. Saved ReID groups are **suggestions**

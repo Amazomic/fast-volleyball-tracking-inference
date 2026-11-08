@@ -1,8 +1,8 @@
 {
     "schema":  "volley-rust-stage-roadmap/1",
     "plannedTotal":  85,
-    "lastRecorded":  59,
-    "nextStage":  60,
+    "lastRecorded":  60,
+    "nextStage":  61,
     "estimateNote":  "85 — текущий ориентир планирования, не обещание неизменного объема; этап != готовая подсистема. При пересмотре плана обновлять JSON, Markdown и журнал в одном коммите.",
     "stages":  [
                    {
@@ -481,7 +481,8 @@
                        "number":  60,
                        "title":  "Извлечение ReID embeddings из новых native Track ID",
                        "area":  "ReID",
-                       "status":  "planned",
+                       "status":  "recorded",
+                       "journalSection":  60,
                        "acceptance":  "One specified encoder, checkpoint fingerprint, tested embedding vectors"
                    },
                    {

@@ -11,7 +11,7 @@ pipeline is **project → prepared video → immutable VballNet/RAVEL GPU eviden
 versioned CPU player tracks/Touch/rallies → reviewed players → original-quality montage**.
 FFmpeg, ONNX Runtime and CUDA are native external runtimes, not Python components.
 
-**Rust-миграция: 59/85; следующий 60/85 (плановый объём).**
+**Rust-миграция: 60/85; следующий 61/85 (плановый объём).**
 [Stage map](docs/RUST_ROADMAP.md) ·
 [Migration journal](docs/RUST_MIGRATION.md) ·
 [Architecture and owners](docs/RUST_ARCHITECTURE.md).
@@ -24,6 +24,18 @@ Run `start-volley-ui.cmd` at the repository root, or in PowerShell:
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/start-volley-rust-dev.ps1
 ```
 
+The native OpenVINO ReID encoder runs in Rust without Python. For it to
+work, pass a WSL-absolute path to a valid native OpenVINO C shared library:
+
+    powershell -NoProfile -ExecutionPolicy Bypass -File scripts/start-volley-rust-dev.ps1 -OpenvinoLibrary /path/to/libopenvino_c.so
+
+The launcher forwards this explicit path to WSL, where the C ABI loads
+the bundled ov/person-reidentification-retail-0287.xml and .bin model.
+POST /api/players/native/embeddings requires project_id, video, replay_id,
+expected_source_sha256 and 1–8 track_ids from GET /api/players/native/tracks.
+It returns **provisional** 256-dimensional BGR feature vectors and the
+fingerprint of both model files and preprocessing. It does not enroll,
+recognize or assign an athlete automatically. No embedding cache is yet saved.
 Open **http://127.0.0.1:8765/**. The launcher runs the **Rust binary in WSL
 Ubuntu-25.04**, not the removed Python application. If this port already hosts
 Rust Studio, it reuses that process; an unrelated or legacy listener is not
