@@ -436,6 +436,37 @@ mod tests {
         assert!(!result.confirmed);
     }
     #[test]
+    fn three_second_gap_is_review_only_and_configurable() {
+        let mut rows = (1..=30).map(|f| point(f, 1, 100.0)).collect::<Vec<_>>();
+        rows.extend((120..=151).map(|f| point(f, 2, 100.0)));
+        let full = group_tracklets(&rows, config(), &HashSet::new()).unwrap();
+        assert!(full.proposed_links.is_empty());
+        assert_eq!(full.extended_suggestions.len(), 1);
+        assert_ne!(full.track_to_candidate["1"], full.track_to_candidate["2"]);
+        let mut strict = config();
+        strict.extended_gap_sec = 2.5;
+        let short = group_tracklets(&rows, strict, &HashSet::new()).unwrap();
+        assert!(short.extended_suggestions.is_empty());
+        assert_eq!(short.candidate_groups, 2);
+    }
+    #[test]
+    fn crossing_players_prevent_four_second_identity_swaps() {
+        let mut rows = (1..=30)
+            .flat_map(|f| {
+                [
+                    point(f, 1, 100.0 + f as f64 * 0.5),
+                    point(f, 2, 110.0 - f as f64 * 0.5),
+                ]
+            })
+            .collect::<Vec<_>>();
+        rows.extend((120..=160).flat_map(|f| [point(f, 3, 102.0), point(f, 4, 103.0)]));
+        let report = group_tracklets(&rows, config(), &HashSet::new()).unwrap();
+        assert!(report.proposed_links.is_empty());
+        assert!(report.extended_suggestions.is_empty());
+        assert_eq!(report.candidate_groups, 4);
+        assert!(!report.confirmed);
+    }
+    #[test]
     fn four_second_extension_never_automatically_merges_ids() {
         let mut rows = (1..=25).map(|f| point(f, 1, 100.0)).collect::<Vec<_>>();
         rows.extend((125..=160).map(|f| point(f, 2, 100.0)));

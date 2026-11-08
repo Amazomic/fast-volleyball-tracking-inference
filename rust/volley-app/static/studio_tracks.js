@@ -252,6 +252,16 @@
   const reviewGroups=node("div","native-reid-results");
   reviewPanel.append(reviewTitle,reviewText,reviewTools,reviewStatus,reviewGroups);
   ui.list.parentElement.append(reviewPanel);
+  const continuityControls=node("div","native-reid-controls");
+  const continuityGap=node("input");continuityGap.type="number";
+  continuityGap.min="0.7";continuityGap.max="4";continuityGap.step="0.1";
+  continuityGap.value="4";
+  continuityGap.setAttribute("aria-label","Максимальный разрыв в Track ID, секунды");
+  const continuityRead=node("button","secondary","Показать разрывы Track ID");
+  continuityRead.type="button";
+  continuityControls.append(node("span","","Разрыв, с"),continuityGap,continuityRead);
+  const continuityOutput=node("div","native-reid-results");
+  reviewPanel.append(continuityControls,continuityOutput);
   const reviewScope=()=>({
     project_id:state.project,video:state.video,replay_id:state.replay,
     expected_source_sha256:state.sourceSha,threshold_percent:Number(reviewThreshold.value)
@@ -330,7 +340,45 @@
       reviewNote(e.message+" Обновите предложения перед новой попыткой.",true);
     }finally{state.busy=false;unlock();reidUnlock();}
   };
-  reviewRead.addEventListener("click",reviewLoad);
+  continuityRead.addEventListener("click",async()=>{
+    if(!reviewReady()||state.busy)return;
+    const gap=Number(continuityGap.value);
+    if(!Number.isFinite(gap)||gap<0.7||gap>4){
+      reviewNote("Допустимый разрыв: 0.7–4 секунды.",true);return;
+    }
+    const scope=reviewScope(),token=state.token;
+    continuityRead.disabled=true;clear(continuityOutput);
+    reviewNote("Проверяем SHA и вычисляем безопасные продолжения Track ID…");
+    try{
+      const result=await post("/api/players/native/continuity",{
+        project_id:scope.project_id,video:scope.video,replay_id:scope.replay_id,
+        expected_source_sha256:scope.expected_source_sha256,extended_gap_sec:gap
+      });
+      if(token!==state.token||scope.replay_id!==state.replay)return;
+      if(result.schema!=="volley-native-continuity-preview/1"||
+        result.confirmed!==false||result.auto_assign_enabled!==false)
+        throw Error("Неподдерживаемый результат непрерывности Track ID");
+      const suggestions=Array.isArray(result.report?.extended_suggestions)?
+        result.report.extended_suggestions:[];
+      for(const pair of suggestions.slice(0,80)){
+        const from=Number(pair.from_track_id),to=Number(pair.to_track_id);
+        if(!Number.isSafeInteger(from)||!Number.isSafeInteger(to))continue;
+        const item=node("div","native-reid-group");
+        item.append(node("span","",
+          "ID "+from+" → "+to+" · геометрия "+Math.round(Number(pair.score||0)*100)+"%"));
+        const choose=node("button","secondary","Выбрать оба");
+        choose.type="button";
+        choose.addEventListener("click",()=>{
+          state.selected=new Set([from,to]);renderRows();unlock();
+          reviewNote("Два ID выбраны. Это только кандидат; объединение требует подтверждения.");
+        });
+        item.append(choose);continuityOutput.append(item);
+      }
+      reviewNote("Продолжения после 0.7 с: "+suggestions.length+
+        " · автоматически подтверждённых игроков: 0.");
+    }catch(e){reviewNote(e.message,true);}
+    finally{continuityRead.disabled=false;}
+  });  reviewRead.addEventListener("click",reviewLoad);
   reviewMerge.addEventListener("click",()=>reviewEdit("merge"));
   reviewSplit.addEventListener("click",()=>reviewEdit("split"));
   reviewThreshold.addEventListener("change",()=>{state.groupRevision=null;reidUnlock();});

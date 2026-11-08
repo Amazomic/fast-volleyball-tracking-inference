@@ -1,8 +1,8 @@
 {
     "schema":  "volley-rust-stage-roadmap/1",
     "plannedTotal":  85,
-    "lastRecorded":  65,
-    "nextStage":  66,
+    "lastRecorded":  66,
+    "nextStage":  67,
     "estimateNote":  "85 — текущий ориентир планирования, не обещание неизменного объема; этап != готовая подсистема. При пересмотре плана обновлять JSON, Markdown и журнал в одном коммите.",
     "stages":  [
                    {
@@ -529,8 +529,9 @@
                        "number":  66,
                        "title":  "Консервативная непрерывность Track ID при разрыве 3–4 секунды",
                        "area":  "Трекинг",
-                       "status":  "planned",
-                       "acceptance":  "Configurable bounded gap, crossing collision tests and review-only guesses"
+                       "status":  "recorded",
+                       "acceptance":  "Configurable bounded gap, crossing collision tests and review-only guesses",
+                       "journalSection":  66
                    },
                    {
                        "number":  67,

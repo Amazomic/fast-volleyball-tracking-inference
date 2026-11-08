@@ -1,358 +1,404 @@
 {
-  "schema": "volley-rust-feature-ownership/1",
-  "migrationBranch": "migration/rust-2026-11-07",
-  "canonicalEvidence": "native_gpu_cpu_replay",
-  "guardedPrefixes": [
-    "/api/players/",
-    "/api/rallies/",
-    "/api/cpu/native/",
-    "/api/montage/native/",
-    "/api/quick-reel/native/",
-    "/api/inference/native/full/"
-  ],
-  "domains": [
-    {
-      "id": "reid",
-      "owner": "rust/volley-core/src/reid.rs",
-      "status": "partial",
-      "adapters": [
-        "rust/volley-app/src/reid_native.rs",
-        "rust/volley-inference/src/reid_openvino.rs",
-        "rust/volley-app/src/native_player_tracks.rs",
-        "rust/volley-app/src/reid_npz.rs",
-        "rust/volley-app/src/reid_group_edits.rs"
-      ],
-      "routes": [
-        {
-          "path": "/api/players/native/references",
-          "handler": "native_player_tracks::references"
-        },
-        {
-          "path": "/api/players/native/reference-photo",
-          "handler": "native_player_tracks::reference_photo"
-        },
-         {
-          "path": "/api/players/native/reid-review",
-          "handler": "native_player_tracks::reid_review"
-        },       {
-          "path": "/api/players/native/reid-groups",
-          "handler": "native_player_tracks::reid_preview"
-        },
-        {
-          "path": "/api/players/native/embeddings",
-          "handler": "native_player_tracks::embeddings"
-        },
-        {
-          "path": "/api/players/reid-native/preview",
-          "handler": "reid_native::preview"
-        },
-        {
-          "path": "/api/players/reid-native/groups",
-          "handler": "reid_group_edits::group_edits"
-        }
-      ],
-      "stores": [
-        {
-          "source": "native",
-          "path": "players/native_reference_photos/<player_id>/index.json"
-        },
-        {
-          "source": "native",
-          "path": "projects/<id>/native_reid_reviews/<replay_id>.json"
-        }
-      ]
-    },
-    {
-      "id": "evidence_source",
-      "owner": "rust/volley-core/src/evidence_source.rs",
-      "status": "partial",
-      "adapters": [
-        "rust/volley-app/src/player_identity.rs",
-        "rust/volley-app/src/native_player_tracks.rs"
-      ],
-      "routes": [],
-      "stores": []
-    },
-    {
-      "id": "identity",
-      "owner": "rust/volley-core/src/identity_review.rs",
-      "status": "partial",
-      "adapters": [
-        "rust/volley-app/src/native_player_tracks.rs",
-        "rust/volley-app/src/player_identity.rs"
-      ],
-      "stores": [
-        {
-          "source": "native",
-          "path": "projects/<id>/native_track_assignments/<replay_id>.json"
-        },
-        {
-          "source": "legacy",
-          "path": "projects/<id>/player_identities.json"
-        }
-      ],
-      "routes": [
-        {
-          "path": "/api/players/native/tracks",
-          "handler": "native_player_tracks::read"
-        },
-        {
-          "path": "/api/players/native/track-photo",
-          "handler": "native_player_tracks::photo"
-        },
-        {
-          "path": "/api/players/identity/native",
-          "handler": "player_identity::read_or_edit"
-        }
-      ]
-    },
-    {
-      "id": "touch",
-      "owner": "rust/volley-core/src/touch.rs",
-      "status": "partial",
-      "adapters": [
-        "rust/volley-app/src/cpu_touches.rs",
-        "rust/volley-app/src/touch_preview.rs"
-      ],
-      "routes": [
-        {
-          "path": "/api/cpu/native/touches",
-          "handler": "cpu_touches::run"
-        },
-        {
-          "path": "/api/cpu/touch-preview",
-          "handler": "touch_preview::touch_preview"
-        }
-      ],
-      "stores": []
-    },
-    {
-      "id": "rallies",
-      "owner": "rust/volley-core/src/rally_reconstruction.rs",
-      "status": "partial",
-      "adapters": [
-        "rust/volley-app/src/rallies.rs",
-        "rust/volley-app/src/cpu_rallies.rs",
-        "rust/volley-app/src/native_rally_preview.rs"
-      ],
-      "routes": [
-        {
-          "path": "/api/cpu/native/rallies",
-          "handler": "cpu_rallies::run"
-        },
-        {
-          "path": "/api/cpu/native/rallies/preview",
-          "handler": "native_rally_preview::preview"
-        },
-        {
-          "path": "/api/cpu/native/rallies/runs",
-          "handler": "studio_web::runs"
-        }
-      ],
-      "stores": []
-    },
-    {
-      "id": "gold",
-      "owner": "rust/volley-app/src/native_rally_marks.rs",
-      "status": "partial",
-      "adapters": [
-        "rust/volley-app/src/rally_marks.rs"
-      ],
-      "stores": [
-        {
-          "source": "native",
-          "path": "projects/<id>/native_rally_marks/<rally_run_id>.json"
-        },
-        {
-          "source": "legacy",
-          "path": "projects/<id>/rally_marks.json"
-        }
-      ],
-      "routes": [
-        {
-          "path": "/api/cpu/native/rallies/marks",
-          "handler": "native_rally_marks::get"
-        },
-        {
-          "path": "/api/rallies/native/marks",
-          "handler": "rally_marks::marks"
-        }
-      ]
-    },
-    {
-      "id": "montage",
-      "owner": "rust/volley-app/src/montage.rs",
-      "status": "partial",
-      "adapters": [
-        "rust/volley-app/src/player_montage.rs"
-      ],
-      "routes": [
-        {
-          "path": "/api/montage/native/start",
-          "handler": "montage::start_native_montage"
-        },
-        {
-          "path": "/api/montage/native/status",
-          "handler": "montage::native_status"
-        },
-        {
-          "path": "/api/montage/native/plan",
-          "handler": "rallies::preview_selection"
-        },
-        {
-          "path": "/api/montage/native/start-from-rally-candidates",
-          "handler": "native_rally_preview::start_manual_montage"
-        },
-        {
-          "path": "/api/montage/native/start-from-run",
-          "handler": "montage::start_native_from_run"
-        },
-        {
-          "path": "/api/montage/native/cancel",
-          "handler": "montage::native_cancel"
-        },
-        {
-          "path": "/api/montage/native/media",
-          "handler": "montage::native_media"
-        },
-        {
-          "path": "/api/montage/native/library",
-          "handler": "montage::native_library"
-        },
-        {
-          "path": "/api/montage/native/audio",
-          "handler": "montage::native_upload_audio"
-        }
-      ],
-      "stores": []
-    },
-    {
-      "id": "versioned_sidecar",
-      "owner": "rust/volley-app/src/versioned_store.rs",
-      "status": "partial",
-      "adapters": [],
-      "routes": [],
-      "stores": []
-    },
-    {
-      "id": "gpu",
-      "owner": "rust/volley-app/src/inference_full.rs",
-      "status": "partial",
-      "adapters": [
-        "rust/volley-app/src/inference_fusion.rs"
-      ],
-      "routes": [
-        {
-          "path": "/api/inference/native/full/start",
-          "handler": "inference_full::start"
-        },
-        {
-          "path": "/api/inference/native/full/status",
-          "handler": "inference_full::status"
-        },
-        {
-          "path": "/api/inference/native/full/active",
-          "handler": "inference_full::active"
-        },
-        {
-          "path": "/api/inference/native/full/cancel",
-          "handler": "inference_full::cancel"
-        }
-      ],
-      "stores": []
-    },
-    {
-      "id": "ui",
-      "owner": "rust/volley-app/src/studio_web.rs",
-      "status": "partial",
-      "adapters": [
-        "rust/volley-web/src/lib.rs"
-      ],
-      "routes": [],
-      "stores": []
-    },
-    {
-      "id": "quick_reel",
-      "owner": "rust/volley-app/src/quick_reel.rs",
-      "status": "partial",
-      "adapters": [],
-      "routes": [
-        {
-          "path": "/api/quick-reel/native/select",
-          "handler": "quick_reel::select_sources"
-        },
-        {
-          "path": "/api/quick-reel/native/start",
-          "handler": "quick_reel::start"
-        },
-        {
-          "path": "/api/quick-reel/native/status",
-          "handler": "quick_reel::status"
-        },
-        {
-          "path": "/api/quick-reel/native/cancel",
-          "handler": "quick_reel::cancel"
-        }
-      ],
-      "stores": []
-    },
-    {
-      "id": "player_stats",
-      "owner": "rust/volley-app/src/player_statistics.rs",
-      "status": "partial",
-      "adapters": [],
-      "routes": [
-        {
-          "path": "/api/players/statistics/native",
-          "handler": "player_statistics::statistics"
-        }
-      ],
-      "stores": []
-    },
-    {
-      "id": "player_catalog",
-      "owner": "rust/volley-app/src/player_catalog.rs",
-      "status": "partial",
-      "adapters": [],
-      "routes": [
-        {
-          "path": "/api/players/library/native",
-          "handler": "player_catalog::edit"
-        },
-        {
-          "path": "/api/players/library",
-          "handler": "catalog::get_library"
-        }
-      ],
-      "stores": []
-    },
-    {
-      "id": "continuity",
-      "owner": "rust/volley-core/src/continuity.rs",
-      "status": "partial",
-      "adapters": [
-        "rust/volley-app/src/player_continuity.rs"
-      ],
-      "routes": [
-        {
-          "path": "/api/players/continuity-preview",
-          "handler": "player_continuity::preview"
-        }
-      ],
-      "stores": []
-    },
-    {
-      "id": "tracking",
-      "owner": "rust/volley-app/src/cpu_retrack.rs",
-      "status": "partial",
-      "adapters": [],
-      "routes": [
-        {
-          "path": "/api/cpu/native/retrack",
-          "handler": "cpu_retrack::replay"
-        }
-      ],
-      "stores": []
-    }
-  ]
+    "schema":  "volley-rust-feature-ownership/1",
+    "migrationBranch":  "migration/rust-2026-11-07",
+    "canonicalEvidence":  "native_gpu_cpu_replay",
+    "guardedPrefixes":  [
+                            "/api/players/",
+                            "/api/rallies/",
+                            "/api/cpu/native/",
+                            "/api/montage/native/",
+                            "/api/quick-reel/native/",
+                            "/api/inference/native/full/"
+                        ],
+    "domains":  [
+                    {
+                        "id":  "reid",
+                        "owner":  "rust/volley-core/src/reid.rs",
+                        "status":  "partial",
+                        "adapters":  [
+                                         "rust/volley-app/src/reid_native.rs",
+                                         "rust/volley-inference/src/reid_openvino.rs",
+                                         "rust/volley-app/src/native_player_tracks.rs",
+                                         "rust/volley-app/src/reid_npz.rs",
+                                         "rust/volley-app/src/reid_group_edits.rs"
+                                     ],
+                        "routes":  [
+                                       {
+                                           "path":  "/api/players/native/references",
+                                           "handler":  "native_player_tracks::references"
+                                       },
+                                       {
+                                           "path":  "/api/players/native/reference-photo",
+                                           "handler":  "native_player_tracks::reference_photo"
+                                       },
+                                       {
+                                           "path":  "/api/players/native/reid-review",
+                                           "handler":  "native_player_tracks::reid_review"
+                                       },
+                                       {
+                                           "path":  "/api/players/native/reid-groups",
+                                           "handler":  "native_player_tracks::reid_preview"
+                                       },
+                                       {
+                                           "path":  "/api/players/native/embeddings",
+                                           "handler":  "native_player_tracks::embeddings"
+                                       },
+                                       {
+                                           "path":  "/api/players/reid-native/preview",
+                                           "handler":  "reid_native::preview"
+                                       },
+                                       {
+                                           "path":  "/api/players/reid-native/groups",
+                                           "handler":  "reid_group_edits::group_edits"
+                                       }
+                                   ],
+                        "stores":  [
+                                       {
+                                           "source":  "native",
+                                           "path":  "players/native_reference_photos/\u003cplayer_id\u003e/index.json"
+                                       },
+                                       {
+                                           "source":  "native",
+                                           "path":  "projects/\u003cid\u003e/native_reid_reviews/\u003creplay_id\u003e.json"
+                                       }
+                                   ]
+                    },
+                    {
+                        "id":  "evidence_source",
+                        "owner":  "rust/volley-core/src/evidence_source.rs",
+                        "status":  "partial",
+                        "adapters":  [
+                                         "rust/volley-app/src/player_identity.rs",
+                                         "rust/volley-app/src/native_player_tracks.rs"
+                                     ],
+                        "routes":  [
+
+                                   ],
+                        "stores":  [
+
+                                   ]
+                    },
+                    {
+                        "id":  "identity",
+                        "owner":  "rust/volley-core/src/identity_review.rs",
+                        "status":  "partial",
+                        "adapters":  [
+                                         "rust/volley-app/src/native_player_tracks.rs",
+                                         "rust/volley-app/src/player_identity.rs"
+                                     ],
+                        "stores":  [
+                                       {
+                                           "source":  "native",
+                                           "path":  "projects/\u003cid\u003e/native_track_assignments/\u003creplay_id\u003e.json"
+                                       },
+                                       {
+                                           "source":  "legacy",
+                                           "path":  "projects/\u003cid\u003e/player_identities.json"
+                                       }
+                                   ],
+                        "routes":  [
+                                       {
+                                           "path":  "/api/players/native/tracks",
+                                           "handler":  "native_player_tracks::read"
+                                       },
+                                       {
+                                           "path":  "/api/players/native/track-photo",
+                                           "handler":  "native_player_tracks::photo"
+                                       },
+                                       {
+                                           "path":  "/api/players/identity/native",
+                                           "handler":  "player_identity::read_or_edit"
+                                       }
+                                   ]
+                    },
+                    {
+                        "id":  "touch",
+                        "owner":  "rust/volley-core/src/touch.rs",
+                        "status":  "partial",
+                        "adapters":  [
+                                         "rust/volley-app/src/cpu_touches.rs",
+                                         "rust/volley-app/src/touch_preview.rs"
+                                     ],
+                        "routes":  [
+                                       {
+                                           "path":  "/api/cpu/native/touches",
+                                           "handler":  "cpu_touches::run"
+                                       },
+                                       {
+                                           "path":  "/api/cpu/touch-preview",
+                                           "handler":  "touch_preview::touch_preview"
+                                       }
+                                   ],
+                        "stores":  [
+
+                                   ]
+                    },
+                    {
+                        "id":  "rallies",
+                        "owner":  "rust/volley-core/src/rally_reconstruction.rs",
+                        "status":  "partial",
+                        "adapters":  [
+                                         "rust/volley-app/src/rallies.rs",
+                                         "rust/volley-app/src/cpu_rallies.rs",
+                                         "rust/volley-app/src/native_rally_preview.rs"
+                                     ],
+                        "routes":  [
+                                       {
+                                           "path":  "/api/cpu/native/rallies",
+                                           "handler":  "cpu_rallies::run"
+                                       },
+                                       {
+                                           "path":  "/api/cpu/native/rallies/preview",
+                                           "handler":  "native_rally_preview::preview"
+                                       },
+                                       {
+                                           "path":  "/api/cpu/native/rallies/runs",
+                                           "handler":  "studio_web::runs"
+                                       }
+                                   ],
+                        "stores":  [
+
+                                   ]
+                    },
+                    {
+                        "id":  "gold",
+                        "owner":  "rust/volley-app/src/native_rally_marks.rs",
+                        "status":  "partial",
+                        "adapters":  [
+                                         "rust/volley-app/src/rally_marks.rs"
+                                     ],
+                        "stores":  [
+                                       {
+                                           "source":  "native",
+                                           "path":  "projects/\u003cid\u003e/native_rally_marks/\u003crally_run_id\u003e.json"
+                                       },
+                                       {
+                                           "source":  "legacy",
+                                           "path":  "projects/\u003cid\u003e/rally_marks.json"
+                                       }
+                                   ],
+                        "routes":  [
+                                       {
+                                           "path":  "/api/cpu/native/rallies/marks",
+                                           "handler":  "native_rally_marks::get"
+                                       },
+                                       {
+                                           "path":  "/api/rallies/native/marks",
+                                           "handler":  "rally_marks::marks"
+                                       }
+                                   ]
+                    },
+                    {
+                        "id":  "montage",
+                        "owner":  "rust/volley-app/src/montage.rs",
+                        "status":  "partial",
+                        "adapters":  [
+                                         "rust/volley-app/src/player_montage.rs"
+                                     ],
+                        "routes":  [
+                                       {
+                                           "path":  "/api/montage/native/start",
+                                           "handler":  "montage::start_native_montage"
+                                       },
+                                       {
+                                           "path":  "/api/montage/native/status",
+                                           "handler":  "montage::native_status"
+                                       },
+                                       {
+                                           "path":  "/api/montage/native/plan",
+                                           "handler":  "rallies::preview_selection"
+                                       },
+                                       {
+                                           "path":  "/api/montage/native/start-from-rally-candidates",
+                                           "handler":  "native_rally_preview::start_manual_montage"
+                                       },
+                                       {
+                                           "path":  "/api/montage/native/start-from-run",
+                                           "handler":  "montage::start_native_from_run"
+                                       },
+                                       {
+                                           "path":  "/api/montage/native/cancel",
+                                           "handler":  "montage::native_cancel"
+                                       },
+                                       {
+                                           "path":  "/api/montage/native/media",
+                                           "handler":  "montage::native_media"
+                                       },
+                                       {
+                                           "path":  "/api/montage/native/library",
+                                           "handler":  "montage::native_library"
+                                       },
+                                       {
+                                           "path":  "/api/montage/native/audio",
+                                           "handler":  "montage::native_upload_audio"
+                                       }
+                                   ],
+                        "stores":  [
+
+                                   ]
+                    },
+                    {
+                        "id":  "versioned_sidecar",
+                        "owner":  "rust/volley-app/src/versioned_store.rs",
+                        "status":  "partial",
+                        "adapters":  [
+
+                                     ],
+                        "routes":  [
+
+                                   ],
+                        "stores":  [
+
+                                   ]
+                    },
+                    {
+                        "id":  "gpu",
+                        "owner":  "rust/volley-app/src/inference_full.rs",
+                        "status":  "partial",
+                        "adapters":  [
+                                         "rust/volley-app/src/inference_fusion.rs"
+                                     ],
+                        "routes":  [
+                                       {
+                                           "path":  "/api/inference/native/full/start",
+                                           "handler":  "inference_full::start"
+                                       },
+                                       {
+                                           "path":  "/api/inference/native/full/status",
+                                           "handler":  "inference_full::status"
+                                       },
+                                       {
+                                           "path":  "/api/inference/native/full/active",
+                                           "handler":  "inference_full::active"
+                                       },
+                                       {
+                                           "path":  "/api/inference/native/full/cancel",
+                                           "handler":  "inference_full::cancel"
+                                       }
+                                   ],
+                        "stores":  [
+
+                                   ]
+                    },
+                    {
+                        "id":  "ui",
+                        "owner":  "rust/volley-app/src/studio_web.rs",
+                        "status":  "partial",
+                        "adapters":  [
+                                         "rust/volley-web/src/lib.rs"
+                                     ],
+                        "routes":  [
+
+                                   ],
+                        "stores":  [
+
+                                   ]
+                    },
+                    {
+                        "id":  "quick_reel",
+                        "owner":  "rust/volley-app/src/quick_reel.rs",
+                        "status":  "partial",
+                        "adapters":  [
+
+                                     ],
+                        "routes":  [
+                                       {
+                                           "path":  "/api/quick-reel/native/select",
+                                           "handler":  "quick_reel::select_sources"
+                                       },
+                                       {
+                                           "path":  "/api/quick-reel/native/start",
+                                           "handler":  "quick_reel::start"
+                                       },
+                                       {
+                                           "path":  "/api/quick-reel/native/status",
+                                           "handler":  "quick_reel::status"
+                                       },
+                                       {
+                                           "path":  "/api/quick-reel/native/cancel",
+                                           "handler":  "quick_reel::cancel"
+                                       }
+                                   ],
+                        "stores":  [
+
+                                   ]
+                    },
+                    {
+                        "id":  "player_stats",
+                        "owner":  "rust/volley-app/src/player_statistics.rs",
+                        "status":  "partial",
+                        "adapters":  [
+
+                                     ],
+                        "routes":  [
+                                       {
+                                           "path":  "/api/players/statistics/native",
+                                           "handler":  "player_statistics::statistics"
+                                       }
+                                   ],
+                        "stores":  [
+
+                                   ]
+                    },
+                    {
+                        "id":  "player_catalog",
+                        "owner":  "rust/volley-app/src/player_catalog.rs",
+                        "status":  "partial",
+                        "adapters":  [
+
+                                     ],
+                        "routes":  [
+                                       {
+                                           "path":  "/api/players/library/native",
+                                           "handler":  "player_catalog::edit"
+                                       },
+                                       {
+                                           "path":  "/api/players/library",
+                                           "handler":  "catalog::get_library"
+                                       }
+                                   ],
+                        "stores":  [
+
+                                   ]
+                    },
+                    {
+                        "id":  "continuity",
+                        "owner":  "rust/volley-core/src/continuity.rs",
+                        "status":  "partial",
+                        "adapters":  [
+                                         "rust/volley-app/src/player_continuity.rs",
+                                         "rust/volley-app/src/native_player_tracks.rs"
+                                     ],
+                        "routes":  [
+                                       {
+                                           "path":  "/api/players/continuity-preview",
+                                           "handler":  "player_continuity::preview"
+                                       },
+                                       {
+                                           "path":  "/api/players/native/continuity",
+                                           "handler":  "native_player_tracks::native_continuity"
+                                       }
+                                   ],
+                        "stores":  [
+
+                                   ]
+                    },
+                    {
+                        "id":  "tracking",
+                        "owner":  "rust/volley-app/src/cpu_retrack.rs",
+                        "status":  "partial",
+                        "adapters":  [
+
+                                     ],
+                        "routes":  [
+                                       {
+                                           "path":  "/api/cpu/native/retrack",
+                                           "handler":  "cpu_retrack::replay"
+                                       }
+                                   ],
+                        "stores":  [
+
+                                   ]
+                    }
+                ]
 }

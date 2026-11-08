@@ -132,6 +132,7 @@ async fn rewrite_status(
             "GET /api/players/native/track-photo (on-demand isolated player crop preview)",
             "POST /api/players/native/reid-groups (cached, review-only cosine suggestions)",
             "POST /api/players/native/reid-review (manual revisioned group merge/split)",
+            "POST /api/players/native/continuity (read-only gap suggestions)",
             "POST /api/cpu/touch-preview (read-only RAVEL diagnostics)",
             "POST /api/players/continuity-preview (read-only geometry candidates)",
             "POST /api/players/reid-native/preview (saved embeddings, read-only)",
@@ -192,6 +193,10 @@ fn app(state: Arc<AppState>) -> Router {
         .route(
             "/api/players/native/track-photo",
             get(native_player_tracks::photo),
+        )
+        .route(
+            "/api/players/native/continuity",
+            post(native_player_tracks::native_continuity),
         )
         .route(
             "/api/players/native/reid-review",

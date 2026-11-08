@@ -704,3 +704,11 @@ Additional test observations: live isolated Axum HTTP smoke on 127.0.0.1:8859 re
 - Verification: 174 successful offline Rust workspace tests (2 optional native model tests ignored), code formatting and JS syntax passed; existing multi-Track native replay and manual-group tests remained green. Tests with four threads pass; the known unrelated maximum-parallelism CPU retrack lock-test flake is described in stage 64. Synthetic adversarial vectors test safety but do NOT measure ReID accuracy on actual beach volleyball recordings.
 
 Next: conservative Track ID continuity across 3–4 second detection gaps with collision-safe evidence, no false identity confirmation.
+## 66. Консервативная непрерывность Track ID при разрыве 3–4 секунды — 2026-11-09
+
+- Added POST /api/players/native/continuity to recompute canonical volley-core/src/continuity.rs geometric suggestions from exact SHA256-verified native CPU tracking frames, without GPU inference or mutating identity/Track ID snapshots. Bound to project/video/replay, rejects unknown and repeated IDs, wrong frame order, forged confirmed status, bad SHA, unsafe folders and more than five million detections. Respects manually excluded IDs.
+- Existing canonical reciprocal best-match and geometry constraints now have explicit tests for a configurable 3-second extension (2.5 seconds excludes the same segment), 4-second gap and crossing players with ambiguous competing candidates; distant suggestions never merge IDs automatically. Source provenances are returned with confirmed=false and auto_assign_enabled=false.
+- Rust Studio Players panel exposes a 0.7–4.0-second setting and on-demand continuity suggestions, including explicit selection of candidate pairs for later manual review. The user cannot mistake a geometry score for a calibrated athlete identity.
+- Verified: 177 passing Rust workspace tests with four test threads, two optional model tests ignored; Node JS syntax, canonical owner route guard (40 guarded routes), and targeted source SHA tamper regression passed. Single-source read works from isolated Rust data. Full real-match quality benchmarks remain pending.
+
+Next: source-versioned trajectory and ball-motion extremum diagnostics without rerunning GPU inference.
