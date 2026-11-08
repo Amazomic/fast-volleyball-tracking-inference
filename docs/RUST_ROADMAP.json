@@ -1,8 +1,8 @@
 {
     "schema":  "volley-rust-stage-roadmap/1",
     "plannedTotal":  85,
-    "lastRecorded":  63,
-    "nextStage":  64,
+    "lastRecorded":  64,
+    "nextStage":  65,
     "estimateNote":  "85 — текущий ориентир планирования, не обещание неизменного объема; этап != готовая подсистема. При пересмотре плана обновлять JSON, Markdown и журнал в одном коммите.",
     "stages":  [
                    {
@@ -513,8 +513,9 @@
                        "number":  64,
                        "title":  "Ручная проверка ReID групп и порога автопредложений",
                        "area":  "ReID",
-                       "status":  "planned",
-                       "acceptance":  "UI review/merge/split with explicit consent and conflict-safe revision"
+                       "status":  "recorded",
+                       "acceptance":  "UI review/merge/split with explicit consent and conflict-safe revision",
+                       "journalSection":  64
                    },
                    {
                        "number":  65,

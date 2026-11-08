@@ -295,6 +295,8 @@ mod tests {
         assert!(tracks.starts_with("HTTP/1.1 200 OK"));
         assert!(tracks.contains("/api/players/native/tracks"));
         assert!(tracks.contains("/api/players/native/track-photo"));
+        assert!(tracks.contains("/api/players/native/reid-review"));
+        assert!(tracks.contains("/api/players/native/embeddings"));
         assert!(!tracks.contains("innerHTML"));
         let wasm = get(addr, "/studio/rust/selection.wasm").await;
         assert!(wasm.starts_with("HTTP/1.1 200 OK"));

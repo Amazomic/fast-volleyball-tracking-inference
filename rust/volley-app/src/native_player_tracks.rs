@@ -15,7 +15,7 @@ use axum::{
     Json,
 };
 use fs2::FileExt;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{
@@ -762,6 +762,357 @@ pub async fn reid_preview(
         }))
     }).await.map_err(|e| storage::internal(format!("Native ReID worker: {e}")))??;
     Ok(Json(response))
+}
+const MAX_REID_REVIEW_BYTES: u64 = 256 * 1024;
+
+/// Group decisions are independent from athlete identity assignments.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReidReviewRequest {
+    project_id: String,
+    video: String,
+    replay_id: String,
+    expected_source_sha256: String,
+    action: String,
+    #[serde(default)]
+    track_ids: Vec<u64>,
+    #[serde(default)]
+    expected_revision: Option<String>,
+    #[serde(default = "default_reid_threshold")]
+    threshold_percent: u8,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ReidReviewDoc {
+    schema: String,
+    project_id: String,
+    video: String,
+    replay_id: String,
+    replay_sha256: String,
+    model_fingerprint: String,
+    groups: Vec<Vec<u64>>,
+    suppressed_ids: Vec<u64>,
+}
+impl ReidReviewDoc {
+    fn new(ctx: &Inputs, fingerprint: &str) -> Self {
+        Self {
+            schema: "volley-native-reid-group-review/1".into(),
+            project_id: ctx.project_id.clone(),
+            video: ctx.video.clone(),
+            replay_id: ctx.replay_id.clone(),
+            replay_sha256: ctx.source_sha.clone(),
+            model_fingerprint: fingerprint.into(),
+            groups: Vec::new(),
+            suppressed_ids: Vec::new(),
+        }
+    }
+}
+fn reviewed_group_is_safe(ctx: &Inputs, identities: &Value, ids: &[u64]) -> bool {
+    let owners = identities["assignments"].as_object();
+    let Some(owners) = owners else { return false };
+    let excluded = identities["excluded_ids"].as_array();
+    let Some(excluded) = excluded else {
+        return false;
+    };
+    let excluded = excluded
+        .iter()
+        .filter_map(Value::as_u64)
+        .collect::<BTreeSet<_>>();
+    let mut members = Vec::with_capacity(ids.len());
+    for id in ids {
+        let Some(row) = ctx.tracks.get(id) else {
+            return false;
+        };
+        if excluded.contains(id) {
+            return false;
+        }
+        members.push(reid::ManualGroupMember {
+            track_id: match i64::try_from(*id) {
+                Ok(id) => id,
+                Err(_) => return false,
+            },
+            first_frame: row.first as i64,
+            last_frame: row.last as i64,
+            confirmed_owner: owners.get(&id.to_string()).and_then(Value::as_str),
+        });
+    }
+    reid::valid_manual_group(&members)
+}
+fn checked_review(
+    doc: &ReidReviewDoc,
+    ctx: &Inputs,
+    fingerprint: &str,
+    identities: &Value,
+) -> Result<(), String> {
+    if doc.schema != "volley-native-reid-group-review/1"
+        || doc.project_id != ctx.project_id
+        || doc.video != ctx.video
+        || doc.replay_id != ctx.replay_id
+        || doc.replay_sha256 != ctx.source_sha
+        || doc.model_fingerprint != fingerprint
+    {
+        return Err("Saved ReID manual review belongs to another replay/model".into());
+    }
+    if doc.groups.len() > 200 || doc.suppressed_ids.len() > MAX_TRACKS {
+        return Err("Too many reviewed ReID groups or suppressed IDs".into());
+    }
+    let mut used = BTreeSet::new();
+    for group in &doc.groups {
+        if !reviewed_group_is_safe(ctx, identities, group)
+            || group.iter().any(|id| !used.insert(*id))
+        {
+            return Err("Saved ReID group has unsafe, stale or duplicated Track IDs".into());
+        }
+    }
+    let mut suppressed = BTreeSet::new();
+    for id in &doc.suppressed_ids {
+        if !ctx.known.contains_number(*id) || used.contains(id) || !suppressed.insert(*id) {
+            return Err("Invalid saved manually split ReID Track IDs".into());
+        }
+    }
+    Ok(())
+}
+fn modify_review(
+    doc: &mut ReidReviewDoc,
+    ctx: &Inputs,
+    identities: &Value,
+    action: &str,
+    ids: &[u64],
+) -> Result<(), String> {
+    if ids.is_empty() || ids.len() > 200 || (action == "merge" && ids.len() < 2) {
+        return Err("Choose 1–200 Track IDs (at least 2 to merge)".into());
+    }
+    let chosen = ids.iter().copied().collect::<BTreeSet<_>>();
+    if chosen.len() != ids.len() || ids.iter().any(|id| !ctx.known.contains_number(*id)) {
+        return Err("Duplicate or unknown Track ID in manual ReID review".into());
+    }
+    if action == "merge" && !reviewed_group_is_safe(ctx, identities, ids) {
+        return Err("Cannot merge overlapping, excluded or differently confirmed players".into());
+    }
+    if action != "merge" && action != "split" {
+        return Err("Unsupported ReID review action".into());
+    }
+    let mut updated = doc.clone();
+    // An explicit split also suppresses an automatic candidate group.
+    if action == "split" && chosen.iter().all(|id| updated.suppressed_ids.contains(id)) {
+        return Err("Selected IDs were already manually split".into());
+    }
+    for group in &mut updated.groups {
+        group.retain(|id| !chosen.contains(id));
+    }
+    updated.groups.retain(|group| group.len() >= 2);
+    if action == "merge" {
+        updated.groups.push(chosen.iter().copied().collect());
+        updated.suppressed_ids.retain(|id| !chosen.contains(id));
+    } else {
+        let mut suppressed = updated
+            .suppressed_ids
+            .iter()
+            .copied()
+            .collect::<BTreeSet<_>>();
+        suppressed.extend(chosen);
+        updated.suppressed_ids = suppressed.into_iter().collect();
+    }
+    checked_review(&updated, ctx, &doc.model_fingerprint, identities)?;
+    *doc = updated;
+    Ok(())
+}
+fn review_path(state: &AppState, ctx: &Inputs) -> Result<PathBuf, ApiError> {
+    let project = projects::project_root(state).join(&ctx.project_id);
+    safe_folder(&project).map_err(storage::bad_request)?;
+    let folder = project.join("native_reid_reviews");
+    if let Ok(meta) = fs::symlink_metadata(&folder) {
+        if meta.file_type().is_symlink() || !meta.is_dir() {
+            return Err(storage::bad_request("Unsafe manual ReID review folder"));
+        }
+    }
+    Ok(folder.join(format!("{}.json", ctx.replay_id)))
+}
+fn review_response(
+    ctx: &Inputs,
+    identity: &Value,
+    vectors: &BTreeMap<u64, Vec<f32>>,
+    doc: &ReidReviewDoc,
+    version: String,
+    can_write: bool,
+    threshold: u8,
+) -> Result<Value, String> {
+    checked_review(doc, ctx, &doc.model_fingerprint, identity)?;
+    let pinned = doc
+        .groups
+        .iter()
+        .flatten()
+        .copied()
+        .collect::<BTreeSet<_>>();
+    let suppressed = doc.suppressed_ids.iter().copied().collect::<BTreeSet<_>>();
+    let mut preview = native_reid_report(ctx, identity, vectors, threshold)?;
+    let groups = preview["groups"]
+        .as_array_mut()
+        .ok_or("ReID groups missing")?;
+    // Never let similarity regroup a user-pinned or explicitly split ID.
+    groups.retain(|group| {
+        group["track_ids"].as_array().is_some_and(|ids| {
+            ids.iter().all(|id| {
+                id.as_str()
+                    .and_then(|s| s.parse::<u64>().ok())
+                    .is_some_and(|id| !pinned.contains(&id) && !suppressed.contains(&id))
+            })
+        })
+    });
+    for members in &doc.groups {
+        let key = members
+            .iter()
+            .map(u64::to_string)
+            .collect::<Vec<_>>()
+            .join(",");
+        let digest = format!("{:x}", Sha256::digest(key.as_bytes()));
+        groups.push(json!({
+            "id":format!("manual-{}", &digest[..16]),
+            "track_ids":members.iter().map(u64::to_string).collect::<Vec<_>>(),
+            "similarity":null,
+            "source":"manual"
+        }));
+    }
+    let used = groups
+        .iter()
+        .flat_map(|group| {
+            group["track_ids"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .filter_map(|s| s.parse::<u64>().ok())
+        })
+        .collect::<BTreeSet<_>>();
+    let excluded = identity["excluded_ids"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_u64)
+        .collect::<BTreeSet<_>>();
+    let unmatched = ctx
+        .known
+        .ids()
+        .iter()
+        .filter(|id| !used.contains(id) && !excluded.contains(id))
+        .map(u64::to_string)
+        .collect::<Vec<_>>();
+    preview["unmatched_ids"] = json!(unmatched);
+    preview["confirmed"] = json!(false);
+    Ok(json!({
+        "schema":"volley-native-reid-group-review/1",
+        "project_id":ctx.project_id,"video":ctx.video,"replay_id":ctx.replay_id,
+        "source_replay_sha256":ctx.source_sha,"revision":version,
+        "threshold_percent":threshold,"writable":can_write,
+        "groups":preview["groups"],"unmatched_ids":preview["unmatched_ids"],
+        "embedded_count":preview["embedded_count"],
+        "suppressed_ids":doc.suppressed_ids,
+        "similarity_type":"cosine_similarity_not_probability",
+        "auto_assign_enabled":false,"confirmed":false
+    }))
+}
+pub async fn reid_review(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(req): Json<ReidReviewRequest>,
+) -> ApiResult<Value> {
+    storage::validate_origin(&headers)?;
+    if !matches!(req.action.as_str(), "read" | "merge" | "split")
+        || !(55..=99).contains(&req.threshold_percent)
+    {
+        return Err(storage::bad_request(
+            "Invalid manual ReID review action or threshold",
+        ));
+    }
+    let _slot = state
+        .reid_limit
+        .acquire()
+        .await
+        .map_err(|e| storage::internal(format!("Manual ReID lock slot: {e}")))?;
+    let state = state.clone();
+    let result = tokio::task::spawn_blocking(move || -> Result<Value, ApiError> {
+        let _guard = project_archive::archive_guard(&state, &req.project_id)?;
+        let ctx = source(&state, &req.project_id, &req.video, &req.replay_id)?;
+        if ctx.source_sha != req.expected_source_sha256 {
+            return Err(storage::conflict("Native CPU replay SHA changed"));
+        }
+        let model = volley_inference::reid_openvino::fingerprint(&state.repository_root)
+            .map_err(storage::bad_request)?;
+        let raw_identity = existing(&ctx.sidecar).map_err(storage::bad_request)?;
+        let identity = validated(raw_identity.as_deref(), &ctx).map_err(storage::bad_request)?;
+        let path = review_path(&state, &ctx)?;
+        let raw = versioned_store::read_optional_bounded(&path, MAX_REID_REVIEW_BYTES)
+            .map_err(storage::bad_request)?;
+        let mut doc = match raw.as_deref() {
+            Some(data) => serde_json::from_slice::<ReidReviewDoc>(data)
+                .map_err(|e| storage::bad_request(format!("Invalid saved ReID review: {e}")))?,
+            None => ReidReviewDoc::new(&ctx, &model),
+        };
+        checked_review(&doc, &ctx, &model, &identity).map_err(storage::conflict)?;
+        let scope = native_reid_cache::CacheScope {
+            project_id: ctx.project_id.clone(),
+            video: ctx.video.clone(),
+            replay_id: ctx.replay_id.clone(),
+            replay_sha256: ctx.source_sha.clone(),
+            model_fingerprint: model.clone(),
+        };
+        let cache =
+            native_reid_cache::read(&state.data_root, &scope).map_err(storage::bad_request)?;
+        if cache.invalidated || cache.vectors.is_empty() {
+            return Err(storage::conflict(
+                "Extract current ReID embeddings before reviewing groups",
+            ));
+        }
+        if req.action != "read" {
+            if !state.writes_enabled {
+                return Err(storage::conflict(
+                    "Group editing requires isolated Rust storage",
+                ));
+            }
+            let expected = req.expected_revision.as_deref().ok_or_else(|| {
+                storage::bad_request("Read current group revision before editing")
+            })?;
+            versioned_store::expect_revision(raw.as_deref(), expected)
+                .map_err(storage::conflict)?;
+            modify_review(&mut doc, &ctx, &identity, &req.action, &req.track_ids)
+                .map_err(storage::conflict)?;
+            let folder = path
+                .parent()
+                .ok_or_else(|| storage::internal("Missing ReID review folder"))?;
+            versioned_store::write_json_checked(
+                folder,
+                &path,
+                &serde_json::to_value(&doc)
+                    .map_err(|e| storage::internal(format!("Encode ReID groups: {e}")))?,
+                MAX_REID_REVIEW_BYTES,
+            )
+            .map_err(storage::bad_request)?;
+        }
+        let now = versioned_store::read_optional_bounded(&path, MAX_REID_REVIEW_BYTES)
+            .map_err(storage::bad_request)?;
+        if volley_inference::reid_openvino::fingerprint(&state.repository_root)
+            .map_err(storage::bad_request)?
+            != model
+        {
+            return Err(storage::conflict(
+                "OpenVINO model changed during manual ReID review",
+            ));
+        }
+        review_response(
+            &ctx,
+            &identity,
+            &cache.vectors,
+            &doc,
+            revision(now.as_deref()),
+            state.writes_enabled,
+            req.threshold_percent,
+        )
+        .map_err(storage::bad_request)
+    })
+    .await
+    .map_err(|e| storage::internal(format!("Manual ReID task: {e}")))??;
+    Ok(Json(result))
 }
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -1679,6 +2030,104 @@ mod tests {
                 .join("0123456789abcdef0123456789abcdef.json"),
             can_write: true,
         }
+    }
+    #[test]
+    fn review_preview_displays_manual_groups_without_claiming_athlete_identity() {
+        let (root, _, sha) = fixture();
+        let tracks = index_replay(&root.join("tracked_frames.jsonl"), &sha, 18).unwrap();
+        let mut ctx = context(&root, sha, tracks);
+        let mut extra = ctx.tracks[&7].clone();
+        extra.first = 20;
+        extra.last = 25;
+        ctx.tracks.insert(8, extra);
+        ctx.known = VerifiedTrackSet::new(ctx.evidence.clone(), [7, 8]).unwrap();
+        let identity = base_document(&ctx);
+        let mut vectors = BTreeMap::new();
+        let mut vector = vec![0_f32; 256];
+        vector[0] = 1.0;
+        vectors.insert(7, vector.clone());
+        vectors.insert(8, vector);
+        let mut review = ReidReviewDoc::new(&ctx, &"a".repeat(64));
+        modify_review(&mut review, &ctx, &identity, "merge", &[7, 8]).unwrap();
+        let current =
+            review_response(&ctx, &identity, &vectors, &review, "rev".into(), true, 85).unwrap();
+        assert_eq!(current["groups"].as_array().unwrap().len(), 1);
+        assert_eq!(current["groups"][0]["source"], "manual");
+        assert!(current["groups"][0]["similarity"].is_null());
+        assert_eq!(current["auto_assign_enabled"], false);
+        assert_eq!(current["confirmed"], false);
+        modify_review(&mut review, &ctx, &identity, "split", &[7, 8]).unwrap();
+        let split =
+            review_response(&ctx, &identity, &vectors, &review, "rev2".into(), true, 85).unwrap();
+        assert!(split["groups"].as_array().unwrap().is_empty());
+        assert_eq!(split["suppressed_ids"], json!([7, 8]));
+        assert_eq!(split["unmatched_ids"], json!(["7", "8"]));
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn manual_reid_groups_merge_split_revisions_and_source_owner_checks() {
+        let (root, _, sha) = fixture();
+        let tracks = index_replay(&root.join("tracked_frames.jsonl"), &sha, 18).unwrap();
+        let mut ctx = context(&root, sha, tracks);
+        let mut second = ctx.tracks[&7].clone();
+        second.first = 20;
+        second.last = 28;
+        ctx.tracks.insert(8, second.clone());
+        ctx.known = VerifiedTrackSet::new(ctx.evidence.clone(), [7, 8]).unwrap();
+        let identity = base_document(&ctx);
+        let model = "b".repeat(64);
+        let mut doc = ReidReviewDoc::new(&ctx, &model);
+        assert!(checked_review(&doc, &ctx, &model, &identity).is_ok());
+        assert!(modify_review(&mut doc, &ctx, &identity, "merge", &[7, 7]).is_err());
+        assert!(modify_review(&mut doc, &ctx, &identity, "merge", &[7, 99]).is_err());
+        modify_review(&mut doc, &ctx, &identity, "split", &[7]).unwrap();
+        assert_eq!(doc.suppressed_ids, vec![7]);
+        modify_review(&mut doc, &ctx, &identity, "merge", &[7, 8]).unwrap();
+        assert_eq!(doc.groups, vec![vec![7, 8]]);
+        assert!(checked_review(&doc, &ctx, &"c".repeat(64), &identity).is_err());
+        let folder = root.join("reviews");
+        let sidecar = folder.join("review.json");
+        assert!(versioned_store::expect_revision(None, "absent").is_ok());
+        versioned_store::write_json_checked(&folder, &sidecar, &json!(doc), MAX_REID_REVIEW_BYTES)
+            .unwrap();
+        let raw = versioned_store::read_optional_bounded(&sidecar, MAX_REID_REVIEW_BYTES)
+            .unwrap()
+            .unwrap();
+        assert!(versioned_store::expect_revision(Some(&raw), "absent").is_err());
+        let revised: ReidReviewDoc = serde_json::from_slice(&raw).unwrap();
+        assert_eq!(revised.groups, vec![vec![7, 8]]);
+        modify_review(&mut doc, &ctx, &identity, "split", &[7]).unwrap();
+        assert!(doc.groups.is_empty());
+        assert_eq!(doc.suppressed_ids, vec![7]);
+        modify_review(&mut doc, &ctx, &identity, "merge", &[7, 8]).unwrap();
+        assert!(doc.suppressed_ids.is_empty());
+        ctx.tracks.get_mut(&8).unwrap().first = 10;
+        assert!(checked_review(&doc, &ctx, &model, &identity).is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn manual_reid_group_rejects_confirmed_distinct_athletes_without_mutation() {
+        let (root, _, sha) = fixture();
+        let tracks = index_replay(&root.join("tracked_frames.jsonl"), &sha, 18).unwrap();
+        let mut ctx = context(&root, sha, tracks);
+        let mut second = ctx.tracks[&7].clone();
+        second.first = 20;
+        second.last = 28;
+        ctx.tracks.insert(8, second);
+        ctx.known = VerifiedTrackSet::new(ctx.evidence.clone(), [7, 8]).unwrap();
+        ctx.roster
+            .insert("fedcba654321".into(), "Another athlete".into());
+        let mut identity = base_document(&ctx);
+        identity["assignments"] = json!({"7":"abcdef012345","8":"fedcba654321"});
+        let model = "b".repeat(64);
+        let mut doc = ReidReviewDoc::new(&ctx, &model);
+        assert!(modify_review(&mut doc, &ctx, &identity, "merge", &[7, 8]).is_err());
+        assert!(doc.groups.is_empty());
+        identity["assignments"] = json!({});
+        identity["excluded_ids"] = json!([8]);
+        assert!(modify_review(&mut doc, &ctx, &identity, "merge", &[7, 8]).is_err());
+        assert!(doc.groups.is_empty());
+        fs::remove_dir_all(root).unwrap();
     }
     #[test]
     fn native_reid_cached_features_are_proposals_with_hard_identity_and_overlap_gates() {

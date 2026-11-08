@@ -31,7 +31,10 @@
           "path": "/api/players/native/reference-photo",
           "handler": "native_player_tracks::reference_photo"
         },
-        {
+         {
+          "path": "/api/players/native/reid-review",
+          "handler": "native_player_tracks::reid_review"
+        },       {
           "path": "/api/players/native/reid-groups",
           "handler": "native_player_tracks::reid_preview"
         },
@@ -52,6 +55,10 @@
         {
           "source": "native",
           "path": "players/native_reference_photos/<player_id>/index.json"
+        },
+        {
+          "source": "native",
+          "path": "projects/<id>/native_reid_reviews/<replay_id>.json"
         }
       ]
     },

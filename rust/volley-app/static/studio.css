@@ -69,3 +69,14 @@
 .track-error{color:#fda9ae!important}
 @media(max-width:900px){.track-controls{grid-template-columns:1fr 1fr}.track-controls button{grid-column:1/-1}.track-actions{align-items:stretch}.track-actions select{width:100%}}
 @media(max-width:600px){.track-controls{grid-template-columns:1fr}.track-controls button{grid-column:auto}.track-actions button{flex:1}.native-track-item{gap:8px;padding:10px;flex-wrap:wrap}.native-track-meta{flex-basis:65%}.track-owner{max-width:100%;white-space:normal}}
+
+/* ReID review is separate from confirmed athlete bindings. */
+.native-reid-review{margin-top:1rem;padding:1rem;border:1px solid var(--border,#45505c);border-radius:.65rem;min-width:0}
+.native-reid-review h4{margin:0 0 .4rem;font-size:1rem}
+.native-reid-review p{margin:.4rem 0}
+.native-reid-controls{display:flex;align-items:center;gap:.4rem;flex-wrap:wrap;margin:.75rem 0}
+.native-reid-controls input[type=number]{width:4.3rem;min-width:4.3rem}
+.native-reid-group{display:flex;align-items:center;justify-content:space-between;gap:.75rem;padding:.5rem;border-bottom:1px solid var(--border,#45505c);min-width:0}
+.native-reid-group span{overflow-wrap:anywhere;font-size:.85rem}
+.native-reid-group button{flex-shrink:0}
+.native-reid-results{max-height:22rem;overflow-y:auto}

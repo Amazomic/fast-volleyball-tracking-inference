@@ -18,7 +18,7 @@
   const state={
     token:0,project:"",video:"",replay:"",offset:0,limit:24,
     selected:new Set(),revision:"absent",rows:[],total:0,
-    roster:[],writable:false,busy:false
+    roster:[],writable:false,busy:false,sourceSha:"",groupRevision:null
   };
   const node=(tag,klass,text)=>{
     const n=document.createElement(tag);if(klass)n.className=klass;
@@ -62,14 +62,17 @@
     ui.restore.disabled=!selected;
     ui.prev.disabled=state.busy||state.offset===0;
     ui.next.disabled=state.busy||state.offset+state.limit>=state.total;
+    reidUnlock();
   };
   const reset=()=>{
     state.token++;state.selected.clear();state.offset=0;state.rows=[];
     state.total=0;state.revision="absent";state.roster=[];state.writable=false;
+    state.sourceSha="";state.groupRevision=null;
     ui.total.textContent="—";ui.assigned.textContent="—";ui.excluded.textContent="—";
     ui.page.textContent="—";clear(ui.list);
     options(ui.player,[],"id",x=>x,"Игрок не выбран");
-    ui.photo.classList.add("hidden");ui.photoImg.removeAttribute("src");unlock();
+    ui.photo.classList.add("hidden");ui.photoImg.removeAttribute("src");
+    clear(reviewGroups);reviewStatus.textContent="Выберите обработку CPU.";unlock();
   };
   const loadVideos=async()=>{
     const project=ui.project.value;reset();
@@ -142,6 +145,7 @@
       state.total=Number(result.total_tracks)||0;
       state.roster=Array.isArray(result.roster)?result.roster:[];
       state.revision=String(result.revision||"absent");
+      state.sourceSha=String(result.source_replay_sha256);state.groupRevision=null;
       state.writable=result.writable===true;
       ui.total.textContent=String(state.total);
       ui.assigned.textContent=String(result.assigned_count||0);
@@ -227,7 +231,120 @@
       // performing an optimistic hidden reassignment.
     }finally{state.busy=false;unlock();}
   };
-  ui.video.addEventListener("change",()=>loadRuns().catch(e=>note(e.message,true)));
+  // Native appearance matches are only reviewed proposals, never athletes.
+  const reviewPanel=node("section","native-reid-review");
+  reviewPanel.setAttribute("aria-label","Ручная проверка ReID");
+  const reviewTitle=node("h4","","ReID · Группы Track ID");
+  const reviewText=node("p","hint","Cosine — сходство, не вероятность личности. Привязка к игроку выполняется отдельно.");
+  const reviewTools=node("div","native-reid-controls");
+  const reviewThreshold=node("input");
+  reviewThreshold.type="number";reviewThreshold.min="55";reviewThreshold.max="99";
+  reviewThreshold.step="1";reviewThreshold.value="85";
+  reviewThreshold.setAttribute("aria-label","Порог ReID cosine в процентах");
+  const reviewRead=node("button","secondary","Предложения");
+  const reviewExtract=node("button","secondary","Извлечь признаки");
+  const reviewMerge=node("button","secondary","Объединить ID");
+  const reviewSplit=node("button","secondary","Разделить ID");
+  for(const btn of [reviewRead,reviewExtract,reviewMerge,reviewSplit])btn.type="button";
+  reviewTools.append(node("span","","Cosine %"),reviewThreshold,
+    reviewRead,reviewExtract,reviewMerge,reviewSplit);
+  const reviewStatus=node("p","hint","Выберите обработку CPU, затем получите предложения.");
+  const reviewGroups=node("div","native-reid-results");
+  reviewPanel.append(reviewTitle,reviewText,reviewTools,reviewStatus,reviewGroups);
+  ui.list.parentElement.append(reviewPanel);
+  const reviewScope=()=>({
+    project_id:state.project,video:state.video,replay_id:state.replay,
+    expected_source_sha256:state.sourceSha,threshold_percent:Number(reviewThreshold.value)
+  });
+  const reviewReady=()=>Boolean(state.project&&state.video&&state.replay)&&
+    /^[a-f0-9]{64}$/.test(state.sourceSha)&&
+    Number.isInteger(+reviewThreshold.value)&&
+    +reviewThreshold.value>=55&&+reviewThreshold.value<=99;
+  const reviewNote=(message,error=false)=>{
+    reviewStatus.textContent=message;
+    reviewStatus.classList.toggle("track-error",error);
+  };
+  const reidUnlock=()=>{
+    const ready=reviewReady()&&!state.busy;
+    reviewRead.disabled=!ready;
+    reviewExtract.disabled=!ready||state.selected.size<1||state.selected.size>8;
+    reviewMerge.disabled=!ready||!state.writable||!state.groupRevision||state.selected.size<2;
+    reviewSplit.disabled=!ready||!state.writable||!state.groupRevision||state.selected.size<1;
+  };
+  const reviewRender=record=>{
+    if(record.schema!=="volley-native-reid-group-review/1"||
+      record.confirmed!==false||record.auto_assign_enabled!==false)
+      throw Error("Неподдерживаемый формат ReID");
+    clear(reviewGroups);
+    const groups=Array.isArray(record.groups)?record.groups:[];
+    for(const group of groups){
+      const ids=(Array.isArray(group.track_ids)?group.track_ids:[])
+        .map(Number).filter(id=>Number.isSafeInteger(id)&&id>0);
+      if(ids.length<2||ids.length>200)continue;
+      const item=node("article","native-reid-group");
+      const similarity=Number.isFinite(group.similarity)?
+        " · cosine "+Math.round(group.similarity*100)+"%":"";
+      const label=node("span","",ids.join(", ")+" · "+
+        (group.source==="manual"?"вручную":"предложение")+similarity);
+      const choose=node("button","secondary","Выбрать ID");
+      choose.type="button";
+      choose.addEventListener("click",()=>{
+        state.selected=new Set(ids);renderRows();unlock();reidUnlock();
+        reviewNote("Выбрано "+ids.length+" ID. Для изменения нажмите нужную кнопку.");
+      });
+      item.append(label,choose);reviewGroups.append(item);
+    }
+    reviewNote("Групп: "+groups.length+" · признаков: "+record.embedded_count+
+      " · автоматическая привязка отключена.");
+  };
+  const reviewLoad=async()=>{
+    if(!reviewReady()){reviewNote("Выберите CPU-версию и порог 55–99%.",true);return;}
+    const scope=reviewScope(),token=state.token;
+    reviewNote("Проверяем исходный SHA и ReID-кэш…");
+    try{
+      const record=await post("/api/players/native/reid-review",{...scope,action:"read"});
+      if(token!==state.token||scope.replay_id!==state.replay)return;
+      state.groupRevision=String(record.revision);reviewRender(record);
+    }catch(e){state.groupRevision=null;clear(reviewGroups);reviewNote(e.message,true);}
+    finally{reidUnlock();}
+  };
+  const reviewEdit=async action=>{
+    if(!reviewReady()||state.busy||!state.groupRevision)return;
+    const ids=[...state.selected];
+    if(!ids.length||ids.length>200||(action==="merge"&&ids.length<2))return;
+    const scope=reviewScope(),token=state.token;
+    state.busy=true;unlock();reidUnlock();
+    try{
+      const record=await post("/api/players/native/reid-review",{
+        ...scope,action,track_ids:ids,expected_revision:state.groupRevision
+      });
+      if(token!==state.token||scope.replay_id!==state.replay)return;
+      state.groupRevision=String(record.revision);
+      state.selected.clear();renderRows();reviewRender(record);
+      reviewNote("Ручная группа сохранена. Привязка к игроку не изменена.");
+    }catch(e){
+      state.groupRevision=null;
+      reviewNote(e.message+" Обновите предложения перед новой попыткой.",true);
+    }finally{state.busy=false;unlock();reidUnlock();}
+  };
+  reviewRead.addEventListener("click",reviewLoad);
+  reviewMerge.addEventListener("click",()=>reviewEdit("merge"));
+  reviewSplit.addEventListener("click",()=>reviewEdit("split"));
+  reviewThreshold.addEventListener("change",()=>{state.groupRevision=null;reidUnlock();});
+  reviewExtract.addEventListener("click",async()=>{
+    if(!reviewReady()||state.busy||!state.selected.size||state.selected.size>8)return;
+    const scope=reviewScope(),token=state.token;
+    state.busy=true;unlock();reidUnlock();reviewNote("Вычисляем реальные признаки OpenVINO…");
+    try{
+      const result=await post("/api/players/native/embeddings",{
+        project_id:scope.project_id,video:scope.video,replay_id:scope.replay_id,
+        expected_source_sha256:scope.expected_source_sha256,track_ids:[...state.selected]
+      });
+      if(token!==state.token||scope.replay_id!==state.replay)return;
+      reviewNote("Признаков: "+result.embedding_count+" · кэш: "+result.cache_hits);
+    }catch(e){reviewNote(e.message,true);}
+    finally{state.busy=false;unlock();reidUnlock();}
+  });  ui.video.addEventListener("change",()=>loadRuns().catch(e=>note(e.message,true)));
   ui.replay.addEventListener("change",()=>{
     reset();state.project=ui.project.value;state.video=ui.video.value;
     state.replay=ui.replay.value;
