@@ -9,7 +9,7 @@ player-linked statistics, rally previews and original-quality 9:16 reels.
 
 *Actual Studio interface, captured on 6 November 2026. Private player names and source filenames are redacted.*
 
-**Rust-миграция: 53/85; следующий 54/85 (плановый объём).** [Полная карта 85 этапов](docs/RUST_ROADMAP.md) · [Правила без дублирования](docs/RUST_ARCHITECTURE.md) · [Журнал миграции](docs/RUST_MIGRATION.md). Это развитие отдельной Rust-ветки; оригинальная Python Studio остаётся рабочей, а счётчик этапов не означает 53/85 готовности приложения.
+**Rust-миграция: 54/85; следующий 55/85 (плановый объём).** [Полная карта 85 этапов](docs/RUST_ROADMAP.md) · [Правила без дублирования](docs/RUST_ARCHITECTURE.md) · [Журнал миграции](docs/RUST_MIGRATION.md). Это развитие отдельной Rust-ветки; оригинальная Python Studio остаётся рабочей, а счётчик этапов не означает 53/85 готовности приложения.
 
 ## Features
 

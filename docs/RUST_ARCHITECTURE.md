@@ -24,6 +24,7 @@ Machine-readable ledger: docs/RUST_CANONICAL_OWNERS.json; mandatory audit: scrip
 
 | Domain | Canonical implementation | Adapters; preserve until migrated | Action |
 |---|---|---|---|
+| Source provenance/Track ID scoping | rust/volley-core/src/evidence_source.rs | player_identity.rs legacy and native_player_tracks.rs native | Source-kind discriminator, legacy unknown FPS/SHA, native full SHA/30 FPS and scope-qualified Track IDs; not a binding algorithm |
 | ReID similarity/grouping | rust/volley-core/src/reid.rs | reid_native.rs, reid_npz.rs, reid_group_edits.rs | REUSE existing cosine and clustering; add native embeddings + photo enrollment, never another similarity algorithm |
 | Player identity | one source-aware identity decision service (PENDING) | player_identity.rs legacy; native_player_tracks.rs native | Consolidate assign/unassign/exclude/revise policy; do not mix Track IDs across source versions |
 | Touch evidence | rust/volley-core/src/touch.rs, motion.rs | touch_preview.rs legacy; cpu_touches.rs native | Unify policy, retain source parsing |

@@ -140,12 +140,13 @@ try {
       fail("Stage guard missed "+label);
     };
     rejects({...data,plannedTotal:84},"denominator mismatch");
-    rejects({...data,lastRecorded:52},"stale current stage");
+    rejects({...data,lastRecorded:last-1},"stale current stage");
     const gap=structuredClone(data);gap.stages.splice(11,1);
     rejects(gap,"missing stage");
     const duplicate=structuredClone(data);duplicate.stages[12].number=12;
     rejects(duplicate,"duplicate number");
-    const falseCompletion=structuredClone(data);falseCompletion.stages[53].status="recorded";
+    const falseCompletion=structuredClone(data);
+    falseCompletion.stages[data.nextStage-1].status="recorded";
     rejects(falseCompletion,"false completion");
   }
   if(process.argv.includes("--write")){

@@ -22,7 +22,10 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use volley_core::fusion::Candidate;
+use volley_core::{
+    evidence_source::{EvidenceSource, FrameRate, SourceStamp},
+    fusion::Candidate,
+};
 
 const MAX_TRACKS: usize = 20_000;
 const MAX_MANIFEST: u64 = 16 * 1024;
@@ -83,6 +86,7 @@ struct Frame {
     touches_confirmed: bool,
 }
 struct Inputs {
+    evidence: EvidenceSource,
     project_id: String,
     video: String,
     replay_id: String,
@@ -241,6 +245,22 @@ fn source(
         frames,
     )
     .map_err(storage::bad_request)?;
+    let evidence = EvidenceSource::native(
+        project_id,
+        video,
+        replay_id,
+        &sha,
+        SourceStamp {
+            bytes: size,
+            mtime_ns: u64::try_from(mtime)
+                .map_err(|_| storage::bad_request("Video timestamp outside supported range"))?,
+        },
+        FrameRate::Exact {
+            numerator: 30,
+            denominator: 1,
+        },
+    )
+    .map_err(storage::bad_request)?;
     let (catalog, _) = player_catalog::load(state, false)?;
     let allowed = project["player_ids"]
         .as_array()
@@ -263,6 +283,7 @@ fn source(
         }
     }
     Ok(Inputs {
+        evidence,
         project_id: project_id.into(),
         video: video.into(),
         replay_id: replay_id.into(),
@@ -375,6 +396,8 @@ fn page(
         "schema":"volley-native-player-track-links/1",
         "project_id":ctx.project_id,"video":ctx.video,"replay_id":ctx.replay_id,
         "source_replay_sha256":ctx.source_sha,
+        "source_kind":ctx.evidence.source_kind(),
+        "evidence_source":ctx.evidence,
         "revision":version,"writable":ctx.can_write,
         "total_tracks":ctx.tracks.len(),"offset":offset,"limit":limit,
         "assigned_count":assignments.len(),"excluded_count":excluded.len(),
@@ -698,7 +721,23 @@ mod tests {
         (root, data, digest)
     }
     fn context(root: &Path, sha: String, tracks: BTreeMap<u64, Aggregate>) -> Inputs {
+        let evidence = EvidenceSource::native(
+            "123456abcdef",
+            "match.mp4",
+            "0123456789abcdef0123456789abcdef",
+            &sha,
+            SourceStamp {
+                bytes: 100,
+                mtime_ns: 100,
+            },
+            FrameRate::Exact {
+                numerator: 30,
+                denominator: 1,
+            },
+        )
+        .unwrap();
         Inputs {
+            evidence,
             project_id: "123456abcdef".into(),
             video: "match.mp4".into(),
             replay_id: "0123456789abcdef0123456789abcdef".into(),
@@ -826,6 +865,12 @@ mod tests {
         let original = read_internal(&state, &query).unwrap();
         assert_eq!(original["total_tracks"], 1);
         assert_eq!(original["revision"], "absent");
+        assert_eq!(original["source_kind"], "native_gpu_cpu_replay");
+        assert_eq!(
+            original["evidence_source"]["tracked_frames_sha256"],
+            source_sha
+        );
+        assert_eq!(original["evidence_source"]["frame_rate"]["numerator"], 30);
         let assign = TrackEdit {
             project_id: id.into(),
             video: video.into(),
@@ -840,6 +885,15 @@ mod tests {
         let saved = change(&state, &assign).unwrap();
         assert_eq!(saved["assigned_count"], 1);
         assert_eq!(saved["tracks"][0]["assigned_player_name"], "Ильнур");
+        assert_eq!(saved["evidence_source"], original["evidence_source"]);
+        let sidecar = data
+            .join("projects")
+            .join(id)
+            .join("native_track_assignments")
+            .join(format!("{replay}.json"));
+        let stored: Value = serde_json::from_slice(&fs::read(sidecar).unwrap()).unwrap();
+        assert!(stored.get("evidence_source").is_none());
+        assert_eq!(stored["source_replay_sha256"], source_sha);
         assert_eq!(read_internal(&state, &query).unwrap()["assigned_count"], 1);
         assert_eq!(
             change(&state, &assign).unwrap_err().0,

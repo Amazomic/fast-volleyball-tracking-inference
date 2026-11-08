@@ -1,8 +1,8 @@
 {
   "schema": "volley-rust-stage-roadmap/1",
   "plannedTotal": 85,
-  "lastRecorded": 53,
-  "nextStage": 54,
+  "lastRecorded": 54,
+  "nextStage": 55,
   "estimateNote": "85 — текущий ориентир планирования, не обещание неизменного объема; этап != готовая подсистема. При пересмотре плана обновлять JSON, Markdown и журнал в одном коммите.",
   "stages": [
     {
@@ -433,8 +433,9 @@
       "number": 54,
       "title": "Типизированный EvidenceSource и проверка происхождения",
       "area": "Контракты",
-      "status": "planned",
-      "acceptance": "Единый legacy/native дискриминатор с тестами разных FPS, SHA и track-id scope"
+      "status": "recorded",
+      "acceptance": "Проверяемый формат provenance, отдельные legacy/native адаптеры; наличие unknown FPS/SHA не подменяется данными native; тесты roundtrip, SHA, FPS и разных source-scopes пройдены",
+      "journalSection": 54
     },
     {
       "number": 55,

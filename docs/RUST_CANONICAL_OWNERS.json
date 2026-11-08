@@ -33,6 +33,17 @@
       "stores": []
     },
     {
+      "id": "evidence_source",
+      "owner": "rust/volley-core/src/evidence_source.rs",
+      "status": "partial",
+      "adapters": [
+        "rust/volley-app/src/player_identity.rs",
+        "rust/volley-app/src/native_player_tracks.rs"
+      ],
+      "routes": [],
+      "stores": []
+    },
+    {
       "id": "identity",
       "owner": "rust/volley-app/src/native_player_tracks.rs",
       "status": "partial",

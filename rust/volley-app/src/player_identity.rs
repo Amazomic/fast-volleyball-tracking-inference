@@ -20,6 +20,7 @@ use std::{
     sync::{Arc, Mutex, OnceLock},
     time::{SystemTime, UNIX_EPOCH},
 };
+use volley_core::evidence_source::{EvidenceSource, FrameRate, SourceStamp};
 
 const MAX_IDENTITIES_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_IDS_PER_ACTION: usize = 200;
@@ -56,6 +57,7 @@ fn read_action() -> String {
 
 #[derive(Debug)]
 struct Context {
+    evidence: EvidenceSource,
     player_file: PathBuf,
     identity_path: PathBuf,
     group_path: PathBuf,
@@ -202,6 +204,21 @@ fn validate_context(state: &AppState, req: &IdentityRequest) -> Result<Context, 
     };
     let player_file = base.join("players.json");
     let known = known_tracks(&player_file)?;
+    let (bytes, mtime_ns) =
+        crate::inference_stream::source_stamp(&player_file).map_err(storage::bad_request)?;
+    let evidence = EvidenceSource::legacy(
+        &req.project_id,
+        &req.video,
+        &req.run_id,
+        &base_cache_id,
+        SourceStamp {
+            bytes,
+            mtime_ns: u64::try_from(mtime_ns)
+                .map_err(|_| storage::bad_request("Legacy timestamp outside supported range"))?,
+        },
+        FrameRate::Unknown,
+    )
+    .map_err(storage::bad_request)?;
     if known.len() > MAX_KNOWN_TRACKS {
         return Err(storage::bad_request("Too many Track IDs"));
     }
@@ -227,6 +244,7 @@ fn validate_context(state: &AppState, req: &IdentityRequest) -> Result<Context, 
     let raw = format!("{}\0{}", req.video, base_cache_id);
     let key = format!("{:x}", Sha256::digest(raw.as_bytes()))[..24].to_owned();
     Ok(Context {
+        evidence,
         player_file,
         identity_path,
         group_path: root
@@ -555,6 +573,8 @@ fn present(ctx: &Context, raw: &Value, revision: String) -> Result<Value, ApiErr
         "project_id":ctx.project_id,
         "video":ctx.video,
         "base_cache_id":ctx.base_cache_id,
+        "source_kind":ctx.evidence.source_kind(),
+        "evidence_source":ctx.evidence,
         "revision":revision,
         "read_only":false,
         "source":"project-scoped manual review; immutable GPU detections",
@@ -754,13 +774,25 @@ mod tests {
 
     fn context() -> Context {
         Context {
+            evidence: EvidenceSource::legacy(
+                "1234abcdef01",
+                "match.mp4",
+                "run_20261107_123456",
+                &"a".repeat(32),
+                SourceStamp {
+                    bytes: 100,
+                    mtime_ns: 100,
+                },
+                FrameRate::Unknown,
+            )
+            .unwrap(),
             player_file: PathBuf::new(),
             identity_path: PathBuf::new(),
             group_path: PathBuf::new(),
             project_id: "1234abcdef01".into(),
             video: "match.mp4".into(),
-            base_cache_id: "gpu-cache".into(),
-            storage_key: "match.mp4::gpu-cache".into(),
+            base_cache_id: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into(),
+            storage_key: "match.mp4::aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into(),
             known: BTreeSet::from(["5".into(), "8".into()]),
             roster: BTreeMap::from([
                 ("player-a".into(), "Player A".into()),
@@ -795,7 +827,8 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            data["videos"]["match.mp4::gpu-cache"][0]["link_meta"]["5"]["reviewed"],
+            data["videos"]["match.mp4::aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"][0]["link_meta"]["5"]
+                ["reviewed"],
             true
         );
         assert!(apply(
@@ -812,9 +845,18 @@ mod tests {
             &["5".into()],
         )
         .unwrap();
-        let groups = data["videos"]["match.mp4::gpu-cache"].as_array().unwrap();
+        let groups = data["videos"]["match.mp4::aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]
+            .as_array()
+            .unwrap();
         assert_eq!(groups.len(), 1);
         assert_eq!(groups[0]["id"], "player-b");
+        let reply = present(&ctx, &data, "absent".into()).unwrap();
+        assert_eq!(reply["source_kind"], "legacy_cpu_cache");
+        assert_eq!(reply["evidence_source"]["frame_rate"]["kind"], "unknown");
+        assert!(reply["evidence_source"]
+            .get("tracked_frames_sha256")
+            .is_none());
+        assert_eq!(ctx.evidence.clone().track(5).unwrap().track_id, 5);
     }
 
     #[test]
@@ -835,10 +877,12 @@ mod tests {
             &["5".into()],
         )
         .unwrap();
-        assert!(data["videos"]["match.mp4::gpu-cache"]
-            .as_array()
-            .unwrap()
-            .is_empty());
+        assert!(
+            data["videos"]["match.mp4::aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
         assert!(apply(
             &mut data,
             &request("assign", Some("player-a"), false),
@@ -853,15 +897,22 @@ mod tests {
             &["5".into()],
         )
         .unwrap();
-        assert!(data["excluded_ids"]["match.mp4::gpu-cache"]
-            .as_array()
-            .unwrap()
-            .is_empty());
-        assert_eq!(data["auto_rejected"]["match.mp4::gpu-cache"][0], "5");
-        assert!(data["videos"]["match.mp4::gpu-cache"]
-            .as_array()
-            .unwrap()
-            .is_empty());
+        assert!(
+            data["excluded_ids"]["match.mp4::aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            data["auto_rejected"]["match.mp4::aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"][0],
+            "5"
+        );
+        assert!(
+            data["videos"]["match.mp4::aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
         // A second restore on a now-visible ID cannot drop unrelated labels.
         assert!(apply(
             &mut data,
