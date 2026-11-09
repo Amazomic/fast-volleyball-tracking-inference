@@ -7,7 +7,7 @@
   const ui = {
     preview:$("studio-preview-view"),analysis:$("studio-analysis-view"),
     players:$("studio-players-view"),quick:$("studio-quick-view"),
-    legacy:$("studio-legacy-view"),title:$("studio-section-name"),
+    legacy:$("studio-legacy-view"),
     project:$("studio-project"),video:$("studio-analysis-video"),
     refresh:$("studio-analysis-refresh"),stages:$("studio-stage-list"),
     note:$("studio-analysis-note"),ball:$("studio-gpu-ball"),
@@ -63,8 +63,7 @@
     ui.legacy.classList.toggle("hidden",next!=="legacy");
     ui.analysis.classList.toggle("hidden",next!=="analysis");
     ui.players.classList.toggle("hidden",next!=="players");
-    const labels={preview:"Предпросмотр",analysis:"Анализ",players:"Игроки",montage:"Монтаж",quick:"Быстрый рилс",legacy:"Старые проекты и архив"};
-    ui.title.textContent=labels[next];
+
     window.dispatchEvent(new CustomEvent("volley:tab-change",{detail:{tab:next}}));
     for(const nav of document.querySelectorAll("[data-studio-tab]")){
       const active=nav.dataset.studioTab===next;

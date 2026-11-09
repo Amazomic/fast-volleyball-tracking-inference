@@ -38,7 +38,6 @@
     </aside>
     <main class="main">
       <header class="topbar studio-chain-topbar">
-        <div class="breadcrumbs">Студия <span>›</span> <strong id="studio-section-name">Предпросмотр</strong></div>
         <div class="studio-source-chain" role="group" aria-label="Связанные версии проекта, анализа и постобработки">
           <div class="studio-chain-step">
             <label class="field-label" for="studio-project">01 · Проект</label>
@@ -53,36 +52,6 @@
             <select id="studio-run" aria-label="Выберите версию постобработки" disabled><option value="">Сначала выберите анализ</option></select>
           </div>
           <button id="studio-refresh" class="secondary studio-chain-refresh" type="button" aria-label="Обновить цепочку версий" title="Обновить цепочку версий">↻</button>
-        </div>
-        <div class="studio-top-controls">
-          <details id="studio-ui-settings" class="studio-ui-settings">
-            <summary id="studio-ui-settings-summary" class="secondary" aria-label="Открыть настройки">⚙ <span id="studio-ui-settings-label">Настройки интерфейса</span></summary>
-            <div class="studio-ui-settings-popover" aria-label="Настройки интерфейса">
-              <label class="field-label" for="studio-ui-locale">Язык</label>
-              <select id="studio-ui-locale" aria-label="Язык интерфейса">
-                <option value="0">Русский</option>
-                <option value="1">English</option>
-              </select>
-              <label class="field-label" for="studio-ui-theme">Тема</label>
-              <select id="studio-ui-theme">
-                <option value="0">Тёмная</option>
-                <option value="1">Светлая</option>
-              </select>
-              <label class="field-label" for="studio-ui-density">Плотность интерфейса</label>
-              <select id="studio-ui-density">
-                <option value="0">Обычная</option>
-                <option value="1">Компактная</option>
-              </select>
-              <label class="field-label" for="studio-ui-reduced-motion">Уменьшить движение</label>
-              <select id="studio-ui-reduced-motion">
-                <option value="0">Выключено</option>
-                <option value="1">Включено</option>
-              </select>
-              <p class="panel-note">Настройки сохранены в браузере. GPU/CPU профиль не изменяется.</p>
-              <button class="secondary full" type="button" id="studio-ui-reset">Сбросить интерфейс</button>
-            </div>
-          </details>
-          <div class="dev-chip">ЭКСПЕРИМЕНТАЛЬНАЯ ВЕРСИЯ</div>
         </div>
       </header>
       <div class="content">

@@ -50,6 +50,9 @@ assert.equal(none.choices.length,0);
 const html=readFileSync(join(root,"rust/volley-app/static/studio.html"),"utf8");
 const header=html.split('<header class="topbar studio-chain-topbar">')[1]?.split("</header>")[0];
 assert.ok(header,"Expected source chain in application header");
+for(const stale of [/class="breadcrumbs"/,/id="studio-ui-settings"/,/class="dev-chip"/,/id="studio-section-name"/]){
+  assert.doesNotMatch(header,stale,"Removed header chrome must not reappear");
+}
 for(const id of ["studio-project","studio-inference","studio-run"]){
   assert.match(header,new RegExp('id="'+id+'"'),id);
   assert.equal((html.match(new RegExp('id="'+id+'"',"g"))||[]).length,1);
