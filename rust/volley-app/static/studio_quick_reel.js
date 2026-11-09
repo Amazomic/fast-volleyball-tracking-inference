@@ -62,15 +62,24 @@
     s.sources.push(...items);renderSources();
     if(items.length)note("Выбрано "+s.sources.length+" видео. Добавьте музыку и запустите рилс.");
   };
-  const desktop=async()=>{
-    if(s.busy||s.active)return;
-    s.busy=true;controls();note("Открывается системный проводник. Исходные видео не копируются.");
+  // Always open the file chooser in the user's BROWSER, synchronously inside
+  // a click/keyboard gesture. A server-side PowerShell dialog is not portable:
+  // Linux/WSL services may have no interactive desktop or user session.
+  // Browsers never reveal local absolute paths, so this flow streams an
+  // isolated temporary copy (see native/upload); it cannot link by path.
+  const openFilePicker=()=>{
+    if(s.busy||s.active||ui.files.disabled)return;
+    // Reset BEFORE showing the dialog: reselecting the same file must fire
+    // change again after a cancelled or failed upload.
+    ui.files.value="";
     try{
-      const response=await api("/api/quick-reel/native/pick",{method:"POST"});
-      if(response.cancelled)note("Выбор отменён. Ранее выбранные файлы сохранены.");
-      else addSources(response.videos);
-    }catch(e){note(msg(e)+". Воспользуйтесь выбором через браузер.",true);}
-    finally{s.busy=false;controls();}
+      if(typeof ui.files.showPicker==="function")ui.files.showPicker();
+      else ui.files.click();
+    }catch(error){
+      // File input click is supported in browsers without showPicker().
+      try{ui.files.click();}
+      catch(fallbackError){note("Не удалось открыть выбор файла: "+msg(fallbackError),true);}
+    }
   };
   const browserFiles=async(list)=>{
     if(s.busy||s.active)return;
@@ -78,7 +87,7 @@
     if(!files.length)return;
     if(s.sources.length+files.length>30){note("Максимум 30 видео.",true);return;}
     if(files.some(file=>file.size<=0||file.size>2*1024**3)){
-      note("Максимум 2 ГиБ на файл при перетаскивании. Для больших записей используйте проводник.",true);
+      note("Файл больше 2 ГиБ. Выбор на Windows/Linux работает, но загрузка больших файлов пока не поддерживается.",true);
       return;
     }
     s.busy=true;controls();
@@ -190,9 +199,9 @@
     }catch(e){s.cancelRequested=false;note("Отмена: "+msg(e),true);}
     finally{controls();}
   };
-  ui.drop.addEventListener("click",desktop);
+  ui.drop.addEventListener("click",openFilePicker);
   ui.drop.addEventListener("keydown",e=>{
-    if(e.key==="Enter"||e.key===" "){e.preventDefault();desktop();}
+    if(e.key==="Enter"||e.key===" "){e.preventDefault();openFilePicker();}
   });
   ui.drop.addEventListener("dragover",e=>{
     e.preventDefault();if(!s.active&&!s.busy)ui.drop.classList.add("drag-over");
@@ -202,7 +211,7 @@
     e.preventDefault();ui.drop.classList.remove("drag-over");
     browserFiles(e.dataTransfer?.files||[]).catch(error=>note(msg(error),true));
   });
-  ui.browser.addEventListener("click",()=>ui.files.click());
+  ui.browser.addEventListener("click",openFilePicker);
   ui.files.addEventListener("change",()=>browserFiles(ui.files.files||[]));
   ui.clear.addEventListener("click",async()=>{
     if(s.busy||s.active||!s.sources.length)return;

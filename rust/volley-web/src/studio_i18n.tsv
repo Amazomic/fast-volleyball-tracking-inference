@@ -10,10 +10,10 @@
 Проверка архива…	Checking archive…
 БЫСТРЫЙ РИЛС / ОТДЕЛЬНЫЙ АНАЛИЗ	QUICK REEL / INDEPENDENT ANALYSIS
 Каждый запуск выполняет новый GPU и CPU анализ. Результаты проектов не переиспользуются. Только подготовленные видео могут быть взяты из общего кэша. Формат: вертикальный 9:16 с музыкой.	Every run performs fresh GPU and CPU analysis. Project inference is never reused; only video preparation may be cached. Output is vertical 9:16 with music.
-Нажмите для выбора видео в проводнике	Click to select videos in Explorer
-Или перетащите файлы сюда (при перетаскивании создаётся временная копия)	Or drag files here (a temporary copy will be created)
-Через проводник: без копирования. До 30 видео за запуск.	Explorer does not copy video. Up to 30 files per run.
-Выбор через браузер/перетаскивание копирует файлы в изолированное хранилище (до 2 ГиБ на файл). Для больших записей используйте системный проводник.	Browser selection and drag-and-drop create an isolated copy (up to 2 GiB each). Use Explorer for larger files.
+Нажмите для выбора видео на устройстве	Click to select videos on your device
+Или перетащите файлы сюда	Or drag files here
+Работает в Windows, Linux и macOS. До 30 файлов.	Works on Windows, Linux and macOS. Up to 30 files.
+Выбранные файлы загружаются в отдельное хранилище Rust (до 2 ГиБ на файл). Оригиналы остаются без изменений. Браузер не передаёт полный путь к файлу.	Selected files are uploaded to isolated Rust storage (up to 2 GiB each). Originals are unchanged. Browsers do not reveal full local paths.
 Видео ещё не выбраны	No videos selected
 Загрузите музыку перед запуском. Используются параметры профиля по умолчанию, без повторного использования GPU-результатов.	Add music before starting. Default GPU/CPU settings apply; inference is not reused.
 Ожидание выбора видео.	Waiting for video selection.
@@ -88,7 +88,7 @@ Volleyball Studio — самостоятельный Rust backend. Отдель�
 Выберите сохранённый запуск	Select a saved run
 Перейти к состоянию быстрого рилса	Go to Quick Reel status
 Язык интерфейса	Interface language
-Открыть системный проводник для выбора видеозаписей	Open system Explorer to select videos
+Открыть выбор видеозаписей на устройстве	Open video file chooser on your device
 Файлы для Quick Reel	Quick Reel files
 Видео для рилса	Reel videos
 Ход создания рилса	Quick Reel progress
@@ -101,3 +101,4 @@ Volleyball Studio — самостоятельный Rust backend. Отдель�
 CPU-версии для атак	CPU versions for attacks
 Имя игрока	Player name
 Выбранные версии касаний по видео	Selected touch runs by video
+Открыть выбор файлов	Choose files

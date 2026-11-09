@@ -103,14 +103,14 @@
           <div class="quick-layout">
             <section class="quick-card">
               <h2>Исходные видео</h2>
-              <div id="studio-quick-drop" class="quick-drop" role="button" tabindex="0" aria-label="Открыть системный проводник для выбора видеозаписей">
-                <strong>Нажмите для выбора видео в проводнике</strong>
-                <span>Или перетащите файлы сюда (при перетаскивании создаётся временная копия)</span>
-                <small>Через проводник: без копирования. До 30 видео за запуск.</small>
+              <div id="studio-quick-drop" class="quick-drop" role="button" tabindex="0" aria-label="Открыть выбор видеозаписей на устройстве">
+                <strong>Нажмите для выбора видео на устройстве</strong>
+                <span>Или перетащите файлы сюда</span>
+                <small>Работает в Windows, Linux и macOS. До 30 файлов.</small>
               </div>
-              <button id="studio-quick-browser" class="secondary" type="button">Выбрать файлы браузером</button>
-              <input id="studio-quick-files" type="file" accept=".mp4,.mov,.mkv,.avi,.webm,.m4v,.mts,video/*" multiple class="hidden" aria-label="Файлы для Quick Reel">
-              <p class="panel-note">Выбор через браузер/перетаскивание копирует файлы в изолированное хранилище (до 2 ГиБ на файл). Для больших записей используйте системный проводник.</p>
+              <button id="studio-quick-browser" class="secondary" type="button">Открыть выбор файлов</button>
+              <input id="studio-quick-files" type="file" accept=".mp4,.mov,.mkv,.avi,.webm,.m4v,.mts,video/*" multiple class="sr-only" tabindex="-1" aria-label="Файлы для Quick Reel">
+              <p class="panel-note">Выбранные файлы загружаются в отдельное хранилище Rust (до 2 ГиБ на файл). Оригиналы остаются без изменений. Браузер не передаёт полный путь к файлу.</p>
               <ol id="studio-quick-sources" class="quick-sources" aria-label="Видео для рилса">
                 <li>Видео ещё не выбраны</li>
               </ol>

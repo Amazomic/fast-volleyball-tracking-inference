@@ -192,3 +192,24 @@ and lifecycle regression. Run bash scripts/ci/test_rust_faults.sh
 it exits nonzero unless genuine CUDA ONNX inference and a running Docker
 image have been verified. Windows Git users must keep Bash scripts LF-only;
 .gitattributes enforces this for every *.sh file.
+## Cross-platform Quick Reel file chooser
+
+Quick Reel source selection on the Rust Studio web page uses a **browser-owned**
+HTML file input for both mouse and keyboard activation. It opens the file
+chooser on the **browser's device**, whether the Rust server runs on Windows,
+WSL or native Linux. It MUST NOT use the server-side
+POST /api/quick-reel/native/pick PowerShell dialog as the default UI.
+
+Browser sandbox security never reveals the absolute local path. Therefore a
+browser-selected file or dropped file is streamed to isolated Rust temporary
+storage via POST /api/quick-reel/native/upload (currently at most 2 GiB per
+video and 30 videos per run). A direct path reference without copying is
+NOT portable and cannot be promised through browser file input. The original
+files remain untouched. Re-selecting a file after cancellation or upload
+failure works because the input is reset before opening the chooser.
+
+Regression tests: scripts/ci/test_native_quick_reel_ui.mjs verifies the
+browser file input receives direct user gestures, retains selections after
+cancel, supports keyboard, repeated selection and drag-drop, and never makes
+the Windows-only server dialog request. The Rust quick-reel HTTP tests check
+multipart upload safety independently.

@@ -365,8 +365,11 @@ mod tests {
         assert!(highlights.contains("expected_source_fingerprint"));
         let quick = get(addr, "/studio/rust/quick-reel.js").await;
         assert!(quick.starts_with("HTTP/1.1 200 OK"));
+        // Browser owns the local cross-platform chooser, not PowerShell.
+        assert!(quick.contains("ui.files.showPicker()"));
+        assert!(quick.contains("ui.files.click()"));
+        assert!(!quick.contains("/api/quick-reel/native/pick"));
         for action in [
-            "native/pick",
             "native/upload",
             "native/release",
             "native/start",
