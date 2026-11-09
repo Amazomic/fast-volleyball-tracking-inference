@@ -10,6 +10,7 @@
   <script src="/studio/rust/tabs.js" defer></script>
   <script src="/studio/rust/tracks.js" defer></script>
   <script src="/studio/rust/stats.js" defer></script>
+  <script src="/studio/rust/highlights.js" defer></script>
 </head>
 <body>
   <div class="shell">
@@ -31,7 +32,7 @@
       </nav>
       <div class="sidebar-foot">
         <span class="dot"></span><span>Отдельная Rust-разработка</span>
-        <small>Данные исходного анализа не изменяются. Подтверждение событий игры ещё не реализовано.</small>
+        <small>Данные исходного анализа не изменяются. Классификация игровых действий требует ручного подтверждения.</small>
       </div>
     </aside>
     <main class="main">
@@ -86,6 +87,35 @@
             <div id="studio-job" class="job" role="status" aria-live="polite"></div>
             <button id="studio-cancel" class="secondary full hidden" type="button">Отменить монтаж</button>
             <a id="studio-download" class="download hidden" href="#" download>Скачать MP4</a>
+          </div>
+        </section>
+        <section id="studio-highlights-panel" class="montage-panel" aria-labelledby="studio-highlights-title">
+          <div>
+            <p class="eyebrow">РУЧНО ПОДТВЕРЖДЁННЫЕ ДЕЙСТВИЯ</p>
+            <h2 id="studio-highlights-title">Лучшие атаки игрока</h2>
+            <p class="panel-note">Ранжирование по количеству атак, вручную подтверждённых для выбранного игрока и CPU-версии. Это не автоматическое распознавание техники. После предпросмотра можно вручную изменить список эпизодов.</p>
+            <div class="native-highlights-options">
+              <label class="field-label" for="studio-highlights-player">Игрок из состава проекта</label>
+              <select id="studio-highlights-player"><option value="">Выберите игрока</option></select>
+              <label class="field-label" for="studio-highlights-mode">Выбор</label>
+              <select id="studio-highlights-mode">
+                <option value="auto">По количеству подтверждённых атак</option>
+                <option value="manual">Ручной выбор проверенных розыгрышей</option>
+              </select>
+              <label class="field-label" for="studio-highlights-count">Максимум розыгрышей</label>
+              <input id="studio-highlights-count" type="number" min="1" max="80" value="12">
+            </div>
+            <p id="studio-highlights-status" class="panel-note" role="status" aria-live="polite">Выберите проект для поиска проверенных CPU-версий.</p>
+            <div id="studio-highlights-sources" class="native-stats-sources" aria-label="CPU-версии для атак"></div>
+            <div id="studio-highlights-candidates" class="native-highlights-candidates" aria-live="polite"></div>
+          </div>
+          <div class="montage-controls">
+            <button id="studio-highlights-refresh" type="button" class="secondary full">↻ Обновить источники</button>
+            <button id="studio-highlights-preview" type="button" class="secondary full" disabled>Показать атаки</button>
+            <button id="studio-highlights-start" type="button" class="primary full" disabled>Собрать нарезку</button>
+            <button id="studio-highlights-cancel" type="button" class="secondary full hidden">Отменить монтаж</button>
+            <div id="studio-highlights-job" class="job" role="status" aria-live="polite"></div>
+            <a id="studio-highlights-download" class="download hidden" href="#" download>Скачать MP4</a>
           </div>
         </section>
         </div>

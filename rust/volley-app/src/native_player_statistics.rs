@@ -154,6 +154,23 @@ fn count_native_contacts(
     Ok(total)
 }
 
+/// Montage and statistics share the same full same-frame, two-SHA
+/// verification. A manually linked Track ID seen elsewhere in a run is
+/// insufficient to assign a reviewed Touch to an athlete.
+pub(crate) fn verify_contacts_for_montage(
+    state: &AppState,
+    run: &ValidatedRun,
+    owners: &NativeReviewedOwners,
+) -> Result<(), ApiError> {
+    let root = projects::project_root(state)
+        .join(&run.project_id)
+        .join("native_cpu_replays")
+        .join(&run.replay_id);
+    let replay =
+        safe_file(&root, "tracked_frames.jsonl", MAX_SOURCE).map_err(storage::bad_request)?;
+    count_native_contacts(run, &replay, owners).map_err(storage::bad_request)?;
+    Ok(())
+}
 fn select_unique_video(seen: &mut BTreeSet<String>, video: &str) -> bool {
     seen.insert(video.to_owned())
 }

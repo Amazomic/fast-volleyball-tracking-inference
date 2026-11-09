@@ -1,8 +1,8 @@
 {
     "schema":  "volley-rust-stage-roadmap/1",
     "plannedTotal":  85,
-    "lastRecorded":  75,
-    "nextStage":  76,
+    "lastRecorded":  76,
+    "nextStage":  77,
     "estimateNote":  "85 — текущий ориентир планирования, не обещание неизменного объема; этап != готовая подсистема. При пересмотре плана обновлять JSON, Markdown и журнал в одном коммите.",
     "stages":  [
                    {
@@ -609,8 +609,9 @@
                        "number":  76,
                        "title":  "Автонарезка лучших атак выбранного игрока",
                        "area":  "Монтаж",
-                       "status":  "planned",
-                       "acceptance":  "Uses verified identity/action and manual override; cancels cleanly"
+                       "status":  "recorded",
+                       "acceptance":  "Uses verified identity/action and manual override; cancels cleanly",
+                       "journalSection":  76
                    },
                    {
                        "number":  77,

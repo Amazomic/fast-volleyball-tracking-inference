@@ -202,7 +202,8 @@
                                          "rust/volley-app/src/montage.rs",
                                          "rust/volley-app/src/player_montage.rs",
                                          "rust/volley-app/src/native_rally_preview.rs",
-                                         "rust/volley-app/src/rallies.rs"
+                                         "rust/volley-app/src/rallies.rs",
+                                         "rust/volley-app/src/native_player_highlights.rs"
                                      ],
                         "routes":  [
                                        {
@@ -240,6 +241,10 @@
                                        {
                                            "path":  "/api/montage/native/audio",
                                            "handler":  "montage::native_upload_audio"
+                                       },
+                                       {
+                                           "path":  "/api/montage/native/player-highlights",
+                                           "handler":  "native_player_highlights::highlights"
                                        }
                                    ],
                         "stores":  [

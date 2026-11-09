@@ -95,3 +95,12 @@
 .native-stats-source{padding:.6rem .4rem;border-bottom:1px solid var(--border,#45505c)}
 .native-stats-source p{margin:.25rem 0;font-size:.8rem;word-break:break-word}
 @media(max-width:620px){.native-stats-source-choice{grid-template-columns:1fr}}
+/* Source-checked athlete highlight selection; original-video clips only. */
+.native-highlights-options{display:grid;grid-template-columns:1fr 1fr;gap:.4rem .8rem;max-width:48rem;align-items:center}
+.native-highlights-options label{margin:.35rem 0 0}
+.native-highlights-options select,.native-highlights-options input{min-width:0;width:100%;grid-column:2}
+.native-highlights-candidates{display:grid;gap:.45rem;margin-top:.65rem;max-height:24rem;overflow:auto;min-width:0}
+.native-highlights-candidate{display:flex;gap:.5rem;align-items:start;padding:.4rem .6rem;border-bottom:1px solid var(--border,#45505c)}
+.native-highlights-candidate input{flex-shrink:0;margin:.2rem 0 0}
+.native-highlights-candidate span{overflow-wrap:anywhere}
+@media(max-width:620px){.native-highlights-options{grid-template-columns:1fr}.native-highlights-options select,.native-highlights-options input{grid-column:1}}

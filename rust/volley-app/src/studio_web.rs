@@ -22,6 +22,7 @@ const SCRIPT: &str = include_str!("../static/studio.js");
 const TABS_SCRIPT: &str = include_str!("../static/studio_tabs.js");
 const TRACKS_SCRIPT: &str = include_str!("../static/studio_tracks.js");
 const STATS_SCRIPT: &str = include_str!("../static/studio_stats.js");
+const HIGHLIGHTS_SCRIPT: &str = include_str!("../static/studio_highlights.js");
 const SELECTION_WASM: &[u8] = include_bytes!("../static/volley_web.wasm");
 const HTML: &str = include_str!("../static/studio.html");
 
@@ -56,6 +57,9 @@ pub async fn js() -> Response {
 }
 pub async fn tabs_js() -> Response {
     web_asset("text/javascript; charset=utf-8", TABS_SCRIPT)
+}
+pub async fn highlights_js() -> Response {
+    web_asset("text/javascript; charset=utf-8", HIGHLIGHTS_SCRIPT)
 }
 pub async fn stats_js() -> Response {
     web_asset("text/javascript; charset=utf-8", STATS_SCRIPT)
@@ -305,6 +309,10 @@ mod tests {
         assert!(stats.starts_with("HTTP/1.1 200 OK"));
         assert!(stats.contains("/api/players/native/statistics"));
         assert!(stats.contains("source_fingerprint"));
+        let highlights = get(addr, "/studio/rust/highlights.js").await;
+        assert!(highlights.starts_with("HTTP/1.1 200 OK"));
+        assert!(highlights.contains("/api/montage/native/player-highlights"));
+        assert!(highlights.contains("/api/montage/native/cancel"));
         assert!(!tracks.contains("innerHTML"));
         let wasm = get(addr, "/studio/rust/selection.wasm").await;
         assert!(wasm.starts_with("HTTP/1.1 200 OK"));

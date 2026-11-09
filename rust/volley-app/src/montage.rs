@@ -49,6 +49,8 @@ pub struct MontageRequest {
     pub audio_volume: f64,
     #[serde(default)]
     pub encoder: Option<String>,
+    #[serde(skip)]
+    pub(crate) verified_highlights: Option<Value>,
 }
 
 fn default_volume() -> f64 {
@@ -111,6 +113,7 @@ struct Planned {
     audio: Option<PathBuf>,
     audio_volume: f64,
     encoder: String,
+    verified_highlights: Option<Value>,
 }
 
 fn validate_audio(state: &AppState, request: &MontageRequest) -> Result<Option<PathBuf>, ApiError> {
@@ -237,6 +240,7 @@ fn prepare_request(state: &AppState, request: MontageRequest) -> Result<Planned,
         audio,
         audio_volume: request.audio_volume,
         encoder: encoder.to_owned(),
+        verified_highlights: request.verified_highlights,
     })
 }
 
@@ -554,6 +558,7 @@ async fn render(plan: Planned, status: Arc<Mutex<JobStatus>>, mut cancel: watch:
             "output_dimensions":{"width":final_profile.0,"height":final_profile.1},
             "output_fps":final_profile.2,
             "quality_policy":"native_resolution_no_downsampling_h264_crf15_nvenc_cq17",
+            "verified_highlights":plan.verified_highlights,
             "duration_sec":total_duration,
             "selected":plan.clips.iter().map(OriginalClip::receipt).collect::<Vec<_>>(),
             "music":plan.audio.as_ref().map(|path| json!({
@@ -583,7 +588,8 @@ async fn render(plan: Planned, status: Arc<Mutex<JobStatus>>, mut cancel: watch:
         Err(error) if error == "cancelled" => {
             data.state = "cancelled";
             data.stage = "Отменено".into();
-            let _ = fs::remove_dir_all(&segments);
+            // Only the unique job-owned isolated directory is cleaned; never original media.
+            let _ = fs::remove_dir_all(&plan.output_dir);
         }
         Err(error) => {
             data.state = "failed";
@@ -793,6 +799,7 @@ fn list_montages(state: &AppState, project_id: &str) -> Result<Vec<Value>, ApiEr
             "name": "montage.mp4",
             "project_id": project_id,
             "duration_sec": receipt["duration_sec"],
+            "verified_highlights":receipt["verified_highlights"],
             "render_source": "original_recording",
             "clips": receipt["selected"].as_array().map(Vec::len).unwrap_or(0),
             "music": receipt.get("music").filter(|value| !value.is_null()).is_some(),
@@ -1003,6 +1010,7 @@ pub async fn start_native_from_run(
         audio_file: request.audio_file,
         audio_volume: request.audio_volume,
         encoder: request.encoder,
+        verified_highlights: None,
     };
     let Json(mut response) =
         start_native_montage(State(state), headers, Json(montage_request)).await?;
@@ -1012,4 +1020,129 @@ pub async fn start_native_from_run(
             .map_err(|e| storage::internal(format!("Player focus serialization failed: {e}")))?;
     }
     Ok(Json(response))
+}
+
+#[cfg(test)]
+mod highlight_cancellation_tests {
+    use super::*;
+    use std::time::Duration;
+
+    fn fixture_status() -> Arc<Mutex<JobStatus>> {
+        Arc::new(Mutex::new(JobStatus {
+            id: "montage_test".into(),
+            project_id: "abcdef012345".into(),
+            state: "queued",
+            stage: "queued".into(),
+            completed: 0,
+            total: 1,
+            overall_percent: 0.0,
+            error: String::new(),
+            output: None,
+        }))
+    }
+    #[tokio::test]
+    async fn cancelled_player_montage_deletes_own_output_only() {
+        let root =
+            std::env::temp_dir().join(format!("volley-cancel-montage-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let original = root.join("keep-original.mp4");
+        fs::write(&original, b"do-not-touch-original").unwrap();
+        let output = root.join("isolated-job-output");
+        let plan = Planned {
+            project_id: "abcdef012345".into(),
+            job_id: "montage_test".into(),
+            clips: vec![OriginalClip {
+                source: original.clone(),
+                start_frame: 0,
+                end_frame: 60,
+                analysis_offset_sec: 0.0,
+                native_fps: 30.0,
+                native_rate: "30/1".into(),
+                native_width: 640,
+                native_height: 360,
+            }],
+            output_dir: output.clone(),
+            audio: None,
+            audio_volume: 40.0,
+            encoder: "cpu".into(),
+            verified_highlights: Some(json!({"trusted":true})),
+        };
+        let status = fixture_status();
+        let (tx, rx) = watch::channel(false);
+        tx.send(true).unwrap();
+        render(plan, status.clone(), rx).await;
+        let snapshot = status.lock().await;
+        assert_eq!(snapshot.state, "cancelled");
+        assert!(snapshot.output.is_none());
+        assert!(
+            !output.exists(),
+            "Cancelled montage must not publish an MP4 or partial receipt"
+        );
+        assert_eq!(fs::read(&original).unwrap(), b"do-not-touch-original");
+        drop(snapshot);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn direct_user_montage_payload_cannot_forge_verified_attack_receipt() {
+        let data = json!({
+            "project_id":"abcdef012345","clips":[],
+            "verified_highlights":{"human_review_only":true,"verified_attack_count":777},
+        });
+        match serde_json::from_value::<MontageRequest>(data) {
+            Ok(request) => assert!(request.verified_highlights.is_none()),
+            Err(_) => {} // deny_unknown_fields may reject skipped fields outright.
+        }
+    }
+
+    #[tokio::test]
+    async fn active_ffmpeg_is_killed_after_cancellation() {
+        if !std::process::Command::new("ffmpeg")
+            .arg("-version")
+            .output()
+            .is_ok_and(|r| r.status.success())
+        {
+            eprintln!("SKIP FFmpeg cancellation: executable unavailable");
+            return;
+        }
+        let root =
+            std::env::temp_dir().join(format!("volley-ffmpeg-kill-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let output = root.join("incomplete.mp4");
+        let args = vec![
+            "-nostdin",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-re",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc2=size=320x240:rate=30",
+            "-t",
+            "60",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+        ]
+        .into_iter()
+        .map(str::to_owned)
+        .chain([output.to_string_lossy().into_owned()])
+        .collect::<Vec<_>>();
+        let (tx, mut rx) = watch::channel(false);
+        let status = fixture_status();
+        let task = tokio::spawn(async move {
+            run_ffmpeg(args, 60.0, &status, 0, "FFmpeg cancel fixture", &mut rx).await
+        });
+        tokio::time::sleep(Duration::from_millis(450)).await;
+        tx.send(true).unwrap();
+        let result = tokio::time::timeout(Duration::from_secs(8), task)
+            .await
+            .expect("Cancelled FFmpeg did not exit in bounded time")
+            .expect("FFmpeg worker panic");
+        assert_eq!(result.unwrap_err(), "cancelled");
+        fs::remove_dir_all(root).unwrap();
+    }
 }

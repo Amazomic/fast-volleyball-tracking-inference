@@ -13,6 +13,7 @@ mod inference_native;
 mod inference_stream;
 mod montage;
 mod native_action_review;
+mod native_player_highlights;
 mod native_player_statistics;
 mod native_player_tracks;
 mod native_rally_marks;
@@ -137,6 +138,7 @@ async fn rewrite_status(
             "POST /api/players/native/reid-review (manual revisioned group merge/split)",
             "POST /api/players/native/continuity (read-only gap suggestions)",
             "POST /api/players/native/statistics (verified per-athlete project-wide counts)",
+            "POST /api/montage/native/player-highlights (reviewed attack ranked preview/start)",
             "POST /api/cpu/native/ball-extrema (native selected-ball motion only)",
             "POST /api/cpu/touch-preview (read-only RAVEL diagnostics)",
             "POST /api/players/continuity-preview (read-only geometry candidates)",
@@ -166,6 +168,7 @@ fn app(state: Arc<AppState>) -> Router {
         .route("/studio/rust/tabs.js", get(studio_web::tabs_js))
         .route("/studio/rust/tracks.js", get(studio_web::tracks_js))
         .route("/studio/rust/stats.js", get(studio_web::stats_js))
+        .route("/studio/rust/highlights.js", get(studio_web::highlights_js))
         .route(
             "/studio/rust/selection.wasm",
             get(studio_web::selection_wasm),
@@ -207,6 +210,10 @@ fn app(state: Arc<AppState>) -> Router {
         .route(
             "/api/cpu/native/ball-extrema",
             post(native_player_tracks::ball_trajectory),
+        )
+        .route(
+            "/api/montage/native/player-highlights",
+            post(native_player_highlights::highlights),
         )
         .route(
             "/api/players/native/statistics",

@@ -300,6 +300,26 @@ fn handle(state: &AppState, req: &ReviewRequest) -> Result<Value, ApiError> {
     out["changed"] = json!(changed);
     Ok(out)
 }
+/// Reuses the complete SHA-bound read path, including physical Touch
+/// matching, reviewed-only labels and revision/source guards.
+pub(crate) fn verified_actions(state: &AppState, run: &ValidatedRun) -> Result<Value, ApiError> {
+    let file = path_for(state, run).map_err(storage::bad_request)?;
+    let bytes = versioned_store::read_optional_bounded(&file, MAX_DOC_BYTES)
+        .map_err(storage::bad_request)?;
+    let doc = match bytes.as_deref() {
+        Some(raw) => serde_json::from_slice::<Document>(raw)
+            .map_err(|e| storage::bad_request(format!("Malformed reviewed-action source: {e}")))?,
+        None => Document::empty(run),
+    };
+    doc.validate(run).map_err(storage::conflict)?;
+    let wanted = doc
+        .entries
+        .iter()
+        .map(|e| (e.frame_index, e.provisional_track_id))
+        .collect::<BTreeSet<_>>();
+    let evidence = verify_source(run, &wanted).map_err(storage::conflict)?;
+    response(&doc, bytes.as_deref(), &evidence, false).map_err(storage::bad_request)
+}
 pub async fn review(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,

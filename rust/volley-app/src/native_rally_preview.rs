@@ -654,6 +654,49 @@ fn default_volume() -> f64 {
     40.0
 }
 
+/// Full native source validation is delegated to generate(), then a second
+/// bounded SHA-verified pass yields every stable, non-overlapping original
+/// detected rally interval for matching reviewed attack frames.
+pub(crate) fn verified_rally_intervals(
+    run: &ValidatedRun,
+) -> Result<Vec<(String, u64, u64)>, String> {
+    generate(
+        run,
+        Choice::Page {
+            offset: 0,
+            limit: 1,
+            filter: "all".into(),
+            marked: BTreeSet::new(),
+        },
+    )?;
+    let mut source = BoundedReader::open(&run.rally_file)?;
+    let mut found = Vec::new();
+    while let Some(line) = source.line()? {
+        if found.len() >= MAX_RALLIES {
+            return Err("Too many validated rally rows".into());
+        }
+        let rally: NativeRally = serde_json::from_slice(&line)
+            .map_err(|e| format!("Malformed verified rally interval: {e}"))?;
+        found.push((
+            rally.candidate_id,
+            rally.detected_start_frame,
+            rally.detected_end_frame,
+        ));
+    }
+    if found.len() as u64 != run.expected_rallies || source.finish() != run.rally_sha {
+        return Err("Native rally source changed during highlight review".into());
+    }
+    Ok(found)
+}
+
+/// All selected candidates are checked against the canonical, original-video
+/// manual selector (including context, source bounds and full SHA evidence).
+pub(crate) fn verified_manual_clips(
+    run: &ValidatedRun,
+    ids: Vec<String>,
+) -> Result<Vec<volley_media::montage::SelectedClip>, String> {
+    manual_plan(run, ids)
+}
 fn manual_plan(
     run: &ValidatedRun,
     ids: Vec<String>,
@@ -715,6 +758,7 @@ pub async fn start_manual_montage(
             audio_file: request.audio_file,
             audio_volume: request.audio_volume,
             encoder: request.encoder,
+            verified_highlights: None,
         }),
     )
     .await?;
