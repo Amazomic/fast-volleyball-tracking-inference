@@ -54,3 +54,20 @@ before touching model output, identities or CPU replay.
 
 Keep code and comments in the original module's language. Describe every new
 configuration option (meaning, unit, default, effect) and make UI errors clear.
+
+## Frontend design (global Codex skill)
+
+- For every task that creates or changes Studio UI/UX, components, layouts,
+  typography, colors, CSS, responsive behavior, or visual interaction states,
+  **use the globally installed `frontend-design` skill** from
+  [anthropics/skills](https://github.com/anthropics/skills) before implementation.
+  Read `~/.agents/skills/frontend-design/SKILL.md` at the start of such work.
+- The skill belongs to the **user-level Codex environment**, not this project:
+  do not vendor it under the repository's `.agents/skills/` directory and do
+  not add it as an application dependency. If missing, install globally with
+  `npx skills add https://github.com/anthropics/skills --skill frontend-design --agent codex --global --yes`.
+- Follow the skill's design planning, brief-specific critique, implementation,
+  and visual/interaction review. Preserve Studio's dense analysis workflows,
+  controls, loading/error states and existing functionality; check responsive
+  layout, keyboard navigation, contrast and reduced-motion behavior.
+- Backend-only changes do not require this skill.
