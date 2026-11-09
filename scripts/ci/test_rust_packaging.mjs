@@ -5,20 +5,34 @@ import {fileURLToPath} from "node:url";
 import assert from "node:assert/strict";
 
 const root=join(fileURLToPath(new URL("../..",import.meta.url)));
+const attrs=readFileSync(join(root,".gitattributes"),"utf8");
+assert.match(attrs,/^\*\.sh text eol=lf$/m,
+  "Windows autocrlf=true must not corrupt WSL Bash scripts");
 const content=path=>readFileSync(join(root,path),"utf8");
 for(const script of ["scripts/volley-rust.sh",
   "scripts/ci/test_rust_lifecycle.sh","scripts/ci/test_rust_release_smoke.sh",
   "scripts/ci/test_rust_docker_smoke.sh",
+  "scripts/ci/test_rust_faults.sh","scripts/ci/test_rust_shutdown_race.sh",
   "scripts/ci/build_rust_docker_local.sh"]){
   execFileSync("bash",["-n",join(root,script)]);
+  assert.ok(!readFileSync(join(root,script)).includes(13),
+    "CRLF corrupts Bash under Windows autocrlf: "+script);
 }
 const daemon=content("rust/volley-app/src/runtime.rs");
 assert.match(daemon,/Sha256::digest/);
 assert.match(daemon,/try_lock_exclusive/);
+for(const guard of ["ShutdownGate","try_shutdown","validate_local_request",
+  "inflight","sec-fetch-site","Rust shutdown denied"]){
+  assert.ok(daemon.includes(guard),"Missing stage83 HTTP shutdown/CSRF guard: "+guard);
+}
 assert.match(daemon,/Another Volleyball Studio Rust instance/);
 const server=content("rust/volley-app/src/main.rs");
+assert.match(server,/from_fn_with_state\(\s*gate,\s*runtime::guard_request,/,
+  "All Rust HTTP requests must cross the stage83 shutdown gate");
 for(const term of ["runtime::exclusive_instance","runtime::rewrite_status",
-  "shutdown_signal","SignalKind::terminate","with_graceful_shutdown(shutdown_signal())"]){
+  "shutdown_signal","SignalKind::terminate",
+  "with_graceful_shutdown(shutdown_signal(state, gate))",
+  "app_with_gate"]){
   assert.ok(server.includes(term),"Missing safe runtime policy: "+term);
 }
 for(const term of ["shutdown_safe","active_jobs","active_job_types"]){

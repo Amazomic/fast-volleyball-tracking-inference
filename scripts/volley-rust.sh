@@ -61,7 +61,15 @@ listener(){
   printf '%s' "$data"
 }
 port_busy(){
-  (echo >/dev/tcp/127.0.0.1/"$port") 2>/dev/null
+  # Kernel listener inventory avoids an unbounded WSL /dev/tcp connect.
+  if command -v ss >/dev/null 2>&1;then
+    ss -H -ltn "sport = :$port" | grep -q .
+    return
+  fi
+  local result=0
+  timeout 2 bash -c "echo >/dev/tcp/127.0.0.1/$port" 2>/dev/null || result=$?
+  # A stalled fallback probe means UNKNOWN: refuse to bind/kill anything.
+  [[ "$result" -eq 0 || "$result" -eq 124 ]]
 }
 stop_owned(){
   local response pid reason

@@ -100,3 +100,13 @@ The single Rust source rust/volley-web/src/lib.rs is the canonical owner for nav
 The GUI-only settings have **zero effect** on analysis profiles or immutable inference artifacts. The separate GPU launch panel exposes explicit per-run stride 1..9, VRAM cap 0..131072 MB (0 means unlimited) and CPU thread count 1..128. Golden request defaults remain stride=9, VRAM cap=0, CPU=8, device=cuda; JS validates before requests and native Rust revalidates. No GPU or CPU run is started on locale/theme changes.
 
 **Evidence and limitations:** actual target wasm32-unknown-unknown release binary is built and executed by Node WebAssembly.instantiate with bounds/translation tests; 6-tab browser DOM simulation covers navigation, deep links, async data loading and stale-response rejection, language settings persistence, resource flags and explicit GPU request flags. Rust Axum HTTP tests verify static asset wiring. Chrome GUI automation and dynamic API error-message localization are not fully verified at this stage; a successful CUDA run and full Python-versus-Rust feature/quality benchmark are NOT implied. Existing JS is a necessary browser DOM/network adapter and is not a second source of truth for domain policies.
+### Stage83: SHA cache, request security and shutdown gate
+
+Shared schema-2 media keys remain compatible with Python, but a Rust
+ cache hit additionally requires verified SHA-256 output integrity.
+ General JSON readers/writers now reject symlinks, oversize documents
+ and unsafe atomic-write destinations. The Axum request barrier denies
+ foreign Host/Origin/Fetch-Site headers, and refuses SIGTERM when
+ HTTP or native workers remain active; otherwise it atomically drains
+ requests before graceful shutdown. This does not mark CUDA/VRAM or
+ the Docker container as accepted.

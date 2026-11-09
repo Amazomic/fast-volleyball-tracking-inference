@@ -28,7 +28,9 @@ use tokio::{
     sync::{watch, Mutex, Semaphore},
 };
 use uuid::Uuid;
-use volley_media::preparation::{cache_id, PreparationPlan, PreparationReuse};
+use volley_media::preparation::{
+    cache_id, prepared_file_sha256, PreparationPlan, PreparationReuse,
+};
 
 #[derive(Clone, Debug)]
 pub(crate) struct Progress {
@@ -155,6 +157,23 @@ fn manifest_write(
     storage::write_json_atomic(&plan.manifest, &value)
 }
 
+fn manifest_write_verified_ready(
+    plan: &PreparationPlan,
+    size: u64,
+    sha256: &str,
+) -> Result<(), ApiError> {
+    storage::write_json_atomic(
+        &plan.manifest,
+        &json!({
+            "identity":plan.identity,
+            "status":"ready",
+            "progress":100.0,
+            "cache_size_bytes":size,
+            "cache_sha256":sha256,
+            "cache_verification":"sha256-stream-v1"
+        }),
+    )
+}
 async fn update(progress: &Arc<Mutex<Progress>>, state: &str, value: f64, error: &str) {
     let mut current = progress.lock().await;
     current.state = state.to_owned();
@@ -321,10 +340,18 @@ async fn run_one(
         {
             return Err("FFmpeg не создал подготовленный MP4".into());
         }
+        // Produce a durable SHA receipt before publishing a cache entry.
+        // Partial MP4s and cancelled jobs never become reusable.
+        let (cache_size, cache_sha256) = prepared_file_sha256(&partial)
+            .map_err(|error| format!("Hash finished FFmpeg output: {error}"))?;
+        if *cancel.borrow() {
+            return Err("cancelled".into());
+        }
+        validate_source_unchanged(plan)?;
         fs::rename(&partial, &plan.output)
             .map_err(|error| format!("Publish prepared video: {error}"))?;
-        manifest_write(plan, "ready", 100.0, "")
-            .map_err(|error| format!("Publish preparation metadata: {error:?}"))?;
+        manifest_write_verified_ready(plan, cache_size, &cache_sha256)
+            .map_err(|error| format!("Publish SHA-verified preparation: {error:?}"))?;
         update(progress, "ready", 100.0, "").await;
         Ok(())
     }
@@ -660,6 +687,184 @@ pub async fn cancel_preparation(
 mod tests {
     use super::percent_from_ffmpeg;
 
+    #[tokio::test]
+    async fn real_ffmpeg_preparation_sha_receipt_bitflip_and_cancel_fail_closed() {
+        use super::*;
+        use sha2::{Digest, Sha256};
+        if std::process::Command::new("ffmpeg")
+            .arg("-version")
+            .output()
+            .is_err()
+        {
+            eprintln!("SKIP real FFmpeg preparation SHA test without FFmpeg");
+            return;
+        }
+        let sandbox =
+            std::env::temp_dir().join(format!("volley-prep-fault83-{}", Uuid::new_v4().simple()));
+        fs::create_dir_all(&sandbox).unwrap();
+        let source = sandbox.join("source_25fps.mp4");
+        let result = std::process::Command::new("ffmpeg")
+            .args([
+                "-nostdin",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                "testsrc2=size=320x180:rate=25:duration=4",
+                "-c:v",
+                "libx264",
+                "-preset",
+                "ultrafast",
+                "-pix_fmt",
+                "yuv420p",
+                "-an",
+            ])
+            .arg(&source)
+            .output()
+            .unwrap();
+        assert!(
+            result.status.success(),
+            "{:?}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        let original = fs::read(&source).unwrap();
+        let original_sha = format!("{:x}", Sha256::digest(&original));
+        let plan = PreparationPlan::new(&source, &sandbox, Some(256)).unwrap();
+        assert!(
+            !plan.already_analysis_ready,
+            "25fps must require preparation"
+        );
+        let (_tx, rx) = watch::channel(false);
+        let progress = Arc::new(Mutex::new(Progress::queued()));
+        run_one(&plan, rx, &progress).await.unwrap();
+        assert_eq!(plan.reused(), Some(PreparationReuse::Cached));
+        let receipt = storage::read_json(&plan.manifest).unwrap().unwrap();
+        let output = fs::read(&plan.output).unwrap();
+        assert_eq!(
+            receipt["cache_size_bytes"].as_u64(),
+            Some(output.len() as u64)
+        );
+        assert_eq!(
+            receipt["cache_sha256"],
+            format!("{:x}", Sha256::digest(&output))
+        );
+        let mut altered = output.clone();
+        altered[12] ^= 0x40;
+        fs::write(&plan.output, &altered).unwrap();
+        assert_eq!(
+            plan.reused(),
+            None,
+            "Same-size corrupted MP4 must not be reused"
+        );
+        let (_tx, rx) = watch::channel(false);
+        run_one(&plan, rx, &progress).await.unwrap();
+        assert_eq!(
+            plan.reused(),
+            Some(PreparationReuse::Cached),
+            "Corrupt entry must be rebuilt and rehashed"
+        );
+        assert_eq!(
+            fs::read(&plan.output).unwrap(),
+            output,
+            "Same original has deterministic FFmpeg output"
+        );
+        fs::write(&plan.output, &altered).unwrap();
+        let (tx, rx) = watch::channel(false);
+        tx.send(true).unwrap();
+        assert_eq!(
+            run_one(&plan, rx, &progress).await.unwrap_err(),
+            "cancelled"
+        );
+        assert_eq!(
+            plan.reused(),
+            None,
+            "Cancellation never blesses the corrupted cached output"
+        );
+        assert_eq!(
+            format!("{:x}", Sha256::digest(fs::read(&source).unwrap())),
+            original_sha,
+            "Original user video must never be changed"
+        );
+        fs::remove_dir_all(sandbox).unwrap();
+    }
+    #[tokio::test]
+    async fn cancelling_running_ffmpeg_reaps_process_without_partial_or_cache_receipt() {
+        use super::*;
+        if std::process::Command::new("ffmpeg")
+            .arg("-version")
+            .output()
+            .is_err()
+        {
+            return;
+        }
+        let root = std::env::temp_dir().join(format!("volley-ffmpeg-cancel83-{}", Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let source = root.join("long_source.mp4");
+        let result = std::process::Command::new("ffmpeg")
+            .args([
+                "-nostdin",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                "testsrc2=size=320x180:rate=25:duration=8",
+                "-c:v",
+                "libx264",
+                "-preset",
+                "ultrafast",
+                "-pix_fmt",
+                "yuv420p",
+                "-an",
+            ])
+            .arg(&source)
+            .output()
+            .unwrap();
+        assert!(result.status.success());
+        let plan = PreparationPlan::new(&source, &root, Some(1280)).unwrap();
+        assert!(!plan.already_analysis_ready);
+        let size_before = fs::metadata(&source).unwrap().len();
+        let (tx, rx) = watch::channel(false);
+        let progress = Arc::new(Mutex::new(Progress::queued()));
+        let cloned = plan.clone();
+        let progress2 = progress.clone();
+        let job = tokio::spawn(async move { run_one(&cloned, rx, &progress2).await });
+        let mut active = false;
+        for _ in 0..250 {
+            if progress.lock().await.state == "preparing" {
+                active = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(8)).await;
+        }
+        assert!(active, "FFmpeg did not enter active preparation stage");
+        tokio::time::sleep(Duration::from_millis(40)).await;
+        tx.send(true).unwrap();
+        let outcome = tokio::time::timeout(Duration::from_secs(12), job)
+            .await
+            .expect("Cancelled FFmpeg failed to terminate promptly")
+            .unwrap()
+            .unwrap_err();
+        assert_eq!(outcome, "cancelled");
+        assert!(
+            !plan.output.exists(),
+            "Cancelled transcode published cache media"
+        );
+        assert_ne!(plan.reused(), Some(PreparationReuse::Cached));
+        let partials = fs::read_dir(plan.output.parent().unwrap())
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|e| e.file_name().to_string_lossy().ends_with(".partial.mp4"))
+            .count();
+        assert_eq!(partials, 0, "Cancelled FFmpeg leaked a partial MP4");
+        assert_eq!(fs::metadata(&source).unwrap().len(), size_before);
+        fs::remove_dir_all(root).unwrap();
+    }
     #[test]
     fn ffmpeg_progress_is_monotone_bounded() {
         assert_eq!(

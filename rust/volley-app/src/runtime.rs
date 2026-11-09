@@ -51,8 +51,123 @@ pub(crate) fn exclusive_instance(repository: &Path) -> io::Result<InstanceGuard>
     })
 }
 
+/// The lifecycle launcher has a bounded status->signal gap. All incoming
+/// requests pass this process-local gate: SIGTERM can atomically close it
+/// against new requests BEFORE checking active native GPU/CPU/FFmpeg workers.
+/// Existing requests hold a guard until handler completion/cancellation.
+#[derive(Default)]
+pub(crate) struct ShutdownGate {
+    state: std::sync::Mutex<GateState>,
+}
+#[derive(Default)]
+struct GateState {
+    draining: bool,
+    inflight: usize,
+}
+pub(crate) struct RequestHold {
+    gate: std::sync::Arc<ShutdownGate>,
+}
+impl Drop for RequestHold {
+    fn drop(&mut self) {
+        let mut gate = self.gate.state.lock().unwrap_or_else(|e| e.into_inner());
+        gate.inflight -= 1;
+    }
+}
+impl ShutdownGate {
+    pub(crate) fn enter(self: &std::sync::Arc<Self>) -> Option<RequestHold> {
+        let mut gate = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        if gate.draining {
+            return None;
+        }
+        gate.inflight += 1;
+        Some(RequestHold { gate: self.clone() })
+    }
+    fn begin_shutdown(&self) -> bool {
+        let mut gate = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        if gate.draining || gate.inflight != 0 {
+            return false;
+        }
+        gate.draining = true;
+        true
+    }
+    fn cancel_shutdown(&self) {
+        self.state
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .draining = false;
+    }
+    #[cfg(test)]
+    fn is_draining(&self) -> bool {
+        self.state
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .draining
+    }
+}
+/// DNS-rebinding and cross-site navigation/CSRF protection on ALL routes,
+/// including GET routes that may start preparation or expose local metadata.
+/// CLI requests without Origin/Sec-Fetch-Site remain supported, but Host
+/// must still be an explicit loopback hostname, never an attacker domain.
+fn validate_local_request(headers: &axum::http::HeaderMap) -> Result<(), axum::http::StatusCode> {
+    use axum::http::{header, StatusCode};
+    let raw = headers
+        .get(header::HOST)
+        .and_then(|v| v.to_str().ok())
+        .ok_or(StatusCode::FORBIDDEN)?;
+    let host = raw.to_ascii_lowercase();
+    let host_part = if let Some((prefix, port)) = host.rsplit_once(':') {
+        if port.is_empty() || port.parse::<u16>().ok().filter(|p| *p > 0).is_none() {
+            return Err(StatusCode::FORBIDDEN);
+        }
+        prefix
+    } else {
+        host.as_str()
+    };
+    if !matches!(host_part, "localhost" | "127.0.0.1" | "[::1]") {
+        return Err(StatusCode::FORBIDDEN);
+    }
+    if let Some(origin) = headers.get(header::ORIGIN) {
+        let trusted = format!("http://{raw}");
+        if origin.to_str().ok() != Some(trusted.as_str()) {
+            return Err(StatusCode::FORBIDDEN);
+        }
+    }
+    if let Some(site) = headers.get("sec-fetch-site") {
+        if !matches!(site.to_str().ok(), Some("same-origin" | "none")) {
+            return Err(StatusCode::FORBIDDEN);
+        }
+    }
+    Ok(())
+}
+pub(crate) async fn guard_request(
+    axum::extract::State(gate): axum::extract::State<std::sync::Arc<ShutdownGate>>,
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    if let Err(status) = validate_local_request(request.headers()) {
+        return status.into_response();
+    }
+    let Some(_hold) = gate.enter() else {
+        return axum::http::StatusCode::SERVICE_UNAVAILABLE.into_response();
+    };
+    next.run(request).await
+}
+pub(crate) async fn try_shutdown(state: &AppState, gate: &ShutdownGate) -> bool {
+    if !gate.begin_shutdown() {
+        eprintln!("Rust shutdown denied: in-flight HTTP request or concurrent shutdown attempt");
+        return false;
+    }
+    let busy = active_job_types(state).await;
+    if !busy.is_empty() {
+        gate.cancel_shutdown();
+        eprintln!("Rust shutdown denied: active work: {}", busy.join(", "));
+        return false;
+    }
+    // New HTTP work has been excluded since begin_shutdown was called.
+    true
+}
 use crate::AppState;
-use axum::Json;
+use axum::{response::IntoResponse, Json};
 use serde::Serialize;
 use std::sync::Arc;
 
@@ -83,6 +198,12 @@ pub(crate) async fn active_job_types(state: &AppState) -> Vec<&'static str> {
     }
     if state.preparation.has_active().await {
         busy.push("video_preparation");
+    }
+    if state.inference_limit.available_permits() == 0 && !busy.contains(&"gpu_inference") {
+        busy.push("gpu_inference");
+    }
+    if state.preview_limit.available_permits() == 0 {
+        busy.push("preview_processing");
     }
     // Permit-based guards catch synchronous CPU mutations that have no
     // persistent job entry. Read-only browser preview is not an analysis.
@@ -252,8 +373,65 @@ mod tests {
         let axum::Json(status) = super::rewrite_status(axum::extract::State(state.clone())).await;
         assert!(!status.shutdown_safe);
         assert_eq!(status.active_jobs, vec!["statistics_processing"]);
+        let gate = std::sync::Arc::new(ShutdownGate::default());
+        let request = gate.enter().unwrap();
+        assert!(
+            !try_shutdown(&state, &gate).await,
+            "In-flight HTTP request blocks simultaneous SIGTERM"
+        );
+        drop(request);
+        assert!(
+            !try_shutdown(&state, &gate).await,
+            "Busy CPU worker blocks SIGTERM after HTTP releases"
+        );
         drop(hold);
+        assert!(try_shutdown(&state, &gate).await);
+        assert!(gate.is_draining());
+        assert!(
+            gate.enter().is_none(),
+            "Shutdown barrier rejects new requests after safe confirmation"
+        );
+        gate.cancel_shutdown();
+        assert!(gate.enter().is_some());
         fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn localhost_host_origin_and_fetch_site_gate_prevents_dns_rebinding_and_csrf() {
+        use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
+        let mut headers = HeaderMap::new();
+        headers.insert(header::HOST, HeaderValue::from_static("127.0.0.1:8875"));
+        assert!(validate_local_request(&headers).is_ok());
+        headers.insert(
+            header::ORIGIN,
+            HeaderValue::from_static("http://127.0.0.1:8875"),
+        );
+        headers.insert("sec-fetch-site", HeaderValue::from_static("same-origin"));
+        assert!(validate_local_request(&headers).is_ok());
+        headers.insert("sec-fetch-site", HeaderValue::from_static("cross-site"));
+        assert_eq!(validate_local_request(&headers), Err(StatusCode::FORBIDDEN));
+        headers.insert("sec-fetch-site", HeaderValue::from_static("same-site"));
+        assert_eq!(validate_local_request(&headers), Err(StatusCode::FORBIDDEN));
+        headers.insert("sec-fetch-site", HeaderValue::from_static("none"));
+        assert!(validate_local_request(&headers).is_ok());
+        headers.insert(
+            header::ORIGIN,
+            HeaderValue::from_static("http://evil.example"),
+        );
+        assert_eq!(validate_local_request(&headers), Err(StatusCode::FORBIDDEN));
+        headers.remove(header::ORIGIN);
+        headers.insert(header::HOST, HeaderValue::from_static("evil.example:8875"));
+        assert_eq!(validate_local_request(&headers), Err(StatusCode::FORBIDDEN));
+        headers.insert(
+            header::HOST,
+            HeaderValue::from_static("localhost.evil.example:8875"),
+        );
+        assert_eq!(validate_local_request(&headers), Err(StatusCode::FORBIDDEN));
+        headers.insert(header::HOST, HeaderValue::from_static("localhost:8875"));
+        assert!(validate_local_request(&headers).is_ok());
+        headers.insert(header::HOST, HeaderValue::from_static("127.0.0.1:0"));
+        assert_eq!(validate_local_request(&headers), Err(StatusCode::FORBIDDEN));
+        headers.remove(header::HOST);
+        assert_eq!(validate_local_request(&headers), Err(StatusCode::FORBIDDEN));
     }
     #[cfg(unix)]
     #[test]

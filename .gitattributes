@@ -1,0 +1,2 @@
+# Linux/WSL Bash scripts must be LF even with Windows core.autocrlf=true.
+*.sh text eol=lf

@@ -6,7 +6,8 @@ use axum::{
 };
 use serde_json::{json, Value};
 use std::{
-    fs, io,
+    fs::{self, OpenOptions},
+    io::{self, Write},
     path::{Path, PathBuf},
 };
 use uuid::Uuid;
@@ -78,32 +79,77 @@ pub fn video_name(value: &str) -> Result<&str, ApiError> {
     Ok(value)
 }
 
+const MAX_JSON_BYTES: u64 = 32 * 1024 * 1024;
+
+/// Source-scoped sidecars can be user-owned in the isolated root. Reject
+/// existing symlink components (not just the final basename) before reading
+/// or writing a JSON file. This does not substitute for OS-level sandboxing.
+fn reject_symlink_ancestors(path: &Path) -> Result<(), ApiError> {
+    for component in path.ancestors() {
+        match fs::symlink_metadata(component) {
+            Ok(meta) if meta.file_type().is_symlink() => {
+                return Err(bad_request("JSON storage path contains a symlink"));
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(internal(format!("Check storage ancestor: {error}"))),
+        }
+    }
+    Ok(())
+}
+
 pub fn read_json(path: &Path) -> Result<Option<Value>, ApiError> {
-    let bytes = match fs::read(path) {
-        Ok(bytes) => bytes,
+    reject_symlink_ancestors(path)?;
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(meta) => meta,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(internal(format!("{}: {error}", path.display()))),
+        Err(error) => {
+            return Err(internal(format!(
+                "Cannot stat JSON {}: {error}",
+                path.display()
+            )))
+        }
     };
+    if !metadata.is_file() || metadata.file_type().is_symlink() || metadata.len() > MAX_JSON_BYTES {
+        return Err(bad_request("Unsafe or oversized JSON storage file"));
+    }
+    let bytes = fs::read(path).map_err(|error| internal(format!("{}: {error}", path.display())))?;
+    if bytes.len() as u64 > MAX_JSON_BYTES {
+        return Err(bad_request("JSON storage read exceeded size limit"));
+    }
     serde_json::from_slice(&bytes)
         .map(Some)
-        .map_err(|error| internal(format!("corrupted JSON {}: {error}", path.display())))
+        .map_err(|error| internal(format!("Corrupted JSON {}: {error}", path.display())))
 }
 
 pub fn write_json_atomic(path: &Path, value: &Value) -> Result<(), ApiError> {
     let parent = path
         .parent()
         .ok_or_else(|| internal("JSON output has no parent"))?;
+    reject_symlink_ancestors(parent)?;
     fs::create_dir_all(parent)
         .map_err(|error| internal(format!("{}: {error}", parent.display())))?;
+    reject_symlink_ancestors(path)?;
+    if let Ok(meta) = fs::symlink_metadata(path) {
+        if !meta.is_file() || meta.file_type().is_symlink() {
+            return Err(bad_request("Cannot replace unsafe JSON storage target"));
+        }
+    }
+    let bytes = serde_json::to_vec_pretty(value)
+        .map_err(|error| internal(format!("JSON serialization failed: {error}")))?;
+    if bytes.len() as u64 > MAX_JSON_BYTES {
+        return Err(bad_request("JSON storage write exceeded size limit"));
+    }
     let tmp = parent.join(format!(
         ".{}.{}.tmp",
         path.file_name().unwrap_or_default().to_string_lossy(),
         Uuid::new_v4()
     ));
-    let bytes = serde_json::to_vec_pretty(value)
-        .map_err(|error| internal(format!("JSON serialization failed: {error}")))?;
     let saved = (|| -> io::Result<()> {
-        fs::write(&tmp, bytes)?;
+        let mut file = OpenOptions::new().write(true).create_new(true).open(&tmp)?;
+        file.write_all(&bytes)?;
+        file.sync_all()?;
+        drop(file);
         fs::rename(&tmp, path)
     })();
     if let Err(error) = saved {
@@ -112,7 +158,6 @@ pub fn write_json_atomic(path: &Path, value: &Value) -> Result<(), ApiError> {
     }
     Ok(())
 }
-
 pub fn validate_origin(headers: &HeaderMap) -> Result<(), ApiError> {
     let Some(origin) = headers.get(header::ORIGIN) else {
         return Ok(());
@@ -191,6 +236,55 @@ mod tests {
         assert!(project_id("1234abcdef01").is_ok());
         assert!(project_id("../../unsafe").is_err());
         assert!(project_id("a/aaaaaaaaaa").is_err());
+    }
+    #[test]
+    fn atomic_json_rejects_symlink_traversal_corrupt_payload_and_oversized_files() {
+        use super::*;
+        let root =
+            std::env::temp_dir().join(format!("volley-json-fault83-{}", Uuid::new_v4().simple()));
+        fs::create_dir_all(&root).unwrap();
+        let safe = root.join("safe.json");
+        write_json_atomic(&safe, &json!({"id":"a","revision":1})).unwrap();
+        assert_eq!(read_json(&safe).unwrap().unwrap()["revision"], 1);
+        write_json_atomic(&safe, &json!({"id":"a","revision":2})).unwrap();
+        assert_eq!(read_json(&safe).unwrap().unwrap()["revision"], 2);
+        fs::write(&safe, b"{broken").unwrap();
+        assert!(
+            read_json(&safe).is_err(),
+            "Corrupted JSON cannot be silently defaulted"
+        );
+        let big = root.join("oversized.json");
+        let file = OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&big)
+            .unwrap();
+        file.set_len(MAX_JSON_BYTES + 1).unwrap();
+        assert_eq!(read_json(&big).unwrap_err().0, StatusCode::BAD_REQUEST);
+        #[cfg(unix)]
+        {
+            let protected = root.join("protected.json");
+            fs::write(&protected, b"{\"keep\":true}").unwrap();
+            let linked = root.join("external.json");
+            std::os::unix::fs::symlink(&protected, &linked).unwrap();
+            assert_eq!(read_json(&linked).unwrap_err().0, StatusCode::BAD_REQUEST);
+            assert_eq!(
+                write_json_atomic(&linked, &json!({"keep":false}))
+                    .unwrap_err()
+                    .0,
+                StatusCode::BAD_REQUEST
+            );
+            let folder = root.join("linkdir");
+            std::os::unix::fs::symlink(&root, &folder).unwrap();
+            assert_eq!(
+                write_json_atomic(&folder.join("unsafe.json"), &json!(true))
+                    .unwrap_err()
+                    .0,
+                StatusCode::BAD_REQUEST
+            );
+            assert_eq!(fs::read(&protected).unwrap(), b"{\"keep\":true}");
+        }
+        fs::remove_dir_all(root).unwrap();
     }
     #[test]
     fn video_names_are_basename_only() {

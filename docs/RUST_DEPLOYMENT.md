@@ -163,3 +163,32 @@ The test only starts its own disposable non-root container with
  a local test port. It verifies HTTP and compiled WASM before
  stopping only its own container. Host-networking support on Docker
  Desktop must be enabled.
+
+## Stage83 security and fault-injection acceptance
+
+An Axum lifecycle barrier closes the status-to-SIGTERM race: after
+ confirming zero in-flight requests and active native tasks, incoming
+ requests are denied. SIGTERM during HTTP/GPU/CPU/FFmpeg work is
+ refused and audited, never force-killed. The global request gate
+ rejects foreign Host, Origin and Sec-Fetch-Site headers on all routes.
+
+Prepared MP4 cache reuse now requires a SHA-256 and byte-size manifest
+ receipt. Old unsigned Python/Rust entries are rebuilt, not trusted.
+ Rehashing uses a 1-MiB streaming buffer; quantify repeated hashing
+ cost during stage84. JSON sidecars are limited to 32 MiB and reject
+ symlinked path components; new temp files are fsynced before rename.
+
+Run scripts/ci/test_rust_faults.sh for all offline Rust/code fault
+ tests. Add --require-gpu-docker for a strict gate: it requires a
+ real CUDA model integration and running Docker container. Without
+ Linux ONNX Runtime or a verified Docker image it exits nonzero.
+ Representative match quality and peak VRAM profiling remain stage84.
+
+## Stage83 integrity and release gates
+
+Run bash scripts/ci/test_rust_faults.sh for complete offline fault-injection
+and lifecycle regression. Run bash scripts/ci/test_rust_faults.sh
+--require-gpu-docker before considering GPU/Docker deployment complete;
+it exits nonzero unless genuine CUDA ONNX inference and a running Docker
+image have been verified. Windows Git users must keep Bash scripts LF-only;
+.gitattributes enforces this for every *.sh file.

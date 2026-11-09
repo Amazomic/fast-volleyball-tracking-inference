@@ -6,6 +6,7 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::{
     fs,
+    io::{self, Read},
     path::{Path, PathBuf},
     time::UNIX_EPOCH,
 };
@@ -78,6 +79,38 @@ pub fn cache_id(item: &PreparedIdentity) -> String {
     format!("{hash:x}")[..28].to_owned()
 }
 
+/// Streaming SHA-256: a one-megabyte buffer bounds additional RAM even for
+/// multi-hour matches. Refuse links and nonregular files before reading.
+pub fn prepared_file_sha256(path: &Path) -> io::Result<(u64, String)> {
+    let metadata = fs::symlink_metadata(path)?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() || metadata.len() == 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Unsafe prepared video",
+        ));
+    }
+    let mut file = fs::File::open(path)?;
+    let mut digest = Sha256::new();
+    let mut total = 0u64;
+    let mut buffer = vec![0u8; 1024 * 1024];
+    loop {
+        let read = file.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        digest.update(&buffer[..read]);
+        total = total.checked_add(read as u64).ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidData, "Prepared MP4 length overflow")
+        })?;
+    }
+    if total != metadata.len() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Prepared MP4 changed while hashing",
+        ));
+    }
+    Ok((total, format!("{:x}", digest.finalize())))
+}
 impl PreparationPlan {
     pub fn new(source: &Path, shared_root: &Path, width: Option<u32>) -> Result<Self, String> {
         let source = source
@@ -127,7 +160,26 @@ impl PreparationPlan {
 
     pub fn reused(&self) -> Option<PreparationReuse> {
         if self.already_analysis_ready {
-            return Some(PreparationReuse::Original);
+            // An original file cannot be reused after its recorded source
+            // stamp changed, even when a caller holds an earlier plan.
+            let source_meta = fs::metadata(&self.source).ok()?;
+            let stamp = source_meta
+                .modified()
+                .ok()?
+                .duration_since(UNIX_EPOCH)
+                .ok()?
+                .as_nanos();
+            return (source_meta.is_file()
+                && source_meta.len() == self.identity.size
+                && stamp == self.identity.mtime_ns)
+                .then_some(PreparationReuse::Original);
+        }
+        let manifest_info = fs::symlink_metadata(&self.manifest).ok()?;
+        if manifest_info.file_type().is_symlink()
+            || !manifest_info.is_file()
+            || manifest_info.len() > 64 * 1024
+        {
+            return None;
         }
         let raw = fs::read(&self.manifest).ok()?;
         let value = serde_json::from_slice::<Value>(&raw).ok()?;
@@ -136,17 +188,22 @@ impl PreparationPlan {
         {
             return None;
         }
-        if self
-            .output
-            .metadata()
-            .is_ok_and(|metadata| metadata.len() > 0 && metadata.is_file())
+        // Old ready manifests (Python schema 2 or early Rust without a
+        // content receipt) are NOT trusted; rebuild rather than silently
+        // accepting a same-size corrupted or replaced video.
+        let declared_size = value["cache_size_bytes"].as_u64()?;
+        let declared_hash = value["cache_sha256"].as_str()?;
+        if declared_hash.len() != 64
+            || !declared_hash
+                .bytes()
+                .all(|ch| ch.is_ascii_hexdigit() && !ch.is_ascii_uppercase())
+            || declared_size == 0
         {
-            Some(PreparationReuse::Cached)
-        } else {
-            None
+            return None;
         }
+        let (size, digest) = prepared_file_sha256(&self.output).ok()?;
+        (size == declared_size && digest == declared_hash).then_some(PreparationReuse::Cached)
     }
-
     pub fn ready_path(&self) -> Option<&Path> {
         match self.reused()? {
             PreparationReuse::Original => Some(&self.source),
@@ -211,6 +268,134 @@ mod tests {
         assert_eq!(cache_id(&identity).len(), 28);
     }
 
+    #[test]
+    fn sha_cache_detects_same_size_corruption_missing_receipt_and_symlink() {
+        use super::{prepared_file_sha256, PreparationPlan, PreparationReuse};
+        let root = std::env::temp_dir().join(format!("volley-cache-83-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let input = root.join("original.mp4");
+        let cached = root.join("prepared.mp4");
+        let receipt = root.join("prepared.json");
+        std::fs::write(&input, b"original unchanged bytes").unwrap();
+        let meta = std::fs::metadata(&input).unwrap();
+        let stamp = meta
+            .modified()
+            .unwrap()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let identity = PreparedIdentity {
+            source: input.to_string_lossy().to_string(),
+            size: meta.len(),
+            mtime_ns: stamp,
+            width: 640,
+            fps: 30,
+            schema: 2,
+        };
+        let plan = PreparationPlan {
+            source: input.clone(),
+            output: cached.clone(),
+            manifest: receipt.clone(),
+            identity: identity.clone(),
+            width: 640,
+            duration_sec: 1.0,
+            already_analysis_ready: false,
+        };
+        std::fs::write(&cached, b"this-is-prepared-video").unwrap();
+        let (size, digest) = prepared_file_sha256(&cached).unwrap();
+        let entry = serde_json::json!({"status":"ready","identity":identity,
+            "cache_size_bytes":size,"cache_sha256":digest,
+            "cache_verification":"sha256-stream-v1"});
+        std::fs::write(&receipt, serde_json::to_vec(&entry).unwrap()).unwrap();
+        assert_eq!(plan.reused(), Some(PreparationReuse::Cached));
+        assert_eq!(plan.ready_path(), Some(cached.as_path()));
+        // The same-length bitflip used to pass all existing cache reuse checks.
+        let mut corrupted = std::fs::read(&cached).unwrap();
+        corrupted[0] ^= 1;
+        std::fs::write(&cached, corrupted).unwrap();
+        assert_eq!(
+            plan.reused(),
+            None,
+            "Same-size tampering must invalidate cache"
+        );
+        std::fs::write(&cached, b"this-is-prepared-video").unwrap();
+        assert_eq!(plan.reused(), Some(PreparationReuse::Cached));
+        let mut old = entry.clone();
+        old.as_object_mut().unwrap().remove("cache_sha256");
+        std::fs::write(&receipt, serde_json::to_vec(&old).unwrap()).unwrap();
+        assert_eq!(
+            plan.reused(),
+            None,
+            "Unsigned old cache entries require rebuilding"
+        );
+        let mut wrong = entry.clone();
+        wrong["cache_sha256"] = serde_json::json!("x".repeat(64));
+        std::fs::write(&receipt, serde_json::to_vec(&wrong).unwrap()).unwrap();
+        assert_eq!(plan.reused(), None);
+        std::fs::write(&receipt, serde_json::to_vec(&entry).unwrap()).unwrap();
+        #[cfg(unix)]
+        {
+            let out = root.join("external.mp4");
+            std::fs::write(&out, b"external protected").unwrap();
+            std::fs::remove_file(&cached).unwrap();
+            std::os::unix::fs::symlink(&out, &cached).unwrap();
+            assert!(prepared_file_sha256(&cached).is_err());
+            assert_eq!(
+                plan.reused(),
+                None,
+                "Symlinked cache output cannot be reused"
+            );
+            std::fs::remove_file(&cached).unwrap();
+            std::fs::write(&cached, b"this-is-prepared-video").unwrap();
+            std::fs::remove_file(&receipt).unwrap();
+            std::os::unix::fs::symlink(&out, &receipt).unwrap();
+            assert_eq!(
+                plan.reused(),
+                None,
+                "Symlinked manifest cannot authorize cache"
+            );
+            assert_eq!(std::fs::read(&out).unwrap(), b"external protected");
+        }
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn unchanged_original_can_be_reused_but_modified_source_cannot() {
+        use super::{PreparationPlan, PreparationReuse};
+        let root = std::env::temp_dir().join(format!("volley-source-83-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let source = root.join("match.mp4");
+        std::fs::write(&source, b"real analysis ready example").unwrap();
+        let info = std::fs::metadata(&source).unwrap();
+        let stamp = info
+            .modified()
+            .unwrap()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let plan = PreparationPlan {
+            source: source.clone(),
+            output: root.join("cached.mp4"),
+            manifest: root.join("cached.json"),
+            identity: PreparedIdentity {
+                source: source.to_string_lossy().to_string(),
+                size: info.len(),
+                mtime_ns: stamp,
+                width: 640,
+                fps: 30,
+                schema: 2,
+            },
+            width: 640,
+            duration_sec: 1.0,
+            already_analysis_ready: true,
+        };
+        assert_eq!(plan.reused(), Some(PreparationReuse::Original));
+        std::fs::write(&source, b"modified different size").unwrap();
+        assert_eq!(plan.reused(), None);
+        std::fs::remove_dir_all(root).unwrap();
+    }
     #[test]
     fn stable_id_for_same_source_fingerprint() {
         let fp = PreparedIdentity {

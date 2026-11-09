@@ -11,7 +11,7 @@ pipeline is **project → prepared video → immutable VballNet/RAVEL GPU eviden
 versioned CPU player tracks/Touch/rallies → reviewed players → original-quality montage**.
 FFmpeg, ONNX Runtime and CUDA are native external runtimes, not Python components.
 
-**Rust-миграция: 82/85; следующий 83/85 (плановый объём).**
+**Rust-миграция: 83/85; следующий 84/85 (плановый объём).**
 [Deployment](docs/RUST_DEPLOYMENT.md) · [Stage map](docs/RUST_ROADMAP.md) ·
 [Migration journal](docs/RUST_MIGRATION.md) ·
 [Architecture and owners](docs/RUST_ARCHITECTURE.md).
@@ -136,3 +136,10 @@ restart tests passed. A Docker image is NOT yet verified: the
  For the WSL prebuilt ELF requiring GLIBC_2.39, use the corrected
  Debian Trixie runtime, not Bookworm. Linux CUDA ONNX Runtime is
  still missing, so GPU production readiness remains false.
+
+Stage83: SHA256-verified prepared MP4 cache (unsigned copies are rebuilt),
+ bounded 32-MiB JSON sidecars, loopback-only Host/Origin/Fetch-Site
+ checks, and an in-server SIGTERM request/worker barrier. Test with
+ scripts/ci/test_rust_faults.sh; strict --require-gpu-docker refuses
+ production acceptance without real native CUDA and Docker smoke.
+ Representative match GPU/VRAM and Docker packaging remain unverified.

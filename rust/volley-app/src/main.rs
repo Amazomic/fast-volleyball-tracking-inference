@@ -67,7 +67,11 @@ struct AppState {
     full_inference: inference_full::FullInferenceManager,
 }
 
+#[cfg(test)]
 fn app(state: Arc<AppState>) -> Router {
+    app_with_gate(state, Arc::new(runtime::ShutdownGate::default()))
+}
+fn app_with_gate(state: Arc<AppState>, gate: Arc<runtime::ShutdownGate>) -> Router {
     Router::new()
         .route("/", get(|| async { Redirect::temporary("/studio/rust") }))
         // This is not /api/health: do not fool the production UI's API gate
@@ -309,27 +313,35 @@ fn app(state: Arc<AppState>) -> Router {
             post(preparation::cancel_preparation),
         )
         .with_state(state)
+        .layer(axum::middleware::from_fn_with_state(
+            gate,
+            runtime::guard_request,
+        ))
 }
 
-/// Ctrl+C and Unix SIGTERM share the same Axum graceful shutdown path.
-/// SIGTERM is required for detached WSL, systemd and Docker stop; never
-/// force-kill worker processes from a launcher.
-async fn shutdown_signal() {
+/// Refuse OS termination when native jobs or in-flight HTTP work remain.
+/// Launcher never escalates to SIGKILL: a later SIGTERM may retry once idle.
+async fn shutdown_signal(state: Arc<AppState>, gate: Arc<runtime::ShutdownGate>) {
     #[cfg(unix)]
     {
         use tokio::signal::unix::{signal, SignalKind};
-        if let Ok(mut terminate) = signal(SignalKind::terminate()) {
-            tokio::select! {
-                _=tokio::signal::ctrl_c()=>{},
-                _=terminate.recv()=>{},
+        if let Ok(mut term) = signal(SignalKind::terminate()) {
+            loop {
+                tokio::select! {
+                    _=tokio::signal::ctrl_c()=>{},
+                    _=term.recv()=>{},
+                }
+                if runtime::try_shutdown(&state, &gate).await {
+                    return;
+                }
             }
-        } else {
-            let _ = tokio::signal::ctrl_c().await;
         }
     }
-    #[cfg(not(unix))]
-    {
+    loop {
         let _ = tokio::signal::ctrl_c().await;
+        if runtime::try_shutdown(&state, &gate).await {
+            return;
+        }
     }
 }
 #[tokio::main]
@@ -380,8 +392,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
     println!(
         "Volleyball Studio Rust rewrite (INCOMPLETE): http://{addr}/internal/rewrite-status (isolated writes={writes_enabled})"
     );
-    axum::serve(listener, app(state))
-        .with_graceful_shutdown(shutdown_signal())
+    let gate = Arc::new(runtime::ShutdownGate::default());
+    axum::serve(listener, app_with_gate(state.clone(), gate.clone()))
+        .with_graceful_shutdown(shutdown_signal(state, gate))
         .await?;
     Ok(())
 }

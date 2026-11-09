@@ -4,25 +4,34 @@
 set -euo pipefail
 root="$(cd "$(dirname "$0")/../.." && pwd -P)"
 ctl="$root/scripts/volley-rust.sh"
+# Warm Cargo separately so NTFS compile delays cannot look like HTTP failure.
+if [[ -f "$HOME/.cargo/env" ]];then source "$HOME/.cargo/env";fi
+cargo build --manifest-path "$root/rust/Cargo.toml" --locked --offline -p volley-app >/dev/null
 port=18975
 tmp="$(mktemp -d /tmp/volley-stage82-lifecycle-XXXXXXXX)"
 url="http://127.0.0.1:$port/internal/rewrite-status"
 pid=''
 cleanup(){
-  bash "$ctl" stop "$root" "127.0.0.1:$port" "$tmp/data" isolated \
+  timeout 14 bash "$ctl" stop "$root" "127.0.0.1:$port" "$tmp/data" isolated \
     __not_configured__ __not_configured__ > /dev/null 2>&1 || true
-  if [[ -n "$pid" ]];then wait "$pid" 2>/dev/null || true;fi
+  if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null;then
+    # The test owns only this PID; never signal another process.
+    if [[ "$(readlink -f "/proc/$pid/exe" 2>/dev/null || true)" == "$root/rust/target/debug/volley-app" ]];then
+      kill -TERM "$pid" 2>/dev/null || true
+    fi
+  fi
+  if [[ -n "$pid" && ! -e "/proc/$pid/exe" ]];then wait "$pid" 2>/dev/null || true;fi
   rm -rf -- "$tmp"
 }
 trap cleanup EXIT
-if curl --silent --max-time 1 "$url" >/dev/null || (echo >/dev/tcp/127.0.0.1/"$port") 2>/dev/null;then
+if ss -H -ltn "sport = :$port" | grep -q .;then
   echo "Test port $port already busy: not disturbing an existing service" >&2;exit 2
 fi
 bash "$ctl" start "$root" "127.0.0.1:$port" "$tmp/data" isolated \
   __not_configured__ __not_configured__ >"$tmp/server.log" 2>&1 &
 pid=$!
 ready=''
-for _ in $(seq 1 50);do
+for _ in $(seq 1 180);do
   if ready="$(curl -fsS --max-time 1 "$url" 2>/dev/null)";then break;fi
   if ! kill -0 "$pid" 2>/dev/null;then
     echo "Rust server unexpectedly exited" >&2;cat "$tmp/server.log" >&2;exit 1
@@ -60,7 +69,7 @@ bash "$ctl" restart "$root" "127.0.0.1:$port" "$tmp/data" isolated \
   __not_configured__ __not_configured__ >"$tmp/restart.log" 2>&1 &
 pid=$!
 ready=''
-for _ in $(seq 1 40);do
+for _ in $(seq 1 160);do
   if ready="$(curl -fsS --max-time 1 "$url" 2>/dev/null)";then break;fi
   sleep .2
 done
