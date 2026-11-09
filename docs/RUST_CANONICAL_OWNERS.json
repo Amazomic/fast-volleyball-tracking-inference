@@ -8,7 +8,9 @@
                             "/api/cpu/native/",
                             "/api/montage/native/",
                             "/api/quick-reel/native/",
-                            "/api/inference/native/full/"
+                            "/api/inference/native/full/",
+                            "/api/project-legacy/native/",
+                            "/api/project-archive/native"
                         ],
     "domains":  [
                     {
@@ -299,7 +301,8 @@
                         "owner":  "rust/volley-app/src/studio_web.rs",
                         "status":  "partial",
                         "adapters":  [
-                                         "rust/volley-web/src/lib.rs"
+                                         "rust/volley-web/src/lib.rs",
+                                         "rust/volley-app/static/studio_legacy.js"
                                      ],
                         "routes":  [
 
@@ -472,6 +475,53 @@
                                            "source":  "native",
                                            "path":  "projects/\u003cid\u003e/native_action_reviews/\u003crally_run_id\u003e.json"
                                        }
+                                   ]
+                    },
+                    {
+                        "id":  "legacy_project_import",
+                        "owner":  "rust/volley-app/src/legacy_projects.rs",
+                        "status":  "partial",
+                        "adapters":  [
+                                         "rust/volley-app/src/projects.rs"
+                                     ],
+                        "routes":  [
+                                       {
+                                           "path":  "/api/project-legacy/native/catalog",
+                                           "handler":  "legacy_projects::catalog"
+                                       },
+                                       {
+                                           "path":  "/api/project-legacy/native/inspect",
+                                           "handler":  "legacy_projects::inspect"
+                                       },
+                                       {
+                                           "path":  "/api/project-legacy/native/import",
+                                           "handler":  "legacy_projects::import"
+                                       }
+                                   ],
+                        "stores":  [
+
+                                   ]
+                    },
+                    {
+                        "id":  "project_archive",
+                        "owner":  "rust/volley-app/src/project_archive.rs",
+                        "status":  "partial",
+                        "adapters":  [
+                                         "rust/volley-app/src/project_archive_restore.rs",
+                                         "rust/volley-app/src/projects.rs"
+                                     ],
+                        "routes":  [
+                                       {
+                                           "path":  "/api/project-archive/native",
+                                           "handler":  "project_archive::list"
+                                       },
+                                       {
+                                           "path":  "/api/project-archive/native/restore",
+                                           "handler":  "project_archive::restore"
+                                       }
+                                   ],
+                        "stores":  [
+
                                    ]
                     }
                 ]

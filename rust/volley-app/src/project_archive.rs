@@ -123,6 +123,9 @@ pub async fn archive(
     outcome.map(Json)
 }
 
+#[path = "project_archive_restore.rs"]
+mod restore_ops;
+pub use restore_ops::{list, restore};
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -211,6 +214,18 @@ mod tests {
             b"photo never touched"
         );
         drop(lock);
+        let original_archive_id = result["archive_id"].as_str().unwrap();
+        let restored = restore_ops::restore_one(&state, original_archive_id).unwrap();
+        assert_eq!(restored["restored"], true);
+        assert_eq!(restored["legacy_results_unchanged"], true);
+        assert!(project.join("analysis/saved-events.json").is_file());
+        assert!(!archived.exists());
+        assert_eq!(
+            projects::existing_project(&state, id).unwrap()["name"],
+            "fixture"
+        );
+        assert!(restore_ops::restore_one(&state, original_archive_id).is_err());
+        assert!(restore_ops::restore_one(&state, "../evil").is_err());
         fs::remove_dir_all(root).unwrap();
     }
 

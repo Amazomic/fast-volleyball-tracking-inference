@@ -130,3 +130,14 @@
 #studio-quick-browser{margin-top:12px}
 @media(max-width:940px){.quick-layout{grid-template-columns:1fr}.quick-stages{grid-template-columns:repeat(2,minmax(0,1fr))}}
 .quick-sidebar-summary{display:block;color:#c9dbf5;background:#192a41;padding:11px;margin-top:auto;border:1px solid #355070;border-radius:9px;font-size:12px}.quick-sidebar-summary:hover{background:#25466c}
+
+.legacy-workspace{max-width:1350px;margin:auto}
+.legacy-layout{display:grid;grid-template-columns:1fr 1fr;gap:17px;margin-top:20px}
+.legacy-card{background:#111c2c;border:1px solid #2f3e58;border-radius:13px;padding:19px;min-width:0}
+.legacy-card h2{margin:2px 0 13px}
+.legacy-list{display:grid;gap:11px;margin-top:15px;max-height:630px;overflow-y:auto}
+.legacy-entry{background:#182538;border:1px solid #364a66;padding:12px;border-radius:9px}
+.legacy-entry strong{display:block;font-size:14px;overflow-wrap:anywhere}
+.legacy-entry .panel-note{margin:9px 0}
+.legacy-entry .secondary{margin-top:9px}
+@media(max-width:980px){.legacy-layout{grid-template-columns:1fr}}

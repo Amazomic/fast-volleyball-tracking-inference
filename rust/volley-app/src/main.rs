@@ -11,6 +11,7 @@ mod inference_full;
 mod inference_fusion;
 mod inference_native;
 mod inference_stream;
+mod legacy_projects;
 mod montage;
 mod native_action_review;
 mod native_player_highlights;
@@ -100,7 +101,12 @@ async fn rewrite_status(
             "GET /api/analysis-resources",
             "POST /api/project-create (isolated data root only)",
             "POST /api/project-update (isolated data root only)",
+            "GET /api/project-legacy/native/catalog (read-only historical registry)",
+            "GET /api/project-legacy/native/inspect (media + run inventory, no automatic replay)",
+            "POST /api/project-legacy/native/import (isolated metadata only, explicit consent)",
+            "GET /api/project-archive/native (recoverable Rust-only archive list)",
             "POST /api/project-archive/native (recoverable isolated archive)",
+            "POST /api/project-archive/native/restore (isolated rollback-safe restore)",
             "POST /api/montage/native/start (manual clips, isolated root)",
             "POST /api/montage/native/plan (CPU-based selection, read-only)",
             "POST /api/rallies/native/marks (read/set gold marks, isolated root)",
@@ -174,6 +180,7 @@ fn app(state: Arc<AppState>) -> Router {
         .route("/studio/rust/stats.js", get(studio_web::stats_js))
         .route("/studio/rust/highlights.js", get(studio_web::highlights_js))
         .route("/studio/rust/quick-reel.js", get(studio_web::quick_reel_js))
+        .route("/studio/rust/legacy.js", get(studio_web::legacy_js))
         .route(
             "/studio/rust/selection.wasm",
             get(studio_web::selection_wasm),
@@ -193,6 +200,22 @@ fn app(state: Arc<AppState>) -> Router {
             get(native_rally_marks::get).post(native_rally_marks::set),
         )
         .route("/api/projects", get(projects::get_projects))
+        .route(
+            "/api/project-legacy/native/catalog",
+            get(legacy_projects::catalog),
+        )
+        .route(
+            "/api/project-legacy/native/inspect",
+            get(legacy_projects::inspect),
+        )
+        .route(
+            "/api/project-legacy/native/import",
+            post(legacy_projects::import),
+        )
+        .route(
+            "/api/project-archive/native/restore",
+            post(project_archive::restore),
+        )
         .route("/api/videos", get(catalog::get_videos))
         .route("/api/video-info", get(catalog::get_video_info))
         .route("/api/video-view", get(playback::video_view))
@@ -252,7 +275,7 @@ fn app(state: Arc<AppState>) -> Router {
         .route("/api/project-update", post(projects::update_project))
         .route(
             "/api/project-archive/native",
-            post(project_archive::archive),
+            get(project_archive::list).post(project_archive::archive),
         )
         .route(
             "/api/montage/native/start",

@@ -20,11 +20,16 @@ pub(crate) fn project_root(state: &AppState) -> PathBuf {
     state.data_root.join("projects")
 }
 
-fn registry_path(state: &AppState) -> PathBuf {
+pub(crate) fn registry_path(state: &AppState) -> PathBuf {
     project_root(state).join("projects.json")
 }
 
-fn load_projects(state: &AppState) -> Result<Vec<Value>, ApiError> {
+pub(crate) fn load_projects(state: &AppState) -> Result<Vec<Value>, ApiError> {
+    if let Ok(meta) = fs::symlink_metadata(registry_path(state)) {
+        if meta.file_type().is_symlink() || !meta.is_file() || meta.len() > 8 * 1024 * 1024 {
+            return Err(storage::bad_request("Unsafe Rust project registry"));
+        }
+    }
     let Some(loaded) = storage::read_json(&registry_path(state))? else {
         return Ok(Vec::new());
     };
@@ -58,7 +63,7 @@ fn canonical_source(state: &AppState, name: &str) -> Result<PathBuf, ApiError> {
     source
         .canonicalize()
         .ok()
-        .filter(|source| source.is_file())
+        .filter(|source| source.is_file() && source.metadata().is_ok_and(|meta| meta.len() >= 1024))
         .ok_or_else(|| storage::bad_request(format!("Видео не найдено: {name}")))
 }
 
@@ -143,7 +148,7 @@ fn project_cache_available(state: &AppState, name: &str, id: &str) -> bool {
     event_source_matches(state, &events, name, true)
 }
 
-fn safe_video_available(state: &AppState, project: &Value, video: &str) -> bool {
+pub(crate) fn safe_video_available(state: &AppState, project: &Value, video: &str) -> bool {
     if storage::video_name(video).is_err() {
         return false;
     }
@@ -156,7 +161,7 @@ fn safe_video_available(state: &AppState, project: &Value, video: &str) -> bool 
     else {
         return false;
     };
-    if !source.is_file() {
+    if !source.is_file() || source.metadata().map_or(true, |m| m.len() < 1024) {
         return false;
     }
     if let Some(expected) = project
@@ -411,7 +416,7 @@ fn ensure_writable(state: &AppState) -> Result<(), ApiError> {
 
 /// Registry lock is scoped to the isolated Rust data directory. This never
 /// takes the Python app's real .registry.lock unless the sandbox guard fails.
-fn with_registry_lock<T>(
+pub(crate) fn with_registry_lock<T>(
     state: &AppState,
     operation: impl FnOnce() -> Result<T, ApiError>,
 ) -> Result<T, ApiError> {
@@ -419,6 +424,20 @@ fn with_registry_lock<T>(
     let root = project_root(state);
     fs::create_dir_all(&root)
         .map_err(|err| storage::internal(format!("Create dev project root: {err}")))?;
+    let root_metadata = fs::symlink_metadata(&root)
+        .map_err(|e| storage::internal(format!("Registry root check: {e}")))?;
+    if root_metadata.file_type().is_symlink() || !root_metadata.is_dir() {
+        return Err(storage::bad_request(
+            "Rust project registry root cannot be a symlink",
+        ));
+    }
+    for target in [root.join(".registry.lock"), registry_path(state)] {
+        if fs::symlink_metadata(&target).is_ok_and(|m| m.file_type().is_symlink()) {
+            return Err(storage::bad_request(
+                "Rust registry file is an unsafe symlink",
+            ));
+        }
+    }
     let file: File = OpenOptions::new()
         .read(true)
         .write(true)
@@ -720,6 +739,21 @@ pub(crate) fn archive_marked_project(state: &AppState, id: &str) -> Result<Value
             || !source.join(".delete-requested").is_file()
         {
             return Err(storage::conflict("Архивирование не было подготовлено"));
+        }
+        // Every Rust project archive must be recoverable. Older isolated
+        // project records did not always have a per-project project.json.
+        let detail = source.join("project.json");
+        if fs::symlink_metadata(&detail)
+            .is_ok_and(|m| m.file_type().is_symlink() || !m.is_file() || m.len() > 512 * 1024)
+        {
+            return Err(storage::bad_request("Unsafe project detail symlink"));
+        }
+        if let Some(saved) = storage::read_json(&detail)? {
+            if saved["id"].as_str() != Some(id) || !saved["videos"].is_array() {
+                return Err(storage::conflict("Project detail ID differs from registry"));
+            }
+        } else {
+            storage::write_json_atomic(&detail, &registry[index])?;
         }
         let trash = project_root(state).join(".trash");
         if let Ok(meta) = fs::symlink_metadata(&trash) {

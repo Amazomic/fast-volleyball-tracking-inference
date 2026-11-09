@@ -1,8 +1,8 @@
 {
     "schema":  "volley-rust-stage-roadmap/1",
     "plannedTotal":  85,
-    "lastRecorded":  79,
-    "nextStage":  80,
+    "lastRecorded":  80,
+    "nextStage":  81,
     "estimateNote":  "85 — текущий ориентир планирования, не обещание неизменного объема; этап != готовая подсистема. При пересмотре плана обновлять JSON, Markdown и журнал в одном коммите.",
     "stages":  [
                    {
@@ -641,8 +641,9 @@
                        "number":  80,
                        "title":  "Совместимость старых проектов и безопасная очистка/архивация",
                        "area":  "Совместимость",
-                       "status":  "planned",
-                       "acceptance":  "Reopen real old project; no user data destruction"
+                       "status":  "recorded",
+                       "acceptance":  "Reopen real old project; no user data destruction",
+                       "journalSection":  80
                    },
                    {
                        "number":  81,

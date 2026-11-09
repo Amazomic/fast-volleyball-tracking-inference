@@ -11,7 +11,7 @@ pipeline is **project → prepared video → immutable VballNet/RAVEL GPU eviden
 versioned CPU player tracks/Touch/rallies → reviewed players → original-quality montage**.
 FFmpeg, ONNX Runtime and CUDA are native external runtimes, not Python components.
 
-**Rust-миграция: 79/85; следующий 80/85 (плановый объём).**
+**Rust-миграция: 80/85; следующий 81/85 (плановый объём).**
 [Stage map](docs/RUST_ROADMAP.md) ·
 [Migration journal](docs/RUST_MIGRATION.md) ·
 [Architecture and owners](docs/RUST_ARCHITECTURE.md).
@@ -97,7 +97,14 @@ SHA-verified CPU fusion/tracking/Touch/rallies and original-source montage;
 only prepared video may be reused. The independent Rust browser UI now
 supports Windows Explorer (no copy), drag-and-drop (isolated 2 GiB/file
 copy), music, 4-stage progress, cancel, reconnect and verified MP4 download.
-A real end-to-end CUDA reel still requires ONNX Runtime deployment. Remaining work includes
+A real end-to-end CUDA reel still requires ONNX Runtime deployment.
+The Rust Studio now also offers an explicit metadata-only import of historical
+Python projects (read-only results/ inspection) and recoverable Rust-only
+project archive/restore. Import never copies legacy inference results or modifies
+old videos. On the connected old project from 06.11.2026, both source files
+are zero-byte placeholders and historical originals are not present: names,
+ranges and run inventory reopen, but playback/reanalysis cannot be claimed
+until genuine source video is safely restored and verified. Remaining work includes
 photo-based ReID reference matching, comprehensive browser
 UI/UX and real-match acceptance, automatic game-event classification and
 release packaging. The former Python UI/features have **not** all been

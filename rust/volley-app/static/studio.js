@@ -406,6 +406,18 @@
     try{if(s.run)await loadPage();}catch(e){failed(e);}
   });
   ui.refresh.addEventListener("click",()=>projects().catch(failed));
+  window.addEventListener("volley:refresh-projects",()=>projects().catch(failed));
+  window.addEventListener("volley:open-legacy-project",async event=>{
+    const id=event.detail?.project_id;
+    if(typeof id!=="string"||!/^[a-f0-9]{12}$/.test(id))return;
+    try{
+      await projects();
+      const has=[...ui.project.options].some(row=>row.value===id);
+      if(!has)throw Error("Проект не зарегистрирован в Rust");
+      ui.project.value=id;ui.project.dispatchEvent(new Event("change"));
+      document.getElementById("studio-nav-preview").click();
+    }catch(e){failed(e);}
+  });
   ui.filter.addEventListener("change",()=>{s.offset=0;loadPage().catch(failed);});
   ui.previous.addEventListener("click",()=>{
     if(s.offset>=s.limit){s.offset-=s.limit;loadPage().catch(failed);}

@@ -12,6 +12,7 @@
   <script src="/studio/rust/stats.js" defer></script>
   <script src="/studio/rust/highlights.js" defer></script>
   <script src="/studio/rust/quick-reel.js" defer></script>
+  <script src="/studio/rust/legacy.js" defer></script>
 </head>
 <body>
   <div class="shell">
@@ -31,6 +32,7 @@
         <a id="studio-nav-players" href="#players" data-studio-tab="players"><span>♙</span> Игроки</a>
         <a id="studio-nav-montage" href="#montage" data-studio-tab="montage"><span>◧</span> Монтаж</a>
         <a id="studio-nav-quick" href="#quick" data-studio-tab="quick"><span>▶</span> Быстрый рилс</a>
+        <a id="studio-nav-legacy" href="#legacy" data-studio-tab="legacy"><span>▥</span> Старые проекты и архив</a>
       </nav>
       <a id="studio-quick-summary" class="quick-sidebar-summary" href="#quick" aria-label="Перейти к состоянию быстрого рилса">Быстрый рилс: ожидание</a>
       <div class="sidebar-foot">
@@ -44,6 +46,26 @@
         <div class="dev-chip">ЭКСПЕРИМЕНТАЛЬНАЯ ВЕРСИЯ</div>
       </header>
       <div class="content">
+        <section id="studio-legacy-view" class="hidden tab-workspace legacy-workspace" aria-labelledby="studio-legacy-heading">
+          <p class="eyebrow">СОВМЕСТИМОСТЬ / БЕЗОПАСНОЕ ХРАНЕНИЕ</p>
+          <h1 id="studio-legacy-heading">Старые проекты и архив Rust</h1>
+          <p class="panel-note">Старые проекты просматриваются только для чтения. Импорт добавляет в отдельное Rust-хранилище метаданные, имена и диапазоны, но не копирует исходные файлы и не переиспользует старый GPU/CPU-анализ. Недоступные видео остаются отмечены как отсутствующие.</p>
+          <button id="studio-legacy-refresh" type="button" class="secondary">↻ Проверить старые проекты и архив</button>
+          <p id="studio-legacy-status" class="panel-note" role="status" aria-live="polite">Откройте список для просмотра сохранённых проектов.</p>
+          <div class="legacy-layout">
+            <section class="legacy-card" aria-labelledby="studio-legacy-projects-label">
+              <h2 id="studio-legacy-projects-label">Проекты прежней студии</h2>
+              <p class="panel-note">Источник: старый <code>results/projects</code>. Исторические версии показываются как справочная информация и не считаются новым Rust-инференсом.</p>
+              <div id="studio-legacy-projects" class="legacy-list" aria-live="polite"><p>Проверка реестра…</p></div>
+            </section>
+            <section class="legacy-card" aria-labelledby="studio-legacy-archive-label">
+              <h2 id="studio-legacy-archive-label">Восстанавливаемый архив Rust</h2>
+              <p class="panel-note">Архивация перемещает только данные отдельного Rust-проекта. Старые результаты, исходники, общий кэш подготовленных видео и фотографии игроков не удаляются.</p>
+              <button id="studio-legacy-archive-current" class="secondary full" type="button" disabled>Архивировать выбранный Rust-проект</button>
+              <div id="studio-legacy-archives" class="legacy-list" aria-live="polite"><p>Проверка архива…</p></div>
+            </section>
+          </div>
+        </section>
         <section id="studio-quick-view" class="hidden tab-workspace quick-workspace" aria-labelledby="studio-quick-heading">
           <p class="eyebrow">БЫСТРЫЙ РИЛС / ОТДЕЛЬНЫЙ АНАЛИЗ</p>
           <h1 id="studio-quick-heading">Быстрый рилс</h1>

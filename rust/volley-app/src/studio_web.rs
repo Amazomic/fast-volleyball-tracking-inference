@@ -24,6 +24,7 @@ const TRACKS_SCRIPT: &str = include_str!("../static/studio_tracks.js");
 const STATS_SCRIPT: &str = include_str!("../static/studio_stats.js");
 const HIGHLIGHTS_SCRIPT: &str = include_str!("../static/studio_highlights.js");
 const QUICK_REEL_SCRIPT: &str = include_str!("../static/studio_quick_reel.js");
+const LEGACY_SCRIPT: &str = include_str!("../static/studio_legacy.js");
 const SELECTION_WASM: &[u8] = include_bytes!("../static/volley_web.wasm");
 const HTML: &str = include_str!("../static/studio.html");
 
@@ -61,6 +62,9 @@ pub async fn tabs_js() -> Response {
 }
 pub async fn highlights_js() -> Response {
     web_asset("text/javascript; charset=utf-8", HIGHLIGHTS_SCRIPT)
+}
+pub async fn legacy_js() -> Response {
+    web_asset("text/javascript; charset=utf-8", LEGACY_SCRIPT)
 }
 pub async fn quick_reel_js() -> Response {
     web_asset("text/javascript; charset=utf-8", QUICK_REEL_SCRIPT)
@@ -296,6 +300,9 @@ mod tests {
         assert!(html.contains("id=\"studio-volume\""));
         assert!(html.contains("id=\"studio-highlights-layout\""));
         assert!(html.contains("id=\"studio-highlights-music\""));
+        assert!(html.contains("id=\"studio-nav-legacy\""));
+        assert!(html.contains("id=\"studio-legacy-view\""));
+        assert!(html.contains("id=\"studio-legacy-archive-current\""));
         assert!(html.contains("id=\"studio-nav-quick\""));
         assert!(html.contains("id=\"studio-quick-drop\""));
         assert!(html.contains("id=\"studio-quick-progress\""));
@@ -347,6 +354,17 @@ mod tests {
             );
         }
         assert!(!quick.contains("innerHTML"));
+        let legacy = get(addr, "/studio/rust/legacy.js").await;
+        assert!(legacy.starts_with("HTTP/1.1 200 OK"));
+        assert!(legacy.contains("/api/project-legacy/native/import"));
+        assert!(legacy.contains("/api/project-archive/native/restore"));
+        assert!(!legacy.contains("innerHTML"));
+        let historical = get(addr, "/api/project-legacy/native/catalog").await;
+        assert!(historical.starts_with("HTTP/1.1 200 OK"));
+        assert!(historical.contains("original_results_immutable"));
+        let archives = get(addr, "/api/project-archive/native").await;
+        assert!(archives.starts_with("HTTP/1.1 200 OK"));
+        assert!(archives.contains("isolated_rust_only"));
         assert!(!tracks.contains("innerHTML"));
         let wasm = get(addr, "/studio/rust/selection.wasm").await;
         assert!(wasm.starts_with("HTTP/1.1 200 OK"));
