@@ -1,8 +1,8 @@
 {
     "schema":  "volley-rust-stage-roadmap/1",
     "plannedTotal":  85,
-    "lastRecorded":  68,
-    "nextStage":  69,
+    "lastRecorded":  69,
+    "nextStage":  70,
     "estimateNote":  "85 — текущий ориентир планирования, не обещание неизменного объема; этап != готовая подсистема. При пересмотре плана обновлять JSON, Markdown и журнал в одном коммите.",
     "stages":  [
                    {
@@ -553,8 +553,9 @@
                        "number":  69,
                        "title":  "Сопоставление границ розыгрышей native/legacy",
                        "area":  "Розыгрыши",
-                       "status":  "planned",
-                       "acceptance":  "Deterministic stable source intervals and annotated boundary tests"
+                       "status":  "recorded",
+                       "acceptance":  "Deterministic stable source intervals and annotated boundary tests",
+                       "journalSection":  69
                    },
                    {
                        "number":  70,

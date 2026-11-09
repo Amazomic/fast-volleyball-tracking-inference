@@ -728,3 +728,11 @@ Next: tie physical Touch outputs to verified tracking/rally source stamps and pr
 - Verified: 181 offline Rust tests passed with four threads (two hardware/model tests ignored). New adversarial test recomputes SHA after replacing a touched player's ID, deleting the observed ball and forging confirmed identity; all are rejected. Existing synthetic two-rally and 240-frame Touch streaming seam tests pass. Full-match recall is not yet measured.
 
 Next: deterministic rally interval boundary and native/legacy comparison fixtures.
+## 69. Сопоставление границ розыгрышей native/legacy — 2026-11-09
+
+- The shared, pure-Rust volley-core/src/event_evidence.rs now provides verify_rally_interval with a typed original-ID-preserving 30-FPS detected/source interval contract for both legacy_cpu and native_cpu. It rejects invalid IDs, cropped detected gameplay, wrong FPS, frame overruns and unknown source formats; no automatic remapping of existing 24-hex stable rally IDs.
+- Both formats now emit a source_interval_contract: native_rally_preview.rs validates every provisional rally and publishes source-clip endpoints; rallies.rs validates the legacy CPU selected interval against the same contract and preserves the existing original rally_selection_id from the historical snapshot, exposing the source contract on scenes without modifying saved sidecars.
+- Deterministic synthetic annotated fixture for [30,80] and [91,130] detected intervals verifies both native and legacy contracts are identical in frame bounds [0,85] for the first clip, with separate unchanged source IDs. Midpoint-safe context ensures no overlap and no truncated detected play; real legacy vs native algorithm quality on human-annotated whole matches is not yet established.
+- Verified: 183 successful Rust tests (2 optional ONNX tests ignored), including native HTTP preview card stable ID equality and source frame parity, out-of-bounds and clip-contract rejection. No GPU reruns.
+
+Next: reconcile gold rally marking stores without silently remapping old project data.

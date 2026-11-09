@@ -20,7 +20,9 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use volley_core::event_evidence::{bounded_clips, interpret_motion, Interval, MotionInput};
+use volley_core::event_evidence::{
+    bounded_clips, interpret_motion, verify_rally_interval, Interval, MotionInput,
+};
 
 const MAX_MANIFEST: u64 = 16 * 1024;
 const MAX_EVIDENCE: u64 = 64 * 1024 * 1024 * 1024;
@@ -455,6 +457,8 @@ fn generate(run: &ValidatedRun, choice: Choice) -> Result<PreviewContent, String
             end_frame: clip.end_frame,
             analysis_offset_sec: Some(0.0),
         };
+        let scoped = verify_rally_interval("native_cpu", &id, interval, clip.clone(), run.frames)?;
+        record["source_interval_contract"] = json!(scoped);
         record["manual_clip"] = json!({
             "video":run.video,"start_frame":clip.start_frame,
             "end_frame":clip.end_frame,"analysis_offset_sec":0.0
@@ -775,6 +779,26 @@ mod tests {
         );
         assert_eq!(card["motion_events"][0]["game_action_verified"], false);
         assert_eq!(card["manual_clip"]["video"], "match.mp4");
+        assert_eq!(
+            card["source_interval_contract"]["source_kind"],
+            "native_cpu"
+        );
+        assert_eq!(
+            card["source_interval_contract"]["source_rally_id"],
+            card["candidate_id"]
+        );
+        assert_eq!(
+            card["source_interval_contract"]["source_start_frame"],
+            card["manual_clip"]["start_frame"]
+        );
+        assert_eq!(
+            card["source_interval_contract"]["source_end_frame"],
+            card["manual_clip"]["end_frame"]
+        );
+        assert_eq!(
+            card["source_interval_contract"]["detected_interval_complete"],
+            true
+        );
         assert!(card["manual_clip"]["start_frame"].as_u64().unwrap() <= 95);
         assert!(card["manual_clip"]["end_frame"].as_u64().unwrap() >= 155);
         assert_eq!(page.clips.len(), 1);

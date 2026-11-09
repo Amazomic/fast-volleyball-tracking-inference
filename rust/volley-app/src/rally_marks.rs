@@ -405,6 +405,7 @@ mod tests {
                 montage_start_sec: None,
             },
             gold_marked: false,
+            source_interval_contract: None,
             player_action_counts: None,
             player_actions_total: None,
             player_focus_matches: None,

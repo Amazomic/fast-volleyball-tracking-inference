@@ -94,6 +94,60 @@ pub struct Interval {
     pub start: u64,
     pub end: u64,
 }
+/// Source-scoped, format-neutral 30-FPS interval. Preserve the source's
+/// original 24-hex rally ID: normalization never remaps old gold labels.
+#[derive(Clone, Debug, Serialize)]
+pub struct VerifiedRallyInterval {
+    pub source_kind: &'static str,
+    pub source_rally_id: String,
+    pub detected_start_frame: u64,
+    pub detected_end_frame: u64,
+    pub source_start_frame: u64,
+    pub source_end_frame: u64,
+    pub fps: u32,
+    pub original_id_preserved: bool,
+    pub detected_interval_complete: bool,
+    pub boundaries_provisional: bool,
+    pub athlete_identity_verified: bool,
+}
+pub fn verify_rally_interval(
+    source_kind: &'static str,
+    source_rally_id: &str,
+    detected: Interval,
+    clip: ClipBounds,
+    video_frames: u64,
+) -> Result<VerifiedRallyInterval, &'static str> {
+    if !matches!(source_kind, "legacy_cpu" | "native_cpu")
+        || source_rally_id.len() != 24
+        || source_rally_id
+            .bytes()
+            .any(|b| !b.is_ascii_hexdigit() || b.is_ascii_uppercase())
+        || video_frames == 0
+        || video_frames > 48 * 3600 * 30
+        || clip.source_fps != 30
+        || !clip.includes_complete_detected_interval
+        || detected.start > detected.end
+        || clip.start_frame > detected.start
+        || clip.end_frame < detected.end
+        || clip.start_frame > clip.end_frame
+        || clip.end_frame >= video_frames
+    {
+        return Err("Rally source interval is not a bounded original-ID-preserving clip");
+    }
+    Ok(VerifiedRallyInterval {
+        source_kind,
+        source_rally_id: source_rally_id.into(),
+        detected_start_frame: detected.start,
+        detected_end_frame: detected.end,
+        source_start_frame: clip.start_frame,
+        source_end_frame: clip.end_frame,
+        fps: 30,
+        original_id_preserved: true,
+        detected_interval_complete: true,
+        boundaries_provisional: clip.boundaries_provisional,
+        athlete_identity_verified: false,
+    })
+}
 /// Extend candidates with context up to the midpoints between neighboring
 /// detected intervals. Never crop a detected rally or accidentally include a
 /// portion of another candidate. Caller must supply the *entire* run, not
@@ -203,6 +257,84 @@ mod tests {
         let valid = interpret_motion(row).unwrap();
         assert!(valid.provisional_track_id.is_none());
         assert!(!valid.athlete_verified);
+    }
+    #[test]
+    fn annotated_native_and_legacy_intervals_preserve_ids_and_detected_play() {
+        // Both formats refer to the same annotated gameplay [30,80].
+        // They keep distinct original stable IDs and exactly the same
+        // validated source-clip endpoints [0,85] after midpoint context.
+        let annotated = [
+            Interval { start: 30, end: 80 },
+            Interval {
+                start: 91,
+                end: 130,
+            },
+        ];
+        let clips = bounded_clips(&annotated, 200, 45).unwrap();
+        let native = verify_rally_interval(
+            "native_cpu",
+            &"a".repeat(24),
+            annotated[0],
+            clips[0].clone(),
+            200,
+        )
+        .unwrap();
+        let legacy = verify_rally_interval(
+            "legacy_cpu",
+            &"b".repeat(24),
+            annotated[0],
+            clips[0].clone(),
+            200,
+        )
+        .unwrap();
+        assert_eq!(native.detected_start_frame, legacy.detected_start_frame);
+        assert_eq!(native.detected_end_frame, legacy.detected_end_frame);
+        assert_eq!(native.source_start_frame, legacy.source_start_frame);
+        assert_eq!(native.source_end_frame, legacy.source_end_frame);
+        assert_eq!(native.source_start_frame, 0);
+        assert_eq!(native.source_end_frame, 85);
+        assert_eq!(native.source_rally_id, "a".repeat(24));
+        assert_eq!(legacy.source_rally_id, "b".repeat(24));
+        assert!(native.original_id_preserved && !legacy.athlete_identity_verified);
+    }
+    #[test]
+    fn canonical_rally_contract_rejects_unknown_or_cropped_evidence() {
+        let detected = Interval { start: 20, end: 80 };
+        let valid = ClipBounds {
+            start_frame: 10,
+            end_frame: 90,
+            source_fps: 30,
+            includes_complete_detected_interval: true,
+            boundaries_provisional: true,
+        };
+        assert!(
+            verify_rally_interval("native_cpu", &"a".repeat(24), detected, valid.clone(), 100)
+                .is_ok()
+        );
+        assert!(
+            verify_rally_interval("invented", &"a".repeat(24), detected, valid.clone(), 100)
+                .is_err()
+        );
+        assert!(verify_rally_interval(
+            "legacy_cpu",
+            "new-id-instead-of-original",
+            detected,
+            valid.clone(),
+            100
+        )
+        .is_err());
+        let cut = ClipBounds {
+            start_frame: 22,
+            ..valid.clone()
+        };
+        assert!(verify_rally_interval("legacy_cpu", &"a".repeat(24), detected, cut, 100).is_err());
+        let bogus = ClipBounds {
+            source_fps: 60,
+            ..valid
+        };
+        assert!(
+            verify_rally_interval("native_cpu", &"a".repeat(24), detected, bogus, 100).is_err()
+        );
     }
     #[test]
     fn midpoint_context_never_overlaps_or_crops_detected_play() {

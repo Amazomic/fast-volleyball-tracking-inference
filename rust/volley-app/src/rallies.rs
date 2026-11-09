@@ -15,6 +15,9 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
+use volley_core::event_evidence::{
+    verify_rally_interval, ClipBounds, Interval, VerifiedRallyInterval,
+};
 use volley_core::rallies::{self, Event, Rally, Ranking, RebuildOptions, Track, FPS};
 
 #[derive(Clone, Debug, Deserialize)]
@@ -95,6 +98,8 @@ pub struct Scene {
     pub rally: Rally,
     /// UI renders the entire card gold when true.
     pub gold_marked: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_interval_contract: Option<VerifiedRallyInterval>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub player_action_counts: Option<BTreeMap<String, u64>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -436,20 +441,55 @@ fn load_video_rallies(
         group.ranking_score = (group.ranking_score * 10000.0).round() / 10000.0;
         group.selection_strategy = request.selection_strategy.clone();
     }
-    Ok(groups
+    // A legacy rally retains its original stable ID and exact detected/source
+    // interval, using the same physical clip contract as native CPU rallies.
+    let source_frames = duration_frames.unwrap_or_else(|| {
+        groups
+            .iter()
+            .map(|r| r.source_end_frame)
+            .max()
+            .unwrap_or(0)
+            .saturating_add(1)
+    });
+    groups
         .into_iter()
         .filter(|r| !r.track_ids.is_empty())
-        .map(|r| Scene {
-            video: video.to_owned(),
-            cache_id: cache_id.to_owned(),
-            analysis_offset_sec: offset,
-            rally: r,
-            gold_marked: false,
-            player_action_counts: None,
-            player_actions_total: None,
-            player_focus_matches: None,
+        .map(|r| -> Result<Scene, ApiError> {
+            let clip = ClipBounds {
+                start_frame: r.source_start_frame,
+                end_frame: r.source_end_frame,
+                source_fps: 30,
+                includes_complete_detected_interval: true,
+                boundaries_provisional: true,
+            };
+            let id = r
+                .rally_id
+                .as_deref()
+                .ok_or_else(|| storage::bad_request("Legacy rally lacks stable source ID"))?;
+            let verified = verify_rally_interval(
+                "legacy_cpu",
+                id,
+                Interval {
+                    start: r.detected_start_frame,
+                    end: r.detected_end_frame,
+                },
+                clip,
+                source_frames,
+            )
+            .map_err(storage::bad_request)?;
+            Ok(Scene {
+                video: video.to_owned(),
+                cache_id: cache_id.to_owned(),
+                analysis_offset_sec: offset,
+                rally: r,
+                gold_marked: false,
+                source_interval_contract: Some(verified),
+                player_action_counts: None,
+                player_actions_total: None,
+                player_focus_matches: None,
+            })
         })
-        .collect())
+        .collect()
 }
 
 fn select(state: &AppState, request: &SelectionRequest) -> Result<Selection, ApiError> {
