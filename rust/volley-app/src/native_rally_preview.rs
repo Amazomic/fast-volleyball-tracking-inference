@@ -161,6 +161,7 @@ pub(crate) struct ValidatedRun {
     pub(crate) rally_file: PathBuf,
     pub(crate) touch_file: PathBuf,
     pub(crate) replay_id: String,
+    pub(crate) replay_sha: String,
     pub(crate) touch_id: String,
     pub(crate) rally_sha: String,
     pub(crate) touch_sha: String,
@@ -309,6 +310,9 @@ pub(crate) fn inspect_project(
             .map_err(storage::bad_request)?,
         touch_file: safe_file(&touch_dir, "touch_candidates.jsonl", MAX_EVIDENCE)
             .map_err(storage::bad_request)?,
+        replay_sha: checksum(&rally["source_replay_sha256"])
+            .map_err(storage::bad_request)?
+            .to_owned(),
         replay_id,
         touch_id,
         rally_sha,
@@ -774,6 +778,7 @@ mod tests {
             rally_file,
             touch_file,
             replay_id: replay_id.into(),
+            replay_sha: "a".repeat(64),
             touch_id: touch_id.into(),
             rally_sha: format!("{:x}", Sha256::digest(rows)),
             touch_sha: format!("{:x}", Sha256::digest(events)),

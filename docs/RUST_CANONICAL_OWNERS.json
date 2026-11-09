@@ -331,19 +331,27 @@
                     },
                     {
                         "id":  "player_stats",
-                        "owner":  "rust/volley-app/src/player_statistics.rs",
+                        "owner":  "rust/volley-core/src/statistics.rs",
                         "status":  "partial",
                         "adapters":  [
-
+                                         "rust/volley-app/src/player_statistics.rs",
+                                         "rust/volley-app/src/native_player_statistics.rs"
                                      ],
                         "routes":  [
                                        {
                                            "path":  "/api/players/statistics/native",
                                            "handler":  "player_statistics::statistics"
+                                       },
+                                       {
+                                           "path":  "/api/players/native/statistics",
+                                           "handler":  "native_player_statistics::statistics"
                                        }
                                    ],
                         "stores":  [
-
+                                       {
+                                           "source":  "native",
+                                           "path":  "projects/\u003cid\u003e/native_player_statistics.json"
+                                       }
                                    ]
                     },
                     {

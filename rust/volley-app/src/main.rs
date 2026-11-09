@@ -13,6 +13,7 @@ mod inference_native;
 mod inference_stream;
 mod montage;
 mod native_action_review;
+mod native_player_statistics;
 mod native_player_tracks;
 mod native_rally_marks;
 mod native_rally_preview;
@@ -135,6 +136,7 @@ async fn rewrite_status(
             "POST /api/players/native/reid-groups (cached, review-only cosine suggestions)",
             "POST /api/players/native/reid-review (manual revisioned group merge/split)",
             "POST /api/players/native/continuity (read-only gap suggestions)",
+            "POST /api/players/native/statistics (verified per-athlete project-wide counts)",
             "POST /api/cpu/native/ball-extrema (native selected-ball motion only)",
             "POST /api/cpu/touch-preview (read-only RAVEL diagnostics)",
             "POST /api/players/continuity-preview (read-only geometry candidates)",
@@ -204,6 +206,10 @@ fn app(state: Arc<AppState>) -> Router {
         .route(
             "/api/cpu/native/ball-extrema",
             post(native_player_tracks::ball_trajectory),
+        )
+        .route(
+            "/api/players/native/statistics",
+            post(native_player_statistics::statistics),
         )
         .route(
             "/api/players/native/continuity",

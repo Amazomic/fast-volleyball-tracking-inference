@@ -438,6 +438,60 @@ fn page(
         "automatic_reid_binding":false,"photos_auto_registered":false,
     }))
 }
+/// Authoritative reviewed-only identities for one immutable native replay.
+/// ReID candidate groups and 4-second geometric continuity NEVER count as owners.
+pub(crate) struct NativeReviewedOwners {
+    pub source_sha: String,
+    pub revision: String,
+    pub owners: BTreeMap<u64, String>,
+    pub excluded: BTreeSet<u64>,
+    pub roster: BTreeMap<String, String>,
+}
+pub(crate) fn reviewed_owners(
+    state: &AppState,
+    project_id: &str,
+    video: &str,
+    replay_id: &str,
+) -> Result<NativeReviewedOwners, ApiError> {
+    let ctx = source(state, project_id, video, replay_id)?;
+    let raw = existing(&ctx.sidecar).map_err(storage::bad_request)?;
+    let doc = validated(raw.as_deref(), &ctx).map_err(storage::bad_request)?;
+    let links = doc["assignments"]
+        .as_object()
+        .into_iter()
+        .flat_map(|map| map.iter())
+        .map(|(id, owner)| ReviewedLink {
+            track_id: id
+                .parse::<u64>()
+                .expect("Source-validated numeric Track ID"),
+            owner: owner
+                .as_str()
+                .expect("Source-validated roster owner")
+                .to_owned(),
+            reviewed: true,
+        })
+        .collect::<Vec<_>>();
+    let excluded = doc["excluded_ids"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_u64)
+        .collect::<BTreeSet<_>>();
+    let resolved =
+        identity_review::resolve_reviewed(ctx.known.ids(), &ctx.roster, &links, &excluded);
+    if !resolved.conflicts.is_empty() {
+        return Err(storage::conflict(
+            "Manual native athlete assignments contain contradictions",
+        ));
+    }
+    Ok(NativeReviewedOwners {
+        source_sha: ctx.source_sha,
+        revision: revision(raw.as_deref()),
+        owners: resolved.owners,
+        excluded: resolved.excluded,
+        roster: ctx.roster,
+    })
+}
 fn read_internal(state: &AppState, req: &TrackQuery) -> Result<Value, ApiError> {
     let ctx = source(state, &req.project_id, &req.video, &req.replay_id)?;
     let bytes = existing(&ctx.sidecar).map_err(storage::bad_request)?;

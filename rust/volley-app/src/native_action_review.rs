@@ -346,6 +346,7 @@ mod tests {
             rally_file: root.join("rallies.jsonl"),
             touch_file,
             replay_id: "1".repeat(32),
+            replay_sha: "a".repeat(64),
             touch_id: "2".repeat(32),
             rally_sha: "3".repeat(64),
             touch_sha: format!("{:x}", Sha256::digest(&lines)),

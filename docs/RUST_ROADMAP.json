@@ -1,8 +1,8 @@
 {
     "schema":  "volley-rust-stage-roadmap/1",
     "plannedTotal":  85,
-    "lastRecorded":  72,
-    "nextStage":  73,
+    "lastRecorded":  73,
+    "nextStage":  74,
     "estimateNote":  "85 — текущий ориентир планирования, не обещание неизменного объема; этап != готовая подсистема. При пересмотре плана обновлять JSON, Markdown и журнал в одном коммите.",
     "stages":  [
                    {
@@ -585,8 +585,9 @@
                        "number":  73,
                        "title":  "Пересчёт касаний конкретных игроков по всему проекту",
                        "area":  "Статистика",
-                       "status":  "planned",
-                       "acceptance":  "Verified athlete stats track provenance and avoid double count"
+                       "status":  "recorded",
+                       "acceptance":  "Verified athlete stats track provenance and avoid double count",
+                       "journalSection":  73
                    },
                    {
                        "number":  74,
