@@ -101,6 +101,14 @@ pub struct MontageManager {
 }
 
 impl MontageManager {
+    pub(crate) async fn has_active(&self) -> bool {
+        let current = self.current.lock().await;
+        if let Some(job) = current.as_ref() {
+            matches!(job.status.lock().await.state, "queued" | "running")
+        } else {
+            false
+        }
+    }
     pub fn new() -> Self {
         Self {
             current: Mutex::new(None),

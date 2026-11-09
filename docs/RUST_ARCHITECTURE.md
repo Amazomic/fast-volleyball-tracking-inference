@@ -57,6 +57,7 @@ Machine-readable ledger: docs/RUST_CANONICAL_OWNERS.json; mandatory audit: scrip
 | GPU inference | rust/volley-inference/ | inference_full.rs, inference_fusion.rs | Immutable detector evidence |
 | Rust/WASM UI state, RU/EN and preferences | rust/volley-web/src/lib.rs, compiled volley_web.wasm | rust/volley-app/src/studio_web.rs and static/studio_ui.js plus feature-specific DOM/HTTP controllers | Rust validates navigation, load epochs, settings and text IDs; JS stays only for DOM/media/file and same-origin transport, no server business policies |
 | Quick Reel | rust/volley-app/src/quick_reel.rs | preparation, inference, montage services | Fresh independent inference, no project analysis reuse |
+| Rust process / deployment | rust/volley-app/src/runtime.rs | scripts/volley-rust.sh, scripts/start-volley-rust-dev.ps1, start-volley-ui.cmd, Dockerfile | Canonical-checkout single-instance lock, report busy work, refuse stop during native jobs, strict loopback 8875, nonroot Docker runtime and external ORT provider |
 
 **Reality:** Legacy gold/rally/identity adapters are distinct file schemas and currently have consumers. Removing their routes today would lose legacy project features. Shared sidecar primitives are to be extracted now; full domain unification remains PENDING. Renaming modules is NOT deduplication.
 

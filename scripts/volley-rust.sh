@@ -1,0 +1,207 @@
+#!/usr/bin/env bash
+# Per-checkout Rust Studio controller; no Python, no forced kill, no data purge.
+set -euo pipefail
+action="$1"
+repo="$2"
+bind="$3"
+data_root="$4"
+if [[ "$data_root" == __default__ ]];then data_root="$HOME/.cache/volley-rust-sandbox";fi
+mode="$5"
+ort_lib="$6"
+openvino_lib="$7"
+case "$action" in start|stop|status|restart|doctor|check) ;; *) echo "Unknown action" >&2;exit 2;; esac
+case "$bind" in 127.0.0.1:*) ;; *) echo "Only localhost IPv4 bind is allowed" >&2;exit 2;; esac
+port="$(printf '%s' "$bind"|cut -d: -f2)"
+if [[ ! "$port" =~ ^[0-9]{4,5}$ ]] || (( 10#$port < 1024 || 10#$port > 65535 ));then
+  echo "Invalid local port" >&2;exit 2
+fi
+repo="$(cd "$repo" && pwd -P)"
+[[ -f "$repo/rust/Cargo.toml" && -f "$repo/rust/volley-app/Cargo.toml" ]] ||
+  { echo "Rust Studio Cargo workspace missing" >&2;exit 2; }
+cd "$repo/rust"
+if [[ -f "$HOME/.cargo/env" ]];then source "$HOME/.cargo/env";fi
+url="http://$bind/internal/rewrite-status"
+binary="$repo/rust/target/debug/volley-app"
+safe_path(){
+  [[ "$1" == /* && "$1" != *"/../"* && "$1" != *"/.." ]]
+}
+for arg in "$data_root" "$ort_lib" "$openvino_lib";do
+  case "$arg" in __not_configured__|__readonly__) ;; *) safe_path "$arg" ||
+    { echo "Unsafe runtime path: $arg" >&2;exit 2;};; esac
+done
+[[ "$mode" == isolated || "$mode" == readonly ]] ||
+  { echo "Invalid Rust storage mode" >&2;exit 2; }
+read_status(){
+  curl --fail --silent --connect-timeout 1 --max-time 3 "$url" 2>/dev/null
+}
+json_pid(){
+  local match
+  match="$(printf '%s' "$1"|grep -oE '"pid":[0-9]+'|head -1 || true)"
+  [[ -n "$match" ]] || return 1
+  printf '%s' "$match"|cut -d: -f2
+}
+is_owned(){
+  local response="$1" pid exe cwd
+  [[ "$response" == *'"name":"Volleyball Studio - standalone Rust rewrite (development only)"'* ]]||return 1
+  pid="$(json_pid "$response")" ||return 1
+  [[ "$pid" =~ ^[0-9]+$ && -e "/proc/$pid/exe" && -e "/proc/$pid/cwd" ]]||return 1
+  exe="$(readlink -f "/proc/$pid/exe")"
+  cwd="$(readlink -f "/proc/$pid/cwd")"
+  [[ "$cwd" == "$repo/rust" &&
+    ( "$exe" == "$repo/rust/target/debug/volley-app" ||
+      "$exe" == "$repo/rust/target/release/volley-app" ) ]]
+}
+listener(){
+  local data
+  data="$(read_status)"||return 1
+  if ! is_owned "$data";then
+    echo "Port $port belongs to an unknown service or another checkout" >&2
+    return 2
+  fi
+  printf '%s' "$data"
+}
+port_busy(){
+  (echo >/dev/tcp/127.0.0.1/"$port") 2>/dev/null
+}
+stop_owned(){
+  local response pid reason
+  if response="$(listener)";then
+    if [[ "$response" != *'"shutdown_safe":true'* ||
+          "$response" != *'"active_jobs":[]'* ]];then
+      echo "Rust jobs still active; refusing to stop/restart" >&2
+      return 3
+    fi
+    pid="$(json_pid "$response")"
+    is_owned "$response" || { echo "Rust PID changed" >&2;return 3; }
+    echo "Graceful SIGTERM to verified Rust Studio PID $pid"
+    kill -TERM "$pid"
+    for _ in $(seq 1 100);do
+      if ! kill -0 "$pid" 2>/dev/null;then
+        echo "Rust Studio stopped";return 0
+      fi
+      if [[ ! -e "/proc/$pid/exe" ]] || ! is_owned "$response";then
+        echo "Rust Studio exited";return 0
+      fi
+      sleep .1
+    done
+    echo "Rust Studio did not exit cleanly; not escalating" >&2
+    return 3
+  else
+    reason=$?
+    [[ "$reason" -ne 2 ]] || return 2
+    if port_busy;then
+      echo "Port $port is occupied by an unidentified listener; never kill it" >&2
+      return 2
+    fi
+    echo "Rust Studio is not running at $bind"
+  fi
+}
+doctor(){
+  echo "Rust Studio dependencies: $repo"
+  for command_name in cargo ffmpeg ffprobe curl;do
+    command -v "$command_name" >/dev/null ||
+      { echo "Missing $command_name" >&2;return 1; }
+  done
+  for model in \
+    models/VballNetV4c_seq9_grayscale_20260908_213829.onnx \
+    models/RAVEL-VB-013-9f.onnx \
+    ov/person-reidentification-retail-0287.xml;do
+    if [[ ! -s "$repo/$model" ]];then
+      echo "Missing model: $model" >&2;return 1
+    fi
+  done
+  echo "Rust, FFmpeg, FFprobe and required model files: OK (no Python service)"
+  echo "Resource limits: CPU cores $(nproc), available memory:"
+  grep '^MemAvailable:' /proc/meminfo || true
+  if [[ -x /usr/lib/wsl/lib/nvidia-smi ]];then
+    /usr/lib/wsl/lib/nvidia-smi --query-gpu=name,memory.total,memory.free \
+      --format=csv,noheader || true
+  elif command -v nvidia-smi >/dev/null;then
+    nvidia-smi --query-gpu=name,memory.total,memory.free \
+      --format=csv,noheader || true
+  else
+    echo "NVIDIA GPU diagnostics unavailable (native GPU inference not verified)"
+  fi
+  if command -v docker >/dev/null;then
+    echo "Docker installed: $(docker --version)"
+  fi
+  local library="$ort_lib"
+  if [[ "$library" == __not_configured__ ]];then
+    library="$(printenv ORT_DYLIB_PATH || true)"
+  fi
+  if [[ -z "$library" || ! -f "$library" ]];then
+    echo "ORT_DYLIB_PATH not configured: CUDA inference NOT READY; no CPU fallback" >&2
+    return 3
+  fi
+  if ! command -v nm >/dev/null;then
+    echo "Binutils nm missing: cannot verify ONNX shared library" >&2;return 3
+  fi
+  if ! nm -D "$library" 2>/dev/null|grep OrtGetApiBase >/dev/null;then
+    echo "Invalid ONNX Runtime shared library: $library" >&2;return 3
+  fi
+  local provider="$(dirname "$library")/libonnxruntime_providers_cuda.so"
+  if [[ ! -f "$provider" ]];then
+    echo "CUDA provider shared library missing near ORT: $provider" >&2;return 3
+  fi
+  if command -v ldd >/dev/null;then
+    if ldd "$provider" 2>&1|grep 'not found';then
+      echo "CUDA provider has missing shared dependencies" >&2;return 3
+    fi
+  fi
+  echo "ONNX Runtime + CUDA provider libraries found; live GPU smoke still required"
+}
+check(){
+  node "$repo/scripts/ci/check_rust_ownership.mjs" --self-test
+  node "$repo/scripts/ci/check_rust_roadmap.mjs" --check --self-test
+  cargo check --workspace --offline --locked
+}
+case "$action" in
+  doctor) doctor;;
+  check) check;;
+  status)
+    if response="$(listener)";then
+      echo "Rust Studio: $bind, PID $(json_pid "$response")"
+      if [[ "$response" == *'"shutdown_safe":true'* ]];then
+        echo "Idle: safe to request graceful stop"
+      else
+        echo "Busy: do NOT restart during running jobs"
+      fi
+    else
+      result=$?
+      [[ "$result" -ne 2 ]]||exit 2
+      if port_busy;then echo "Unknown listener; no action taken" >&2;exit 2;fi
+      echo "Rust Studio is not running at $bind"
+    fi
+    ;;
+  stop) stop_owned;;
+  start|restart)
+    if [[ "$action" == restart ]];then stop_owned;fi
+    if response="$(listener)";then
+      echo "Rust Studio already running at $bind (PID $(json_pid "$response"))"
+      exit 0
+    else
+      result=$?
+      [[ "$result" -ne 2 ]]||exit 2
+    fi
+    if port_busy;then echo "Port $port occupied; refusing start" >&2;exit 2;fi
+    if [[ "$mode" == readonly ]];then
+      unset VOLLEY_RUST_DATA_ROOT
+    else
+      export VOLLEY_RUST_DATA_ROOT="$data_root"
+    fi
+    export VOLLEY_RUST_BIND="$bind" VOLLEY_REPOSITORY_ROOT="$repo"
+    if [[ "$ort_lib" != __not_configured__ ]];then
+      [[ -f "$ort_lib" ]]||{ echo "ORT library missing" >&2;exit 2; }
+      export ORT_DYLIB_PATH="$ort_lib"
+      export LD_LIBRARY_PATH="$(dirname "$ort_lib")${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+    fi
+    if [[ "$openvino_lib" != __not_configured__ ]];then
+      [[ -f "$openvino_lib" ]]||{ echo "OpenVINO library missing" >&2;exit 2; }
+      export VOLLEY_OPENVINO_C_LIB="$openvino_lib"
+      export LD_LIBRARY_PATH="$(dirname "$openvino_lib")${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+    fi
+    cargo build --locked --offline -p volley-app
+    echo "Starting ONE Rust Studio on http://$bind/studio/rust (foreground, Ctrl+C stops)"
+    exec "$binary"
+    ;;
+esac

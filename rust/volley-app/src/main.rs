@@ -35,6 +35,7 @@ mod rally_marks;
 mod reid_group_edits;
 mod reid_native;
 mod reid_npz;
+mod runtime;
 mod storage;
 mod studio_analysis;
 mod studio_web;
@@ -44,9 +45,8 @@ mod versioned_store;
 use axum::{
     response::Redirect,
     routing::{get, post},
-    Json, Router,
+    Router,
 };
-use serde::Serialize;
 use std::{env, error::Error, io, net::SocketAddr, path::PathBuf, sync::Arc};
 
 struct AppState {
@@ -67,113 +67,12 @@ struct AppState {
     full_inference: inference_full::FullInferenceManager,
 }
 
-#[derive(Serialize)]
-struct RewriteStatus {
-    name: &'static str,
-    migration_complete: bool,
-    production_ready: bool,
-    isolated_writes_enabled: bool,
-    supported_api_endpoints: &'static [&'static str],
-    pid: u32,
-}
-
-async fn rewrite_status(
-    axum::extract::State(state): axum::extract::State<Arc<AppState>>,
-) -> Json<RewriteStatus> {
-    Json(RewriteStatus {
-        name: "Volleyball Studio - standalone Rust rewrite (development only)",
-        migration_complete: false,
-        production_ready: false,
-        isolated_writes_enabled: state.writes_enabled,
-        supported_api_endpoints: &[
-            "GET /studio/rust/ui.js (WASM UI state bootstrap, RU/EN, preference controls)",
-            "GET /api/projects",
-            "GET /api/videos",
-            "GET /api/video-info",
-            "GET /api/video-view",
-            "GET /api/video-media (Range bytes)",
-            "GET /api/video-preview",
-            "GET /api/project-preparation",
-            "POST /api/project-preparation/retry (isolated root)",
-            "POST /api/project-preparation/cancel (isolated root)",
-            "GET /api/analysis-profiles",
-            "GET /api/players/library",
-            "POST /api/players/library/native (read, create, rename; isolated root)",
-            "GET /api/analysis-resources",
-            "POST /api/project-create (isolated data root only)",
-            "POST /api/project-update (isolated data root only)",
-            "GET /api/project-legacy/native/catalog (read-only historical registry)",
-            "GET /api/project-legacy/native/inspect (media + run inventory, no automatic replay)",
-            "POST /api/project-legacy/native/import (isolated metadata only, explicit consent)",
-            "GET /api/project-archive/native (recoverable Rust-only archive list)",
-            "POST /api/project-archive/native (recoverable isolated archive)",
-            "POST /api/project-archive/native/restore (isolated rollback-safe restore)",
-            "POST /api/montage/native/start (manual clips, isolated root)",
-            "POST /api/montage/native/plan (CPU-based selection, read-only)",
-            "POST /api/rallies/native/marks (read/set gold marks, isolated root)",
-            "POST /api/quick-reel/native/select (explicit local video refs, isolated root)",
-            "POST /api/quick-reel/native/pick (native Windows desktop dialog, original paths not copied)",
-            "POST /api/quick-reel/native/upload (streamed browser drop, isolated 2 GiB/file)",
-            "POST /api/quick-reel/native/release (safe selection/copy cleanup)",
-            "POST /api/quick-reel/native/start (independent fresh CUDA GPU/CPU + original-source MP4; isolated root)",
-            "GET /api/quick-reel/native/status",
-            "POST /api/quick-reel/native/cancel",
-            "GET /api/quick-reel/native/media (verified MP4, Range, attachment)",
-            "POST /api/inference/native/preflight (read-only model + optional ONNX sessions)",
-            "POST /api/inference/native/clip-preview (one actual 9-frame window, read-only)",
-            "POST /api/inference/native/window-scan (bounded multi-window ONNX diagnostic, read-only)",
-            "POST /api/inference/native/evidence/save (isolated raw candidate snapshot)",
-            "GET /api/inference/native/evidence (read/list isolated snapshots)",
-            "POST /api/inference/native/full/start (queued full prepared-video model scan)",
-            "GET /api/inference/native/full/status (model scan progress)",
-            "POST /api/inference/native/full/cancel (model scan cancellation)",
-            "POST /api/inference/native/fuse (verify and merge two raw model runs)",
-            "GET /api/inference/native/fusion (isolated fusion manifest)",
-            "POST /api/cpu/native/retrack (CPU provisional Track ID snapshot)",
-            "POST /api/cpu/native/touches (CPU-only motion-gated Touch candidates)",
-            "POST /api/cpu/native/rallies (rebuild provisional rally candidates)",
-            "GET /api/cpu/native/rallies (read isolated rally manifest)",
-            "GET /api/cpu/native/rallies/preview (verified paginated motion evidence and safe manual clips)",
-            "GET /api/cpu/native/rallies/runs (browse isolated provisional snapshots)",
-            "GET/POST /api/cpu/native/rallies/marks (revisioned gold candidates)",
-            "POST /api/cpu/native/actions/review (explicit human game-action labels)",
-            "GET /studio/rust (standalone experimental preview/montage UI)",
-            "GET /api/studio/rust/analysis-overview (metadata-only native GPU/CPU stage inventory)",
-            "GET /api/inference/native/full/active (read-only reconnect to running GPU job)",
-            "POST /api/montage/native/start-from-rally-candidates (explicit manual selection, original media)",
-            "GET /api/cpu/native/touches (read isolated Touch snapshot manifest)",
-            "GET /api/cpu/native/retrack (read isolated tracking manifest)",
-            "GET/POST /api/players/native/tracks (manual provisional Track ID links for a selected CPU replay)",
-            "GET /api/players/native/track-photo (on-demand isolated player crop preview)",
-            "POST /api/players/native/reid-groups (cached, review-only cosine suggestions)",
-            "POST /api/players/native/reid-review (manual revisioned group merge/split)",
-            "POST /api/players/native/continuity (read-only gap suggestions)",
-            "POST /api/players/native/statistics (verified per-athlete project-wide counts)",
-            "POST /api/montage/native/player-highlights (reviewed attack ranked preview/start)",
-            "POST /api/cpu/native/ball-extrema (native selected-ball motion only)",
-            "POST /api/cpu/touch-preview (read-only RAVEL diagnostics)",
-            "POST /api/players/continuity-preview (read-only geometry candidates)",
-            "POST /api/players/reid-native/preview (saved embeddings, read-only)",
-            "POST /api/players/reid-native/groups (read, merge, split; isolated root)",
-            "POST /api/players/identity/native (manual review/edit, isolated root)",
-            "POST /api/players/statistics/native (preview/recalculate, isolated root)",
-            "POST /api/montage/native/start-from-run (CPU-backed, isolated root)",
-            "GET /api/montage/native/status",
-            "POST /api/montage/native/cancel (isolated root)",
-            "GET /api/montage/native/library",
-            "GET /api/montage/native/media (Range bytes)",
-            "POST /api/montage/native/audio (multipart, isolated root)",
-        ],
-        pid: std::process::id(),
-    })
-}
-
 fn app(state: Arc<AppState>) -> Router {
     Router::new()
         .route("/", get(|| async { Redirect::temporary("/studio/rust") }))
         // This is not /api/health: do not fool the production UI's API gate
         // into believing this partial Rust rewrite is ready.
-        .route("/internal/rewrite-status", get(rewrite_status))
+        .route("/internal/rewrite-status", get(runtime::rewrite_status))
         .route("/studio/rust", get(studio_web::index))
         .route("/studio/rust/app.js", get(studio_web::js))
         .route("/studio/rust/ui.js", get(studio_web::ui_js))
@@ -412,6 +311,27 @@ fn app(state: Arc<AppState>) -> Router {
         .with_state(state)
 }
 
+/// Ctrl+C and Unix SIGTERM share the same Axum graceful shutdown path.
+/// SIGTERM is required for detached WSL, systemd and Docker stop; never
+/// force-kill worker processes from a launcher.
+async fn shutdown_signal() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{signal, SignalKind};
+        if let Ok(mut terminate) = signal(SignalKind::terminate()) {
+            tokio::select! {
+                _=tokio::signal::ctrl_c()=>{},
+                _=terminate.recv()=>{},
+            }
+        } else {
+            let _ = tokio::signal::ctrl_c().await;
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = tokio::signal::ctrl_c().await;
+    }
+}
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     let root = match env::var_os("VOLLEY_REPOSITORY_ROOT") {
@@ -419,6 +339,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         None => PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../.."),
     };
     let root = root.canonicalize()?;
+    let _instance_guard = runtime::exclusive_instance(&root)?;
     let isolated = storage::writable_data_root(&root).map_err(|(_, message)| {
         io::Error::other(format!("Invalid Rust data root: {}", message.0))
     })?;
@@ -460,9 +381,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         "Volleyball Studio Rust rewrite (INCOMPLETE): http://{addr}/internal/rewrite-status (isolated writes={writes_enabled})"
     );
     axum::serve(listener, app(state))
-        .with_graceful_shutdown(async {
-            let _ = tokio::signal::ctrl_c().await;
-        })
+        .with_graceful_shutdown(shutdown_signal())
         .await?;
     Ok(())
 }

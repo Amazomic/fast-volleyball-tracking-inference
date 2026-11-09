@@ -1,16 +1,26 @@
 @echo off
 setlocal
 set "ROOT=%~dp0"
-if /I "%~1"=="/restart" (
-    echo Rust Studio will not force-restart while analysis or montage may be running.
-    echo Close the foreground Rust server cleanly with Ctrl+C, then launch again.
-    exit /b 2
-)
-rem Rust is the only application runtime; no Python fallback or auto-kill.
+rem Rust runs on 8875, never replaces Python on 8765.
+if /I "%~1"=="/restart" goto restart
+if /I "%~1"=="/stop" goto stop
+if /I "%~1"=="/status" goto status
+if /I "%~1"=="/doctor" goto doctor
+if /I "%~1"=="/check" goto check
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%ROOT%scripts\start-volley-rust-dev.ps1" %*
-set "RC=%ERRORLEVEL%"
-if not "%RC%"=="0" (
-    echo Rust Studio failed to start; any existing process was left untouched.
-    pause
-)
-exit /b %RC%
+exit /b %ERRORLEVEL%
+:restart
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%ROOT%scripts\start-volley-rust-dev.ps1" -Action Restart
+exit /b %ERRORLEVEL%
+:stop
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%ROOT%scripts\start-volley-rust-dev.ps1" -Action Stop
+exit /b %ERRORLEVEL%
+:status
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%ROOT%scripts\start-volley-rust-dev.ps1" -Action Status
+exit /b %ERRORLEVEL%
+:doctor
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%ROOT%scripts\start-volley-rust-dev.ps1" -Action Doctor
+exit /b %ERRORLEVEL%
+:check
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%ROOT%scripts\start-volley-rust-dev.ps1" -Action Check
+exit /b %ERRORLEVEL%

@@ -61,6 +61,9 @@ pub struct PreparationManager {
 }
 
 impl PreparationManager {
+    pub(crate) async fn has_active(&self) -> bool {
+        !self.jobs.lock().await.is_empty()
+    }
     pub fn new() -> Self {
         Self {
             jobs: Mutex::new(HashMap::new()),

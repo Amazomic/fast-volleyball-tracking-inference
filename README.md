@@ -11,8 +11,8 @@ pipeline is **project → prepared video → immutable VballNet/RAVEL GPU eviden
 versioned CPU player tracks/Touch/rallies → reviewed players → original-quality montage**.
 FFmpeg, ONNX Runtime and CUDA are native external runtimes, not Python components.
 
-**Rust-миграция: 81/85; следующий 82/85 (плановый объём).**
-[Stage map](docs/RUST_ROADMAP.md) ·
+**Rust-миграция: 82/85; следующий 83/85 (плановый объём).**
+[Deployment](docs/RUST_DEPLOYMENT.md) · [Stage map](docs/RUST_ROADMAP.md) ·
 [Migration journal](docs/RUST_MIGRATION.md) ·
 [Architecture and owners](docs/RUST_ARCHITECTURE.md).
 
@@ -108,6 +108,13 @@ accessibility attributes have translations embedded in the Rust WASM binary.
 Browser JavaScript still supplies necessary DOM/media/HTTP adapters; dynamic
 backend errors may still appear in Russian. Full Chrome/manual UI parity and
 completed CUDA inference remain unverified.
+Rust stage82 adds a canonical-checkout instance lock, idle-only safe
+stop/restart, native SIGTERM handling, a verified Windows-to-WSL localhost
+launch path, a standalone offline Linux release, Docker source and prebuilt
+packaging targets and fail-closed native dependency/resource diagnostics.
+The default Rust port is now 8875, so the Python 8765 port is untouched.
+Missing Linux ONNX Runtime still blocks completed GPU inference; Docker
+build/runtime verification is tracked separately from successful Rust compilation.
 The Rust Studio now also offers an explicit metadata-only import of historical
 Python projects (read-only results/ inspection) and recoverable Rust-only
 project archive/restore. Import never copies legacy inference results or modifies
@@ -123,3 +130,9 @@ reimplemented; no fallback is supplied.
 Do not infer product readiness from the stage counter. Record each tested
 change in the append-only migration journal and stage map. Keep the checkpoint,
 original media and Git history intact. See `AGENTS.md` for repository policy.
+Stage82 deployment note: WSL/Linux release and safe Windows start/stop/
+restart tests passed. A Docker image is NOT yet verified: the
+ package mirror timed out fetching Debian FFmpeg dependencies.
+ For the WSL prebuilt ELF requiring GLIBC_2.39, use the corrected
+ Debian Trixie runtime, not Bookworm. Linux CUDA ONNX Runtime is
+ still missing, so GPU production readiness remains false.

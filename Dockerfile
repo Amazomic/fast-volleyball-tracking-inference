@@ -1,23 +1,39 @@
-# Rust-only build. External ONNX Runtime/CUDA libraries must be supplied
-# separately for real GPU inference; no Python image, uv or venv.
+# Rust-only multi-stage build; project footage and Python services are excluded.
 FROM rust:1-bookworm AS build
 WORKDIR /build
 COPY rust/ rust/
 RUN cargo build --manifest-path rust/Cargo.toml --locked --release -p volley-app
 
-FROM debian:bookworm-slim
+# Trixie glibc 2.41 supports WSL Ubuntu 25.04 release ABI (requires >=2.39).
+# Bookworm glibc 2.36 built an image that would not run the prebuilt ELF.
+FROM debian:trixie-slim AS runtime-base
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates ffmpeg libgomp1 libstdc++6 \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --system volley \
+    && useradd --system --gid volley --home-dir /home/volley --create-home volley \
+    && mkdir -p /data \
+    && chown volley:volley /data
 WORKDIR /app
-COPY --from=build /build/rust/target/release/volley-app /usr/local/bin/volley-app
 COPY models/ /app/models/
 COPY ov/ /app/ov/
+USER volley
 ENV VOLLEY_REPOSITORY_ROOT=/app \
     VOLLEY_RUST_DATA_ROOT=/data \
-    VOLLEY_RUST_BIND=127.0.0.1:8765
+    VOLLEY_RUST_BIND=127.0.0.1:8875
 VOLUME ["/data"]
-# Loopback-only listener by design. Use --network host on a trusted Linux
-# host; do not expose this unauthenticated local file API to a network.
-EXPOSE 8765
+# Native ONNX Runtime, CUDA and cuDNN libraries are external read-only mounts.
+# Run with --network host on trusted Linux/WSL. Docker bridge publishing cannot
+# reach a deliberately localhost-only Rust API; never expose this API publicly.
+EXPOSE 8875
+STOPSIGNAL SIGTERM
 ENTRYPOINT ["/usr/local/bin/volley-app"]
+
+# Fast local packaging from a separately verified WSL Rust release binary.
+# BuildKit only resolves the runtime-base stage; no compiler-image pull.
+FROM runtime-base AS prebuilt
+COPY prebuilt/volley-app /usr/local/bin/volley-app
+
+# Default docker build always recompiles from Rust sources.
+FROM runtime-base AS final
+COPY --from=build /build/rust/target/release/volley-app /usr/local/bin/volley-app

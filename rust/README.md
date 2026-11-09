@@ -8,7 +8,14 @@ motion and rally logic, `volley-inference` loads native ONNX Runtime,
 Launch from repository root via `start-volley-ui.cmd` (Windows),
 or `scripts/start-volley-rust-dev.ps1` (PowerShell). Default
 `127.0.0.1:8765`, with homepage redirect to `/studio/rust`.
-Use `-CheckOnly` to compile and validate the ownership/roadmap rules.
+Use the Windows CMD actions /status, /stop, /restart, /doctor and /check,
+or PowerShell -Action Status/Stop/Restart/Doctor/Check. WSL Rust uses
+127.0.0.1:8875 by default, NOT the Python legacy port 8765. A second Rust
+process is prevented by a canonical-checkout lock, even on another port;
+stop/restart refuses to signal Rust while GPU/CPU/montage/Quick Reel is
+active. The Dockerfile can build from sources, or package an offline Linux
+release via scripts/ci/build_rust_docker_local.sh. Complete setup and
+current CUDA/Docker verification status: ../docs/RUST_DEPLOYMENT.md.
 
 Run `cargo fmt --all -- --check`, `cargo check --workspace --offline`
 and `cargo test --workspace --offline` from this directory. GPU smoke:

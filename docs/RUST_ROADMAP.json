@@ -1,8 +1,8 @@
 {
     "schema":  "volley-rust-stage-roadmap/1",
     "plannedTotal":  85,
-    "lastRecorded":  81,
-    "nextStage":  82,
+    "lastRecorded":  82,
+    "nextStage":  83,
     "estimateNote":  "85 — текущий ориентир планирования, не обещание неизменного объема; этап != готовая подсистема. При пересмотре плана обновлять JSON, Markdown и журнал в одном коммите.",
     "stages":  [
                    {
@@ -657,8 +657,9 @@
                        "number":  82,
                        "title":  "Windows/WSL/Docker сборка, ресурсы и один рабочий экземпляр",
                        "area":  "Развёртывание",
-                       "status":  "planned",
-                       "acceptance":  "Stable launch/stop/restart, no Python service dependency"
+                       "status":  "recorded",
+                       "acceptance":  "Stable launch/stop/restart, no Python service dependency",
+                       "journalSection":  82
                    },
                    {
                        "number":  83,

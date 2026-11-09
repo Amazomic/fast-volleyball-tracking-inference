@@ -67,6 +67,12 @@ pub struct FullInferenceManager {
     current: Mutex<Option<Active>>,
 }
 impl FullInferenceManager {
+    pub(crate) async fn has_active(&self) -> bool {
+        let current = self.current.lock().await;
+        current
+            .as_ref()
+            .is_some_and(|job| !terminal(&snapshot(&job.status).phase))
+    }
     pub fn new() -> Self {
         Self {
             current: Mutex::new(None),

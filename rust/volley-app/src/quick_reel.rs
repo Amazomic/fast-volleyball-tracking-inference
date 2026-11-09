@@ -76,6 +76,9 @@ pub struct QuickReelManager {
     current: Mutex<Option<Running>>,
 }
 impl QuickReelManager {
+    pub(crate) async fn has_active(&self) -> bool {
+        self.current.lock().await.is_some()
+    }
     pub fn new() -> Self {
         Self {
             current: Mutex::new(None),

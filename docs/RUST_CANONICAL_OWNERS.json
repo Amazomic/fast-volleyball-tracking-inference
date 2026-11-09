@@ -525,6 +525,27 @@
                         "stores":  [
 
                                    ]
+                    },
+                    {
+                        "id":  "deployment_runtime",
+                        "owner":  "rust/volley-app/src/runtime.rs",
+                        "status":  "partial",
+                        "adapters":  [
+                                         "scripts/volley-rust.sh",
+                                         "scripts/start-volley-rust-dev.ps1",
+                                         "start-volley-ui.cmd",
+                                         "Dockerfile",
+                                         "scripts/ci/build_rust_docker_local.sh"
+                                     ],
+                        "routes":  [
+                                       {
+                                           "path":  "/internal/rewrite-status",
+                                           "handler":  "runtime::rewrite_status"
+                                       }
+                                   ],
+                        "stores":  [
+
+                                   ]
                     }
                 ]
 }
