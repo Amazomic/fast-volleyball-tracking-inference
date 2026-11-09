@@ -1,6 +1,7 @@
-//! Initial native Rust Studio preview shell, scoped to the isolated server.
-//! Static browser bridge is a temporary frontend until wasm32 toolchain is
-//! available; all business decisions and authority checks live in Rust.
+//! Native Rust Studio shell with compiled Rust/WASM navigation, preferences
+//! and bilingual UI text plus browser-only DOM/network adapters.
+//! All business decisions and evidence checks remain in native Rust services;
+//! browser JS only owns DOM, media, file picker and same-origin transport.
 use crate::{
     cpu_retrack::{opaque_id, safe_file, safe_folder},
     projects,
@@ -19,6 +20,7 @@ use std::{fs, sync::Arc, time::SystemTime};
 
 const CSS: &str = include_str!("../static/studio.css");
 const SCRIPT: &str = include_str!("../static/studio.js");
+const UI_SCRIPT: &str = include_str!("../static/studio_ui.js");
 const TABS_SCRIPT: &str = include_str!("../static/studio_tabs.js");
 const TRACKS_SCRIPT: &str = include_str!("../static/studio_tracks.js");
 const STATS_SCRIPT: &str = include_str!("../static/studio_stats.js");
@@ -56,6 +58,9 @@ pub async fn css() -> Response {
 }
 pub async fn js() -> Response {
     web_asset("text/javascript; charset=utf-8", SCRIPT)
+}
+pub async fn ui_js() -> Response {
+    web_asset("text/javascript; charset=utf-8", UI_SCRIPT)
 }
 pub async fn tabs_js() -> Response {
     web_asset("text/javascript; charset=utf-8", TABS_SCRIPT)
@@ -303,6 +308,14 @@ mod tests {
         assert!(html.contains("id=\"studio-nav-legacy\""));
         assert!(html.contains("id=\"studio-legacy-view\""));
         assert!(html.contains("id=\"studio-legacy-archive-current\""));
+        assert!(html.contains("id=\"studio-ui-locale\""));
+        assert!(html.contains("id=\"studio-ui-theme\""));
+        assert!(html.contains("id=\"studio-ui-density\""));
+        assert!(html.contains("id=\"studio-ui-reduced-motion\""));
+        assert!(html.contains("id=\"studio-ui-reset\""));
+        assert!(html.contains("id=\"studio-gpu-stride\""));
+        assert!(html.contains("id=\"studio-gpu-memory\""));
+        assert!(html.contains("id=\"studio-gpu-threads\""));
         assert!(html.contains("id=\"studio-nav-quick\""));
         assert!(html.contains("id=\"studio-quick-drop\""));
         assert!(html.contains("id=\"studio-quick-progress\""));
@@ -312,15 +325,28 @@ mod tests {
         assert!(css.starts_with("HTTP/1.1 200 OK"));
         assert!(css.contains("text/css; charset=utf-8"));
         assert!(css.contains("rally-card.gold"));
+        assert!(css.contains("data-ui-theme"));
+        assert!(css.contains("data-ui-density"));
+        assert!(css.contains("data-ui-motion"));
         let js = get(addr, "/studio/rust/app.js").await;
         assert!(js.starts_with("HTTP/1.1 200 OK"));
         assert!(js.contains("rallies/marks"));
         assert!(js.contains("layout:") || js.contains("layout,"));
         assert!(js.contains("audio_volume:"));
+        let runtime = get(addr, "/studio/rust/ui.js").await;
+        assert!(runtime.starts_with("HTTP/1.1 200 OK"));
+        assert!(runtime.contains("volley_ui_api_version"));
+        assert!(runtime.contains("volley_ui_begin_load"));
+        assert!(runtime.contains("volley_ui_text_count"));
+        assert!(!runtime.contains("innerHTML"));
+        assert!(html.contains("/studio/rust/ui.js"));
         let tabs = get(addr, "/studio/rust/tabs.js").await;
         assert!(tabs.starts_with("HTTP/1.1 200 OK"));
         assert!(tabs.contains("/api/studio/rust/analysis-overview"));
         assert!(tabs.contains("/api/players/library/native"));
+        assert!(tabs.contains("runtime.navigate("));
+        assert!(tabs.contains("gpu_memory_limit_mb"));
+        assert!(tabs.contains("runtime.currentLoad("));
         let tracks = get(addr, "/studio/rust/tracks.js").await;
         assert!(tracks.starts_with("HTTP/1.1 200 OK"));
         assert!(tracks.contains("/api/players/native/tracks"));

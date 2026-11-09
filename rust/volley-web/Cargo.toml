@@ -3,7 +3,7 @@ name = "volley-web"
 version = "0.1.0"
 edition = "2021"
 publish = false
-description = "Minimal Rust/WASM UI selection state engine for Volleyball Studio"
+description = "Rust/WASM UI navigation, preferences, bilingual text and selection engine"
 
 [lib]
 crate-type = ["rlib", "cdylib"]

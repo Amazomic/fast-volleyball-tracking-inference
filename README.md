@@ -11,7 +11,7 @@ pipeline is **project → prepared video → immutable VballNet/RAVEL GPU eviden
 versioned CPU player tracks/Touch/rallies → reviewed players → original-quality montage**.
 FFmpeg, ONNX Runtime and CUDA are native external runtimes, not Python components.
 
-**Rust-миграция: 80/85; следующий 81/85 (плановый объём).**
+**Rust-миграция: 81/85; следующий 82/85 (плановый объём).**
 [Stage map](docs/RUST_ROADMAP.md) ·
 [Migration journal](docs/RUST_MIGRATION.md) ·
 [Architecture and owners](docs/RUST_ARCHITECTURE.md).
@@ -75,6 +75,7 @@ cargo test --workspace --offline
 node ../scripts/ci/check_rust_ownership.mjs --self-test
 node ../scripts/ci/check_rust_roadmap.mjs --check --self-test
 node ../scripts/ci/test_volley_web_wasm.mjs
+node ../scripts/ci/test_studio_wasm_ui.mjs
 node ../scripts/ci/test_native_quick_reel_ui.mjs
 ```
 
@@ -98,6 +99,15 @@ only prepared video may be reused. The independent Rust browser UI now
 supports Windows Explorer (no copy), drag-and-drop (isolated 2 GiB/file
 copy), music, 4-stage progress, cancel, reconnect and verified MP4 download.
 A real end-to-end CUDA reel still requires ONNX Runtime deployment.
+The Rust Studio now uses a compiled Rust/WASM interface state engine for six
+tabs, RU/EN, visual settings (dark/light, compact, reduced motion) and
+versioned load tokens to reject stale requests. Its separate GPU launch panel
+keeps defaults stride 9 / unlimited VRAM / 8 CPU threads, with explicit
+per-run overrides. All 163 static Russian text labels and 20 Russian
+accessibility attributes have translations embedded in the Rust WASM binary.
+Browser JavaScript still supplies necessary DOM/media/HTTP adapters; dynamic
+backend errors may still appear in Russian. Full Chrome/manual UI parity and
+completed CUDA inference remain unverified.
 The Rust Studio now also offers an explicit metadata-only import of historical
 Python projects (read-only results/ inspection) and recoverable Rust-only
 project archive/restore. Import never copies legacy inference results or modifies

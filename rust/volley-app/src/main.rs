@@ -86,6 +86,7 @@ async fn rewrite_status(
         production_ready: false,
         isolated_writes_enabled: state.writes_enabled,
         supported_api_endpoints: &[
+            "GET /studio/rust/ui.js (WASM UI state bootstrap, RU/EN, preference controls)",
             "GET /api/projects",
             "GET /api/videos",
             "GET /api/video-info",
@@ -175,6 +176,7 @@ fn app(state: Arc<AppState>) -> Router {
         .route("/internal/rewrite-status", get(rewrite_status))
         .route("/studio/rust", get(studio_web::index))
         .route("/studio/rust/app.js", get(studio_web::js))
+        .route("/studio/rust/ui.js", get(studio_web::ui_js))
         .route("/studio/rust/tabs.js", get(studio_web::tabs_js))
         .route("/studio/rust/tracks.js", get(studio_web::tracks_js))
         .route("/studio/rust/stats.js", get(studio_web::stats_js))

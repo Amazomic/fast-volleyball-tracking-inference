@@ -55,7 +55,7 @@ Machine-readable ledger: docs/RUST_CANONICAL_OWNERS.json; mandatory audit: scrip
 | Montage | rust/volley-app/src/montage.rs | player_montage.rs, native_rally_preview.rs, rallies.rs | Exactly one renderer, format-aware selection; use original media |
 | Shared sidecar I/O | rust/volley-app/src/versioned_store.rs | existing identity and mark adapters | NO independent revision/SHA/CAS helpers |
 | GPU inference | rust/volley-inference/ | inference_full.rs, inference_fusion.rs | Immutable detector evidence |
-| Rust UI | rust/volley-web/ | temporary rust/volley-app/static/ DOM bridge | Browser JS must not contain new business decisions |
+| Rust/WASM UI state, RU/EN and preferences | rust/volley-web/src/lib.rs, compiled volley_web.wasm | rust/volley-app/src/studio_web.rs and static/studio_ui.js plus feature-specific DOM/HTTP controllers | Rust validates navigation, load epochs, settings and text IDs; JS stays only for DOM/media/file and same-origin transport, no server business policies |
 | Quick Reel | rust/volley-app/src/quick_reel.rs | preparation, inference, montage services | Fresh independent inference, no project analysis reuse |
 
 **Reality:** Legacy gold/rally/identity adapters are distinct file schemas and currently have consumers. Removing their routes today would lose legacy project features. Shared sidecar primitives are to be extracted now; full domain unification remains PENDING. Renaming modules is NOT deduplication.
@@ -91,3 +91,11 @@ Machine-readable ledger: docs/RUST_CANONICAL_OWNERS.json; mandatory audit: scrip
 5. Integrate athlete stats, Quick Reel, end-to-end UI and real-match validation. Switch production only after full parity comparison with immutable Python checkpoint.
 
 **Progress must be measured against missing behaviors and number of duplicate authorities, never number of commits or stages.**
+
+### Stage 81: compiled Rust/WASM UI, not a JavaScript business-policy fork
+
+The single Rust source rust/volley-web/src/lib.rs is the canonical owner for navigation among 6 tabs, validated locale/theme/density/reduced-motion settings, generation tokens for cancel-safe asynchronous data loading and translation IDs. rust/volley-web/src/studio_i18n.tsv is compiled into volley_web.wasm using include_str!, and the same source hosts the existing stable montage selection engine. The browser adapter rust/volley-app/static/studio_ui.js validates the ABI, loads the actual WASM from the same-origin Rust Axum server, stores only visual preferences in versioned browser localStorage, renders Rust text and updates localized DOM incrementally. All 163 static UI labels and 20 aria-label/title/placeholder values with Russian text are covered by the embedded RU/EN source. Existing native browser feature controllers (analysis, reviewed highlights, players, Quick Reel, legacy archives) continue to use unchanged same-origin native Rust endpoints and must not re-implement evidence or GPU/CPU business logic. Desktop/phone navigation remains accessible.
+
+The GUI-only settings have **zero effect** on analysis profiles or immutable inference artifacts. The separate GPU launch panel exposes explicit per-run stride 1..9, VRAM cap 0..131072 MB (0 means unlimited) and CPU thread count 1..128. Golden request defaults remain stride=9, VRAM cap=0, CPU=8, device=cuda; JS validates before requests and native Rust revalidates. No GPU or CPU run is started on locale/theme changes.
+
+**Evidence and limitations:** actual target wasm32-unknown-unknown release binary is built and executed by Node WebAssembly.instantiate with bounds/translation tests; 6-tab browser DOM simulation covers navigation, deep links, async data loading and stale-response rejection, language settings persistence, resource flags and explicit GPU request flags. Rust Axum HTTP tests verify static asset wiring. Chrome GUI automation and dynamic API error-message localization are not fully verified at this stage; a successful CUDA run and full Python-versus-Rust feature/quality benchmark are NOT implied. Existing JS is a necessary browser DOM/network adapter and is not a second source of truth for domain policies.

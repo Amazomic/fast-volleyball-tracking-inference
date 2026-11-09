@@ -298,10 +298,12 @@
                     },
                     {
                         "id":  "ui",
-                        "owner":  "rust/volley-app/src/studio_web.rs",
+                        "owner":  "rust/volley-web/src/lib.rs",
                         "status":  "partial",
                         "adapters":  [
-                                         "rust/volley-web/src/lib.rs",
+                                         "rust/volley-app/src/studio_web.rs",
+                                         "rust/volley-app/static/studio_ui.js",
+                                         "rust/volley-web/src/studio_i18n.tsv",
                                          "rust/volley-app/static/studio_legacy.js"
                                      ],
                         "routes":  [

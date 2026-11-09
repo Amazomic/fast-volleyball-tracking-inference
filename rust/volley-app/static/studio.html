@@ -6,6 +6,7 @@
   <meta name="color-scheme" content="dark">
   <title>Volleyball Studio — Rust Preview</title>
   <link rel="stylesheet" href="/studio/rust/app.css">
+  <script src="/studio/rust/ui.js" defer></script>
   <script src="/studio/rust/app.js" defer></script>
   <script src="/studio/rust/tabs.js" defer></script>
   <script src="/studio/rust/tracks.js" defer></script>
@@ -43,7 +44,36 @@
     <main class="main">
       <header class="topbar">
         <div class="breadcrumbs">Студия <span>›</span> <strong id="studio-section-name">Предпросмотр</strong></div>
-        <div class="dev-chip">ЭКСПЕРИМЕНТАЛЬНАЯ ВЕРСИЯ</div>
+        <div class="studio-top-controls">
+          <details id="studio-ui-settings" class="studio-ui-settings">
+            <summary id="studio-ui-settings-summary" class="secondary" aria-label="Открыть настройки">⚙ <span id="studio-ui-settings-label">Настройки интерфейса</span></summary>
+            <div class="studio-ui-settings-popover" aria-label="Настройки интерфейса">
+              <label class="field-label" for="studio-ui-locale">Язык</label>
+              <select id="studio-ui-locale" aria-label="Язык интерфейса">
+                <option value="0">Русский</option>
+                <option value="1">English</option>
+              </select>
+              <label class="field-label" for="studio-ui-theme">Тема</label>
+              <select id="studio-ui-theme">
+                <option value="0">Тёмная</option>
+                <option value="1">Светлая</option>
+              </select>
+              <label class="field-label" for="studio-ui-density">Плотность интерфейса</label>
+              <select id="studio-ui-density">
+                <option value="0">Обычная</option>
+                <option value="1">Компактная</option>
+              </select>
+              <label class="field-label" for="studio-ui-reduced-motion">Уменьшить движение</label>
+              <select id="studio-ui-reduced-motion">
+                <option value="0">Выключено</option>
+                <option value="1">Включено</option>
+              </select>
+              <p class="panel-note">Настройки сохранены в браузере. GPU/CPU профиль не изменяется.</p>
+              <button class="secondary full" type="button" id="studio-ui-reset">Сбросить интерфейс</button>
+            </div>
+          </details>
+          <div class="dev-chip">ЭКСПЕРИМЕНТАЛЬНАЯ ВЕРСИЯ</div>
+        </div>
       </header>
       <div class="content">
         <section id="studio-legacy-view" class="hidden tab-workspace legacy-workspace" aria-labelledby="studio-legacy-heading">
@@ -220,6 +250,18 @@
             </div>
             <button id="studio-analysis-refresh" class="secondary" type="button">↻ Обновить стадии</button>
           </div>
+          <details id="studio-gpu-settings" class="analysis-gpu-settings">
+            <summary class="secondary">Параметры нового GPU-запуска (по умолчанию — эталонные)</summary>
+            <div class="analysis-gpu-settings-grid">
+              <div><label class="field-label" for="studio-gpu-stride">Шаг окон нейросети (1–9)</label>
+                <input id="studio-gpu-stride" type="number" min="1" max="9" step="1" value="9"></div>
+              <div><label class="field-label" for="studio-gpu-memory">Лимит VRAM, МБ (0 = без ограничения)</label>
+                <input id="studio-gpu-memory" type="number" min="0" max="131072" step="256" value="0"></div>
+              <div><label class="field-label" for="studio-gpu-threads">Потоки CPU (1–128)</label>
+                <input id="studio-gpu-threads" type="number" min="1" max="128" step="1" value="8"></div>
+              <p id="studio-gpu-settings-delta" class="panel-note" role="status">Эталонные значения: шаг 9 · VRAM без ограничения · CPU 8 потоков.</p>
+            </div>
+          </details>
           <div class="analysis-actions">
             <button id="studio-gpu-ball" type="button" class="secondary">Запустить VballNet GPU</button>
             <button id="studio-gpu-players" type="button" class="secondary">Запустить RAVEL GPU</button>

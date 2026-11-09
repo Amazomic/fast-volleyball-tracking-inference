@@ -1,7 +1,7 @@
 "use strict";
-// Interim same-origin UI controls. Rust enforces data ownership, immutable
-// evidence checksums, stage isolation and registry compare-and-swap revisions.
-// The future wasm32 app will replace this bridge, not bypass the native API.
+// Browser-only DOM and same-origin network adapters. Rust/WASM validates
+// navigation, language, settings and async load epochs; native Rust owns
+// evidence checksums, stage isolation and revision-safe mutations.
 (() => {
   const $ = id => document.getElementById(id);
   const ui = {
@@ -16,6 +16,8 @@
     playerList:$("studio-player-list"),playerCount:$("studio-player-count"),
     playerRefresh:$("studio-player-refresh")
   };
+  const runtime=window.VolleyballUi;
+  if(!runtime?.ready)throw Error("Rust/WASM UI bootstrap missing");
   const state={
     tab:"preview",analysisGeneration:0,playerGeneration:0,
     video:"",gpuJob:"",gpuProject:"",gpuTimer:null,
@@ -52,8 +54,9 @@
     state.gpuTimer=null;
   };
   const switchTab=(requested)=>{
-    const next=requested==="analysis"||requested==="players"||requested==="montage"||requested==="quick"||requested==="legacy"?
-      requested:"preview";
+    const previous=state.tab;
+    const next=runtime.navigate(requested);
+    if(previous!==next){runtime.beginLoad(previous);}
     state.tab=next;
     ui.preview.classList.toggle("hidden",next==="analysis"||next==="players"||next==="quick"||next==="legacy");
     ui.quick.classList.toggle("hidden",next!=="quick");
@@ -216,12 +219,14 @@
   };
   const loadVideos=async()=>{
     const project=projectId(),old=ui.video.value;
+    const wasmToken=runtime.beginLoad("analysis");
     if(!project){
       clear(ui.video);ui.video.append(make("option","","Сначала выберите проект"));
       await loadOverview();return;
     }
     const rows=(await api("/api/projects")).projects||[];
-    if(state.tab!=="analysis"||projectId()!==project)return;
+    if(state.tab!=="analysis"||projectId()!==project||
+      !runtime.currentLoad("analysis",wasmToken))return;
     const current=rows.find(p=>p.id===project);
     const videos=Array.isArray(current?.videos)?current.videos.filter(x=>typeof x==="string"):[];
     clear(ui.video);
@@ -284,6 +289,39 @@
     await pollGpu();
     if(state.gpuJob)state.gpuTimer=setInterval(pollGpu,1800);
   };
+  const gpuOptions=()=>{
+    const config=[
+      ["studio-gpu-stride",1,9,"Шаг окон"],
+      ["studio-gpu-memory",0,131072,"Лимит VRAM"],
+      ["studio-gpu-threads",1,128,"Потоки CPU"]
+    ];
+    const values=config.map(([id,min,max,label])=>{
+      const raw=$(id).value.trim(),value=Number(raw);
+      if(!raw||!Number.isSafeInteger(value)||value<min||value>max){
+        throw Error(label+": значение вне допустимого диапазона");
+      }
+      return value;
+    });
+    return {stride:values[0],gpu_device_id:0,gpu_memory_limit_mb:values[1],
+      cpu_threads:values[2]};
+  };
+  const displayGpuSettings=()=>{
+    try{
+      const cfg=gpuOptions();
+      const changes=[];
+      if(cfg.stride!==9)changes.push("шаг "+cfg.stride+" вместо 9");
+      if(cfg.gpu_memory_limit_mb!==0)changes.push("лимит VRAM "+
+        cfg.gpu_memory_limit_mb+" МБ");
+      if(cfg.cpu_threads!==8)changes.push("CPU "+cfg.cpu_threads+" потоков");
+      $("studio-gpu-settings-delta").textContent=changes.length?
+        "Отличия от эталона: "+changes.join("; ")+
+          ". Настройки применятся только к следующему запуску.":
+        "Эталонные значения: шаг 9 · VRAM без ограничения · CPU 8 потоков.";
+    }catch(error){$("studio-gpu-settings-delta").textContent=String(error.message);}
+  };
+  for(const id of ["studio-gpu-stride","studio-gpu-memory","studio-gpu-threads"])
+    $(id).addEventListener("input",displayGpuSettings);
+  displayGpuSettings();
   const startGpu=async model=>{
     if(state.gpuJob){
       announce("GPU-задача уже выполняется.",true);return;
@@ -294,8 +332,9 @@
     }
     ui.ball.disabled=true;ui.ravel.disabled=true;
     try{
+      const config=gpuOptions();
       const job=await post("/api/inference/native/full/start",{
-        project_id:project,video,model,device:"cuda",stride:9
+        project_id:project,video,model,device:"cuda",...config
       });
       if(typeof job.job_id!=="string")throw Error("GPU не вернул идентификатор задачи");
       state.gpuJob=job.job_id;state.gpuProject=project;
@@ -369,9 +408,10 @@
   };
   const loadPlayers=async()=>{
     const token=++state.playerGeneration;
+    const wasmToken=runtime.beginLoad("players");
     ui.playerList.replaceChildren(make("div","empty-state","Загрузка библиотеки игроков…"));
     const result=await post("/api/players/library/native",{action:"read"});
-    if(token!==state.playerGeneration)return;
+    if(token!==state.playerGeneration||!runtime.currentLoad("players",wasmToken))return;
     state.players=Array.isArray(result.players)?result.players:[];
     state.revision=String(result.revision||"absent");
     renderPlayers();
@@ -412,13 +452,15 @@
   for(const nav of document.querySelectorAll("[data-studio-tab]")){
     nav.addEventListener("click",event=>{
       event.preventDefault();
-      const next=nav.dataset.studioTab;
-      history.replaceState(null,"","#"+next);
-      switchTab(next);
+      const requested=nav.dataset.studioTab;
+      runtime.ready.then(()=>{
+        switchTab(requested);
+        history.replaceState(null,"","#"+runtime.tabs[runtime.get("tab")]);
+      }).catch(failure);
     });
   }
   window.addEventListener("hashchange",()=>{
-    switchTab(location.hash.slice(1));
+    runtime.ready.then(()=>switchTab(location.hash.slice(1))).catch(failure);
   });
-  switchTab(location.hash.slice(1));
+  runtime.ready.then(()=>switchTab(location.hash.slice(1))).catch(failure);
 })();
