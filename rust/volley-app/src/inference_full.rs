@@ -268,6 +268,19 @@ struct JobContext {
     cancelled: Arc<AtomicBool>,
 }
 
+fn window_error(model: ModelKind, first_frame: u64, failure: &str) -> String {
+    let model_name = if model == ModelKind::Players {
+        "RAVEL-013"
+    } else {
+        "VballNetV4c"
+    };
+    format!(
+        "{model_name} GPU inference failed at frames {}..{}: {failure}",
+        first_frame,
+        first_frame.saturating_add(8),
+    )
+}
+
 fn run_model(context: &JobContext) -> Result<DecodeSummary, String> {
     if context.cancelled.load(Ordering::Acquire) {
         return Err("cancelled".into());
@@ -291,7 +304,9 @@ fn run_model(context: &JobContext) -> Result<DecodeSummary, String> {
                 return Err("cancelled".into());
             }
             let input = normalized_model_window(&window.data, w, h, channels)?;
-            let tensors = engine.infer_clip(input)?;
+            let tensors = engine
+                .infer_clip(input)
+                .map_err(|error| window_error(context.config.model, window.first_frame, &error))?;
             let records = if context.config.model == ModelKind::Players {
                 decode_ravel(&tensors, window.first_frame, DecodeConfig::default())?
             } else {
@@ -644,6 +659,17 @@ pub(crate) async fn stop_for_project_archive(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn long_cuda_errors_name_model_and_exact_window() {
+        let error = window_error(ModelKind::Players, 39240, "CUDA failure 999");
+        assert!(error.contains("RAVEL-013"));
+        assert!(error.contains("39240..39248"));
+        assert!(error.contains("CUDA failure 999"));
+        let ball = window_error(ModelKind::Ball, 9, "device unavailable");
+        assert!(ball.contains("VballNetV4c"));
+        assert!(ball.contains("9..17"));
+    }
     #[test]
     fn active_gpu_status_reconnect_is_project_scoped_and_never_starts_job() {
         let project_id = "123456abcdef";

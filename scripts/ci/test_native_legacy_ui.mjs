@@ -81,6 +81,7 @@ const get=async(path,options={})=>{
   throw Error("Unexpected URL "+path);
 };
 const fetch=async(path,options={})=>({ok:true,json:async()=>get(path,options)});
+window.VolleyballStudioActivity={fetch:(...args)=>fetch(...args)};
 const context={document:{getElementById:id=>nodes.get(id),
     createElement:tag=>new Element(tag)},window,Event,CustomEvent,fetch,console};
 vm.runInNewContext(src,context,{filename:"studio_legacy.js"});

@@ -91,7 +91,9 @@ async function scene(initial="idle"){
   const form=class {constructor(){this.items=[];}append(...args){this.items.push(args);}};
   const timers=new Map();let timerId=0;
   const context={document:{getElementById:id=>nodes.get(id),
-      createElement:tag=>new Element(tag)},fetch,FormData:form,URLSearchParams,
+      createElement:tag=>new Element(tag)},fetch,
+    window:{VolleyballStudioActivity:{fetch:(...args)=>fetch(...args)}},
+    FormData:form,URLSearchParams,
     setInterval:fn=>{const id=++timerId;timers.set(id,fn);return id;},
     clearInterval:id=>timers.delete(id),console};
   vm.runInNewContext(source,context,{filename:"studio_quick_reel.js"});

@@ -40,11 +40,9 @@ class Node {
   focus(){}
 }
 const ids=[
-  "studio-ui-settings-label","studio-ui-settings-summary",
-  "studio-ui-locale","studio-ui-theme","studio-ui-density",
-  "studio-ui-reduced-motion","studio-ui-reset","studio-banner",
+  "studio-banner",
   "studio-preview-view","studio-analysis-view","studio-players-view",
-  "studio-quick-view","studio-legacy-view","studio-section-name",
+  "studio-quick-view","studio-legacy-view",
   "studio-project","studio-analysis-video","studio-analysis-refresh",
   "studio-stage-list","studio-analysis-note","studio-gpu-ball",
   "studio-gpu-players","studio-gpu-cancel","studio-player-create",
@@ -66,13 +64,16 @@ function createTestEnvironment(initialHash="#preview",flags={}){
   byId("studio-analysis-video").value="";
   for(const name of names)byId("studio-nav-"+name).dataset.studioTab=name;
   const listener=new Map();
+  const brandBall=new Node("svg");
   const win={
     addEventListener:(name,handler)=>listener.set(name,handler),
-    dispatchEvent:event=>{listener.get(event.type)?.(event);return true;}
+    dispatchEvent:event=>{listener.get(event.type)?.(event);return true;},
+    matchMedia:()=>({matches:false})
   };
   const document={
     body:new Node("body"),documentElement:{lang:"ru"},
     getElementById:byId,createElement:tag=>new Node(tag),
+    querySelector:selector=>selector===".brand .volleyball-ball"?brandBall:null,
     createTextNode:text=>({nodeType:3,nodeValue:text}),
     querySelectorAll:selector=>selector==="[data-studio-tab]"?
       names.map(name=>byId("studio-nav-"+name)):[],
@@ -112,6 +113,7 @@ function createTestEnvironment(initialHash="#preview",flags={}){
     }
     throw Error("Unexpected external request: "+path);
   };
+  win.fetch=(...args)=>fetch(...args);
   const history={replaceState:(_a,_b,hash)=>{state.location.hash=hash;}};
   const location={hash:initialHash};
   const state={location,nodes,requests,window:win,document,history};
@@ -126,12 +128,14 @@ function createTestEnvironment(initialHash="#preview",flags={}){
     NodeFilter:{SHOW_TEXT:4,FILTER_ACCEPT:1,FILTER_REJECT:2},
     Event:class{constructor(type){this.type=type;}},
     CustomEvent:class{constructor(type,args){this.type=type;this.detail=args?.detail;}},
-    setInterval:()=>1,clearInterval(){}, setTimeout,
-    requestAnimationFrame:fn=>fn()
+    setInterval:()=>1,clearInterval(){}, setTimeout,clearTimeout,
+    requestAnimationFrame:()=>1
   };
   runInNewContext(boot,context,{filename:"studio_ui.js"});
   runInNewContext(tabsCode,context,{filename:"studio_tabs.js"});
   state.runtime=win.VolleyballUi;
+  state.brandBall=brandBall;
+  assert.equal(typeof win.VolleyballStudioActivity?.begin,"function");
   return state;
 }
 const a=createTestEnvironment("#preview");
@@ -145,8 +149,8 @@ assert.equal(a.runtime.translate("Монтаж"),"Монтаж");
 assert.equal(a.runtime.set("locale",1),true);
 assert.equal(a.runtime.translate("Монтаж"),"Montage");
 assert.equal(a.document.documentElement.lang,"en");
-assert.equal(a.nodes.get("studio-ui-settings-label").textContent,"Interface settings",
-  "Live settings caption must be copied from actual WASM English text");
+assert.equal(a.nodes.has("studio-ui-settings-label"),false,
+  "Removed settings must not be present in the browser UI");
 assert.equal(a.runtime.set("theme",1),true);
 assert.equal(a.document.body.dataset.uiTheme,"light");
 assert.equal(a.runtime.set("density",1),true);
@@ -219,14 +223,9 @@ assert.equal(b.runtime.get("locale"),1,"Language persisted across reload");
 assert.equal(b.runtime.get("theme"),1,"Theme persisted across reload");
 assert.equal(b.runtime.get("density"),1,"Density persisted across reload");
 assert.equal(b.runtime.get("tab"),2,"Deep-link route set by WASM");
-b.nodes.get("studio-ui-reset").dispatch("click");
-assert.equal(b.runtime.get("locale"),0);
-assert.equal(b.nodes.get("studio-ui-settings-label").textContent,"Настройки интерфейса",
-  "Reset restores actual WASM Russian text");
-assert.equal(b.runtime.get("theme"),0);
-assert.equal(b.runtime.get("density"),0);
-assert.equal(b.runtime.get("reduced_motion"),0);
-assert.equal(stored.has("volley.rust.ui.preferences.v1"),false);
+assert.equal(b.nodes.has("studio-ui-reset"),false,
+  "Removed header must not expose the old preferences reset control");
+stored.delete("volley.rust.ui.preferences.v1");
 const delayed=createTestEnvironment("#players",{delayPlayers:true});
 await delayed.runtime.ready;await tick();
 assert.equal(typeof delayed.releasePlayers,"function","A real delayed players request is pending");

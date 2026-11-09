@@ -87,7 +87,8 @@ const fetch=async(url,options={})=>{
 const callbacks=new Map();
 vm.runInNewContext(source,{
   document:{getElementById:id=>nodes.get(id),createElement:tag=>new Element(tag)},
-  window:{addEventListener:(name,cb)=>callbacks.set(name,cb)},
+  window:{addEventListener:(name,cb)=>callbacks.set(name,cb),
+    VolleyballStudioActivity:{fetch:(...args)=>fetch(...args)}},
   location:{hash:"#players"},fetch,URLSearchParams,Set,Map,JSON,Number,String,
   Array,Boolean,Error,Math,RegExp
 },{filename:"studio_stats.js"});

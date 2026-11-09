@@ -131,7 +131,8 @@ const fetch=async(url,options={})=>{
 const eventCallbacks=new Map();
 vm.runInNewContext(source,{
   document:{getElementById:id=>nodes.get(id),createElement:tag=>new Element(tag)},
-  window:{addEventListener:(n,fn)=>eventCallbacks.set(n,fn)},
+  window:{addEventListener:(n,fn)=>eventCallbacks.set(n,fn),
+    VolleyballStudioActivity:{fetch:(...args)=>fetch(...args)}},
   location:{hash:"#montage"},fetch,URLSearchParams,Set,Map,JSON,Number,
   String,Boolean,Array,Error,Math,RegExp,Promise,
   setInterval:()=>1,clearInterval:()=>{},

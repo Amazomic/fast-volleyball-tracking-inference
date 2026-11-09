@@ -936,7 +936,7 @@ fn latest(state: &AppState) -> Result<Option<String>, ApiError> {
 }
 fn prune_scratch(state: &AppState, keep: &str) {
     // Only scratch dirs with exact generated UUIDs. Do not touch the
-    // completed MP4 archive, prepared cache, media uploads or source files.
+    // prepared cache, user media or output outside the private Quick Reel root.
     let Ok(entries) = fs::read_dir(root(state)) else {
         return;
     };
@@ -954,6 +954,94 @@ fn prune_scratch(state: &AppState, keep: &str) {
             continue;
         }
         let _ = fs::remove_dir_all(entry.path());
+    }
+}
+
+/// Under the exclusive Quick Reel start lock, collect ONLY stale browser
+/// copies and their matching selection tokens. Never remove originals,
+/// cached prepared videos, the active run's uploads, recently selected files,
+/// or anything outside the isolated quick_reels/uploads directory.
+fn prune_stale_browser_uploads(state: &AppState, run: &PreparedRun) {
+    let base = root(state);
+    let uploads = base.join("uploads");
+    let selections = base.join("selections");
+    if [&base, &uploads, &selections].iter().any(|dir| {
+        !fs::symlink_metadata(dir).is_ok_and(|meta| meta.is_dir() && !meta.file_type().is_symlink())
+    }) {
+        return;
+    }
+    let Ok(cutoff) = fs::metadata(run.root.join("request.json")).and_then(|m| m.modified()) else {
+        return;
+    };
+    let Ok(entries) = fs::read_dir(&selections) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let selection_file = entry.path();
+        let Some(id) = selection_file.file_stem().and_then(|stem| stem.to_str()) else {
+            continue;
+        };
+        if !is_id(id) || selection_file.extension().and_then(|ext| ext.to_str()) != Some("json") {
+            continue;
+        }
+        let Ok(meta) = fs::symlink_metadata(&selection_file) else {
+            continue;
+        };
+        if meta.file_type().is_symlink()
+            || !meta.is_file()
+            || meta.len() > MAX_SELECTION_BYTES
+            || !meta.modified().is_ok_and(|time| time < cutoff)
+            || run.sources.iter().any(|source| source.id == id)
+        {
+            continue;
+        }
+        let Ok(bytes) = fs::read(&selection_file) else {
+            continue;
+        };
+        let Ok(source) = serde_json::from_slice::<Source>(&bytes) else {
+            continue;
+        };
+        if source.id != id || source.display_name.is_none() {
+            continue; // Real user files selected by path must never be deleted.
+        }
+        let copied = Path::new(&source.source);
+        let Some(name) = copied.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        let valid_generated = name
+            .strip_prefix("drop_")
+            .and_then(|name| name.rsplit_once('.'))
+            .is_some_and(|(uuid, ext)| {
+                is_id(uuid)
+                    && matches!(
+                        ext.to_ascii_lowercase().as_str(),
+                        "mp4" | "mov" | "mkv" | "avi" | "webm" | "m4v" | "mts"
+                    )
+            });
+        if !valid_generated
+            || copied.parent() != Some(uploads.as_path())
+            || source.name != name
+            || run
+                .sources
+                .iter()
+                .any(|current| current.source == source.source)
+        {
+            continue;
+        }
+        let Ok(file_meta) = fs::symlink_metadata(copied) else {
+            continue;
+        };
+        if file_meta.file_type().is_symlink()
+            || !file_meta.is_file()
+            || file_meta.len() != source.size
+            || mtime(&file_meta).ok() != Some(source.mtime_ns)
+            || !file_meta.modified().is_ok_and(|time| time < cutoff)
+        {
+            continue;
+        }
+        if fs::remove_file(copied).is_ok() {
+            let _ = fs::remove_file(selection_file);
+        }
     }
 }
 
@@ -1202,6 +1290,7 @@ pub async fn start(
     // exist. Never delete a previous latest on a failed start request.
     storage::write_json_atomic(&base.join("latest.json"), &json!({"id":run.id}))?;
     prune_scratch(&state, &run.id);
+    prune_stale_browser_uploads(&state, &run);
     let id = run.id.clone();
     let (tx, rx) = watch::channel(false);
     *slot = Some(Running {
@@ -1340,6 +1429,88 @@ mod tests {
             full_inference: inference_full::FullInferenceManager::new(),
         }
     }
+    #[test]
+    fn new_reel_collects_only_stale_browser_upload_copies() {
+        let temp = std::env::temp_dir().join(format!("quick-prune-{}", Uuid::new_v4()));
+        let state = fixture_state(&temp);
+        let selection_dir = checked_selections(&state).unwrap();
+        let uploads = state.data_root.join(QUICK_ROOT).join("uploads");
+        fs::create_dir(&uploads).unwrap();
+        let source_for_test = |id: String, path: &Path, linked: bool| {
+            let meta = fs::metadata(path).unwrap();
+            Source {
+                id,
+                name: path.file_name().unwrap().to_string_lossy().into_owned(),
+                source: path.to_string_lossy().into_owned(),
+                size: meta.len(),
+                mtime_ns: mtime(&meta).unwrap(),
+                display_name: (!linked).then(|| "match.mp4".to_owned()),
+            }
+        };
+        let old_id = Uuid::new_v4().simple().to_string();
+        let current_id = Uuid::new_v4().simple().to_string();
+        let linked_id = Uuid::new_v4().simple().to_string();
+        let late_id = Uuid::new_v4().simple().to_string();
+        let old = uploads.join(format!("drop_{}.mp4", Uuid::new_v4().simple()));
+        let current = uploads.join(format!("drop_{}.mp4", Uuid::new_v4().simple()));
+        let original = temp.join("original.mp4");
+        fs::write(&old, b"old").unwrap();
+        fs::write(&current, b"current").unwrap();
+        fs::write(&original, b"original-user-media").unwrap();
+        let old_source = source_for_test(old_id, &old, false);
+        let current_source = source_for_test(current_id, &current, false);
+        let original_source = source_for_test(linked_id, &original, true);
+        for item in [&old_source, &current_source, &original_source] {
+            storage::write_json_atomic(
+                &selection_dir.join(format!("{}.json", item.id)),
+                &serde_json::to_value(item).unwrap(),
+            )
+            .unwrap();
+        }
+        // A later selection is intentionally not eligible for garbage collection
+        // while another browser tab is still uploading or preparing the next run.
+        std::thread::sleep(Duration::from_millis(35));
+        let run_id = Uuid::new_v4().simple().to_string();
+        let run_folder = state.data_root.join(QUICK_ROOT).join(&run_id);
+        fs::create_dir(&run_folder).unwrap();
+        let run = PreparedRun {
+            id: run_id,
+            sources: vec![current_source.clone()],
+            plans: vec![],
+            audio: String::new(),
+            audio_duration: 0.0,
+            root: run_folder,
+        };
+        storage::write_json_atomic(&run.root.join("request.json"), &json!({"id": run.id})).unwrap();
+        std::thread::sleep(Duration::from_millis(35));
+        let late = uploads.join(format!("drop_{}.mp4", Uuid::new_v4().simple()));
+        fs::write(&late, b"newly-selected").unwrap();
+        let late_source = source_for_test(late_id, &late, false);
+        storage::write_json_atomic(
+            &selection_dir.join(format!("{}.json", late_source.id)),
+            &serde_json::to_value(&late_source).unwrap(),
+        )
+        .unwrap();
+        prune_stale_browser_uploads(&state, &run);
+        assert!(!old.exists(), "Previous upload must be reclaimed");
+        assert!(!selection_dir
+            .join(format!("{}.json", old_source.id))
+            .exists());
+        assert!(current.exists(), "Active run's video must be preserved");
+        assert!(selection_dir
+            .join(format!("{}.json", current_source.id))
+            .exists());
+        assert!(original.exists(), "Linked original must never be removed");
+        assert!(selection_dir
+            .join(format!("{}.json", original_source.id))
+            .exists());
+        assert!(late.exists(), "Newly selected upload must remain available");
+        assert!(selection_dir
+            .join(format!("{}.json", late_source.id))
+            .exists());
+        fs::remove_dir_all(temp).unwrap();
+    }
+
     fn ffmpeg(cmd: &[String]) {
         let output = std::process::Command::new("ffmpeg")
             .args(cmd)
