@@ -236,9 +236,25 @@ pub fn evaluate_block(
         if frame < emit_start || frame >= emit_end {
             continue;
         }
+        // Peak association allows a +/-2 frame gap, but native CPU rallies
+        // accept only an observed player and selected ball on the EXACT
+        // contact frame. A nearby Track ID is a suggestion, not same-frame
+        // evidence: preserve the physical Touch as unknown-player instead
+        // of publishing an invalid foreign-frame reference.
+        let Some(source) = frames.get(touch.frame as usize) else {
+            continue;
+        };
+        if source.selected_ball.is_none() {
+            continue;
+        }
+        let same_frame_track = touch.player_track_id.and_then(|id| {
+            u64::try_from(id)
+                .ok()
+                .filter(|&id| source.players.iter().any(|player| player.track_id == id))
+        });
         result.push(PhysicalTouchCandidate {
             frame_index: frame,
-            provisional_track_id: touch.player_track_id.map(|id| id as u64),
+            provisional_track_id: same_frame_track,
             probability: touch.confidence,
             ball_x_px: touch.ball_x,
             ball_y_px: touch.ball_y,
@@ -359,6 +375,61 @@ mod tests {
         )
         .is_err());
     }
+    #[test]
+    fn nearby_track_can_support_motion_but_not_claim_missing_source_frame() {
+        // The strongest smoothed peak is frame 30, but RAVEL has no player
+        // detection there. The +/-2 frame associator sees player 1 on 29/31.
+        // The resulting physical Touch must retain UNKNOWN player identity.
+        let mut frames = scenario(true, true, false);
+        for (index, row) in frames.iter_mut().enumerate() {
+            for player in &mut row.players {
+                player.touch_probability = Some(if (28..=32).contains(&index) {
+                    0.95
+                } else {
+                    0.01
+                });
+            }
+        }
+        frames[30].players.clear();
+        let events = evaluate_block(&frames, 640, 360, 0, 80, TouchSettings::default()).unwrap();
+        assert!(
+            !events.is_empty(),
+            "Motion-supported Touch must survive a one-frame player gap"
+        );
+        assert!(events
+            .iter()
+            .any(|event| event.frame_index == 30 && event.provisional_track_id.is_none()));
+        assert!(events
+            .iter()
+            .all(|event| event.provisional_track_id.is_none_or(|id| frames
+                [event.frame_index as usize]
+                .players
+                .iter()
+                .any(|player| player.track_id == id))));
+        assert!(events
+            .iter()
+            .all(|event| frames[event.frame_index as usize].selected_ball.is_some()));
+    }
+
+    #[test]
+    fn absent_exact_frame_ball_cannot_be_published_from_nearby_motion() {
+        let mut frames = scenario(true, true, false);
+        for (index, row) in frames.iter_mut().enumerate() {
+            for player in &mut row.players {
+                player.touch_probability = Some(if (28..=32).contains(&index) {
+                    0.95
+                } else {
+                    0.01
+                });
+            }
+        }
+        frames[30].selected_ball = None;
+        let events = evaluate_block(&frames, 640, 360, 0, 80, TouchSettings::default()).unwrap();
+        assert!(events
+            .iter()
+            .all(|event| frames[event.frame_index as usize].selected_ball.is_some()));
+    }
+
     #[test]
     fn emission_bounds_do_not_repeat_events() {
         let frames = scenario(true, true, false);
