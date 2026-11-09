@@ -736,3 +736,10 @@ Next: deterministic rally interval boundary and native/legacy comparison fixture
 - Verified: 183 successful Rust tests (2 optional ONNX tests ignored), including native HTTP preview card stable ID equality and source frame parity, out-of-bounds and clip-contract rejection. No GPU reruns.
 
 Next: reconcile gold rally marking stores without silently remapping old project data.
+## 70. Единая политика золотых отметок и прежние сохранения — 2026-11-09
+
+- Created one canonical Rust gold policy in rust/volley-core/src/gold.rs: stable original 24-hex rally IDs, idempotent mark/unmark, bounded 5000 mark entries and no implicit ID conversion. Both rust/volley-app/src/native_rally_marks.rs and rust/volley-app/src/rally_marks.rs call the same gold policy. Each adapter continues to validate exact project/run source and CAS revision before writing only its own isolated sandbox store. The canonical ownership manifest now points to volley-core/src/gold.rs with both persistence adapters.
+- Preserve existing legacy schema volley-rally-marks/1, original run_id, video, cache_id, rally_id, anchor_id and even unknown legacy record metadata. A duplicate mark causes no write; old hexadecimal case remains accepted for existing records, and all NEW IDs use canonical lower-case. Native schema volley-native-rally-marks/1 remains independent. No attempts to copy/migrate, invent a new ID, or overwrite any user originals.
+- Tests validate original legacy JSON payload byte equality on no-op, source separation, ID preservation, saturation limits, malformed IDs, duplicate clicks, native source-and-revision roundtrip and existing saved legacy context-insensitive anchor stability. Offline Rust tests: 187 passed, two optional ONNX tests ignored, format/check passed. A real pre-Rust project archive migration was not performed.
+
+Next: one typed source-scoped rally selection API for preview and montage without an inferred athlete or game action.

@@ -1,8 +1,8 @@
 {
     "schema":  "volley-rust-stage-roadmap/1",
     "plannedTotal":  85,
-    "lastRecorded":  69,
-    "nextStage":  70,
+    "lastRecorded":  70,
+    "nextStage":  71,
     "estimateNote":  "85 — текущий ориентир планирования, не обещание неизменного объема; этап != готовая подсистема. При пересмотре плана обновлять JSON, Markdown и журнал в одном коммите.",
     "stages":  [
                    {
@@ -561,8 +561,9 @@
                        "number":  70,
                        "title":  "Единая политика золотых отметок и прежние сохранения",
                        "area":  "Розыгрыши",
-                       "status":  "planned",
-                       "acceptance":  "Adapters preserve existing IDs/stores without silent remap"
+                       "status":  "recorded",
+                       "acceptance":  "Adapters preserve existing IDs/stores without silent remap",
+                       "journalSection":  70
                    },
                    {
                        "number":  71,

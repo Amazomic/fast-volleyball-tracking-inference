@@ -14,14 +14,15 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{
-    collections::HashSet,
+    collections::{BTreeSet, HashSet},
     fs::{self, OpenOptions},
     path::Path,
     sync::Arc,
 };
+use volley_core::gold::{edit_gold_set, MAX_GOLD_MARKS};
 
 const MAX_MARKS_BYTES: u64 = 2 * 1024 * 1024;
-const MAX_MARKS: usize = 5000;
+const MAX_MARKS: usize = MAX_GOLD_MARKS;
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -282,35 +283,34 @@ fn mutate(state: &AppState, req: &MarksRequest) -> Result<Value, ApiError> {
             )
         })?;
     let key = anchor(scene);
+    let before = doc["marks"]
+        .as_array()
+        .expect("validated legacy rows")
+        .iter()
+        .filter(|row| row["run_id"].as_str() == Some(req.run_id.as_str()))
+        .filter_map(|row| row["anchor_id"].as_str().map(str::to_owned))
+        .collect::<BTreeSet<_>>();
+    let (_, changed) = edit_gold_set(&before, &key, marked).map_err(storage::bad_request)?;
     let rows = doc["marks"].as_array_mut().expect("validated marks");
-    let existing = rows.iter().position(|row| {
-        row["run_id"].as_str() == Some(req.run_id.as_str())
-            && row["anchor_id"].as_str() == Some(key.as_str())
-    });
-    let changed = match (marked, existing) {
-        (true, Some(_)) | (false, None) => false,
-        (false, Some(index)) => {
-            rows.remove(index);
-            true
-        }
-        (true, None) => {
+    if changed {
+        if marked {
             if rows.len() >= MAX_MARKS {
-                return Err(storage::bad_request("Достигнут лимит золотых отметок"));
+                return Err(storage::bad_request("Gold rally mark store is at capacity"));
             }
             rows.push(json!({
-                "run_id":req.run_id,
-                "video":video,
-                "cache_id":scene.cache_id,
-                "rally_id":rally_id,
-                "anchor_id":key,
+                "run_id":req.run_id,"video":video,"cache_id":scene.cache_id,
+                "rally_id":rally_id,"anchor_id":key,
                 "detected_start_frame":scene.rally.detected_start_frame,
                 "detected_end_frame":scene.rally.detected_end_frame,
-                "track_ids":scene.rally.track_ids,
-                "gold":true
+                "track_ids":scene.rally.track_ids,"gold":true
             }));
-            true
+        } else {
+            rows.retain(|row| {
+                !(row["run_id"].as_str() == Some(req.run_id.as_str())
+                    && row["anchor_id"].as_str() == Some(key.as_str()))
+            });
         }
-    };
+    }
     let revision = if changed {
         versioned_store::write_json_checked(&project, &path, &doc, MAX_MARKS_BYTES)
             .map_err(storage::bad_request)?;
@@ -431,6 +431,31 @@ mod tests {
             anchor(&sample(100, 200, 10, "base.rev")),
             anchor(&sample(100, 200, 10, "base.next"))
         );
+    }
+    #[test]
+    fn old_gold_record_keeps_original_anchor_and_noop_payload() {
+        let sample = sample(100, 200, 10, "cache.rev");
+        let original = anchor(&sample);
+        let untouched = serde_json::json!({
+            "schema":"volley-rally-marks/1",
+            "marks":[{"run_id":"run_123","video":"match.mp4",
+                "cache_id":"cache.rev","rally_id":"old-source-rally-id",
+                "anchor_id":original,"gold":true,"extra_legacy_key":"preserved"}]
+        });
+        let json = serde_json::to_vec(&untouched).unwrap();
+        let saved = parse(Some(&json)).unwrap();
+        assert_eq!(saved, untouched);
+        assert_eq!(record_ids(&saved, "run_123").len(), 1);
+        let (current, changed) = edit_gold_set(
+            &record_ids(&saved, "run_123").into_iter().collect(),
+            &original,
+            true,
+        )
+        .unwrap();
+        assert!(!changed);
+        assert!(current.contains(&original));
+        assert_eq!(serde_json::to_vec(&saved).unwrap(), json);
+        assert!(record_ids(&saved, "run_another").is_empty());
     }
     #[test]
     fn stale_revision_never_matches_different_file() {

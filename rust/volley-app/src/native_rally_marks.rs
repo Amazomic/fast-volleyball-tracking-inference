@@ -15,9 +15,10 @@ use axum::{
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::{collections::BTreeSet, path::Path, sync::Arc};
+use volley_core::gold::{edit_gold_set, valid_gold_id, MAX_GOLD_MARKS};
 
 const MAX_FILE: u64 = 256 * 1024;
-const MAX_MARKS: usize = 5000;
+const MAX_MARKS: usize = MAX_GOLD_MARKS;
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -36,10 +37,7 @@ pub struct SetMark {
     expected_revision: String,
 }
 fn valid_candidate(id: &str) -> bool {
-    id.len() == 24
-        && id
-            .bytes()
-            .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+    valid_gold_id(id)
 }
 fn bytes_for(root: &Path, run_id: &str) -> Result<Option<Vec<u8>>, String> {
     if !root.exists() {
@@ -180,15 +178,9 @@ fn change(state: &AppState, request: &SetMark) -> Result<Value, ApiError> {
     }
     let mut marks =
         decode(existing.as_deref(), &request.rally_run_id).map_err(storage::bad_request)?;
-    if request.marked {
-        if marks.len() >= MAX_MARKS && !marks.contains(&request.candidate_id) {
-            return Err(storage::bad_request("Too many marked native rallies"));
-        }
-        marks.insert(request.candidate_id.clone());
-    } else {
-        marks.remove(&request.candidate_id);
-    }
-    // Only write when actual state changes; a duplicate click is idempotent.
+    let (updated, _) = edit_gold_set(&marks, &request.candidate_id, request.marked)
+        .map_err(storage::bad_request)?;
+    marks = updated; // Only write when actual state changes; a duplicate click is idempotent.
     let would_change = existing.is_none() || {
         let old =
             decode(existing.as_deref(), &request.rally_run_id).map_err(storage::bad_request)?;

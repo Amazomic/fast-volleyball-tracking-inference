@@ -167,9 +167,10 @@
                     },
                     {
                         "id":  "gold",
-                        "owner":  "rust/volley-app/src/native_rally_marks.rs",
+                        "owner":  "rust/volley-core/src/gold.rs",
                         "status":  "partial",
                         "adapters":  [
+                                         "rust/volley-app/src/native_rally_marks.rs",
                                          "rust/volley-app/src/rally_marks.rs"
                                      ],
                         "stores":  [

@@ -9,6 +9,7 @@ pub mod continuity;
 pub mod event_evidence;
 pub mod evidence_source;
 pub mod fusion;
+pub mod gold;
 pub mod identity_review;
 pub mod motion;
 pub mod rallies;
