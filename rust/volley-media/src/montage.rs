@@ -39,6 +39,8 @@ pub struct ClipReceipt {
     pub native_fps: f64,
     pub native_rate: String,
     pub original_resolution: bool,
+    pub native_width: u32,
+    pub native_height: u32,
 }
 
 fn parse_fraction(raw: &str) -> Option<(u64, u64)> {
@@ -133,6 +135,8 @@ impl OriginalClip {
             native_fps: self.native_fps,
             native_rate: self.native_rate.clone(),
             original_resolution: true,
+            native_width: self.native_width,
+            native_height: self.native_height,
         }
     }
 
@@ -221,9 +225,62 @@ pub fn native_clip_format(path: &Path) -> Result<(u32, u32, String, f64), String
         .map(|(n, d)| n as f64 / d as f64)
         .filter(|v| v.is_finite() && *v > 0.0)
         .unwrap_or(30.0);
+    if width == 0 || height == 0 || width > 8192 || height > 8192 {
+        return Err("Неподдерживаемый размер FFmpeg-фрагмента".into());
+    }
     Ok((width, height, codec, fps))
 }
 
+/// The same profile is used by both native and legacy CPU rally selectors.
+/// Preserve every original's width AND height independently. A wide and a
+/// tall source must not downscale either source just because the other source
+/// has a larger pixel area. Padding is allowed; resampling resolution is not.
+pub fn output_profile(formats: &[(u32, u32, String, f64)]) -> Result<(u32, u32, f64), String> {
+    if formats.is_empty() || formats.len() > 80 {
+        return Err("Нет фрагментов для определения исходного разрешения".into());
+    }
+    let mut width = 0u32;
+    let mut height = 0u32;
+    let mut fps = 0.0f64;
+    for (w, h, _, rate) in formats {
+        if *w == 0
+            || *h == 0
+            || *w > 8192
+            || *h > 8192
+            || !rate.is_finite()
+            || !(1.0..=240.0).contains(rate)
+        {
+            return Err("Некорректное исходное разрешение или FPS".into());
+        }
+        width = width.max(*w);
+        height = height.max(*h);
+        fps = fps.max(*rate);
+    }
+    let width = width + width % 2;
+    let height = height + height % 2;
+    if u64::from(width) * u64::from(height) > 32_000_000 {
+        return Err("Комбинация исходных размеров превышает безопасный лимит: уменьшать качество автоматически нельзя".into());
+    }
+    Ok((width, height, fps))
+}
+
+/// Refuse to claim an original-resolution extract when FFmpeg produced a
+/// scaled clip, wrong codec or incorrect source frame rate.
+pub fn verify_original_segment(
+    original: &OriginalClip,
+    format: &(u32, u32, String, f64),
+) -> Result<(), String> {
+    if format.0 != original.native_width || format.1 != original.native_height {
+        return Err(format!(
+            "Рендер уменьшил/изменил разрешение оригинала {}x{} -> {}x{}",
+            original.native_width, original.native_height, format.0, format.1
+        ));
+    }
+    if format.2 != "h264" || (format.3 - original.native_fps).abs() > 0.1 {
+        return Err("FFmpeg изменил FPS или кодек оригинального фрагмента".into());
+    }
+    Ok(())
+}
 pub fn can_stream_copy(formats: &[(u32, u32, String, f64)]) -> bool {
     let Some(first) = formats.first() else {
         return false;
@@ -265,6 +322,7 @@ pub fn compose_args(
     playlist: Option<&Path>,
     hardware: bool,
 ) -> Result<Vec<String>, String> {
+    let (max_width, max_height, target_fps) = output_profile(formats)?;
     if clips.is_empty() || clips.len() != formats.len() {
         return Err("Некорректные исходные фрагменты монтажа".into());
     }
@@ -292,23 +350,11 @@ pub fn compose_args(
         for clip in clips {
             args.extend(["-i".into(), clip.to_string_lossy().into_owned()]);
         }
-        let (max_width, max_height) = formats
-            .iter()
-            .map(|entry| (entry.0 as u64 * entry.1 as u64, entry.0, entry.1))
-            .max_by_key(|(area, _, _)| *area)
-            .map(|(_, w, h)| (w + (w % 2), h + (h % 2)))
-            .ok_or("Неизвестный размер видео")?;
-        let target_fps = formats
-            .iter()
-            .map(|row| row.3)
-            .fold(24_f64, f64::max)
-            .clamp(24.0, 240.0);
         let mut filters = Vec::new();
         let mut refs = String::new();
         for (index, _) in clips.iter().enumerate() {
             filters.push(format!(
                 "[{index}:v:0]setpts=PTS-STARTPTS,fps={target_fps:.8},\
-                 scale={max_width}:{max_height}:force_original_aspect_ratio=decrease:flags=lanczos,\
                  pad={max_width}:{max_height}:(ow-iw)/2:(oh-ih)/2,\
                  setsar=1,format=yuv420p[v{index}]"
             ));

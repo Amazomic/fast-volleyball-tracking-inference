@@ -196,10 +196,13 @@
                     },
                     {
                         "id":  "montage",
-                        "owner":  "rust/volley-app/src/montage.rs",
+                        "owner":  "rust/volley-media/src/montage.rs",
                         "status":  "partial",
                         "adapters":  [
-                                         "rust/volley-app/src/player_montage.rs"
+                                         "rust/volley-app/src/montage.rs",
+                                         "rust/volley-app/src/player_montage.rs",
+                                         "rust/volley-app/src/native_rally_preview.rs",
+                                         "rust/volley-app/src/rallies.rs"
                                      ],
                         "routes":  [
                                        {

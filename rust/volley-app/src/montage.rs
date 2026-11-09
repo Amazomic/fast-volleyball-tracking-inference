@@ -1,5 +1,6 @@
-//! Native, isolated manual montage execution. Never renders from analysis proxies.
-//! The complete automatic rally selection / API compatibility is future work.
+//! One isolated Rust montage job runner for both native and legacy CPU rally
+//! selection. FFmpeg export is owned by volley-media; pixels are always read
+//! from the original project recording, never from analysis proxies.
 use crate::{
     preparation, projects,
     storage::{self, ApiError, ApiResult},
@@ -28,8 +29,8 @@ use tokio::{
 use uuid::Uuid;
 use volley_media::{
     montage::{
-        can_stream_copy, compose_args, concat_playlist, native_clip_format, soundtrack_args,
-        soundtrack_is_audio, OriginalClip, SelectedClip,
+        can_stream_copy, compose_args, concat_playlist, native_clip_format, output_profile,
+        soundtrack_args, soundtrack_is_audio, verify_original_segment, OriginalClip, SelectedClip,
     },
     probe,
 };
@@ -404,13 +405,28 @@ async fn encode_with_fallback(
     run_ffmpeg(primary(false), duration, status, index, stage, cancel).await
 }
 
+fn validate_rendered_profile(path: &Path, profile: (u32, u32, f64)) -> Result<(), String> {
+    let (width, height, codec, fps) = native_clip_format(path)?;
+    if (width, height) != (profile.0, profile.1) || codec != "h264" || (fps - profile.2).abs() > 0.1
+    {
+        return Err(format!(
+            "FFmpeg output lost original resolution or FPS: got {width}x{height}/{fps:.5}, expected {}x{}/{:.5}",
+            profile.0,profile.1,profile.2,
+        ));
+    }
+    Ok(())
+}
 fn validate_rendered(path: &Path, expected_duration: f64) -> Result<(), String> {
     let stat = fs::metadata(path).map_err(|e| format!("Ролик не создан: {e}"))?;
     if !stat.is_file() || stat.len() < 1024 {
         return Err("Пустой файл результата FFmpeg".into());
     }
     let actual = probe(path)?.duration_sec;
-    if !actual.is_finite() || actual <= 0.0 || actual > expected_duration + 0.75 {
+    if !actual.is_finite()
+        || actual <= 0.0
+        || actual < (expected_duration - 0.35).max(0.01)
+        || actual > expected_duration + 0.75
+    {
         return Err(format!(
             "Неправильная длительность результата: {actual:.3} c, план {expected_duration:.3} c"
         ));
@@ -444,10 +460,13 @@ async fn render(plan: Planned, status: Arc<Mutex<JobStatus>>, mut cancel: watch:
             )
             .await?;
             validate_rendered(&target, seconds)?;
-            formats.push(native_clip_format(&target)?);
+            let actual_format = native_clip_format(&target)?;
+            verify_original_segment(clip, &actual_format)?;
+            formats.push(actual_format);
             paths.push(target);
         }
 
+        let final_profile = output_profile(&formats)?;
         let join_index = paths.len();
         let joined = segments.join("joined.mp4");
         let playlist = segments.join("sources.concat.txt");
@@ -496,6 +515,7 @@ async fn render(plan: Planned, status: Arc<Mutex<JobStatus>>, mut cancel: watch:
             .await?;
         }
         validate_rendered(&joined, total_duration)?;
+        validate_rendered_profile(&joined, final_profile)?;
         let final_path = if let Some(audio) = &plan.audio {
             let with_music = segments.join("with_music.mp4");
             let args = soundtrack_args(
@@ -515,6 +535,7 @@ async fn render(plan: Planned, status: Arc<Mutex<JobStatus>>, mut cancel: watch:
             )
             .await?;
             validate_rendered(&with_music, total_duration)?;
+            validate_rendered_profile(&with_music, final_profile)?;
             with_music
         } else {
             joined
@@ -529,6 +550,10 @@ async fn render(plan: Planned, status: Arc<Mutex<JobStatus>>, mut cancel: watch:
             "id":plan.job_id,
             "project_id":plan.project_id,
             "render_source":"original_recording",
+            "original_resolution_verified":true,
+            "output_dimensions":{"width":final_profile.0,"height":final_profile.1},
+            "output_fps":final_profile.2,
+            "quality_policy":"native_resolution_no_downsampling_h264_crf15_nvenc_cq17",
             "duration_sec":total_duration,
             "selected":plan.clips.iter().map(OriginalClip::receipt).collect::<Vec<_>>(),
             "music":plan.audio.as_ref().map(|path| json!({

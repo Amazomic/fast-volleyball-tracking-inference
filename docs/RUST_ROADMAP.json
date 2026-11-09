@@ -1,8 +1,8 @@
 {
     "schema":  "volley-rust-stage-roadmap/1",
     "plannedTotal":  85,
-    "lastRecorded":  74,
-    "nextStage":  75,
+    "lastRecorded":  75,
+    "nextStage":  76,
     "estimateNote":  "85 — текущий ориентир планирования, не обещание неизменного объема; этап != готовая подсистема. При пересмотре плана обновлять JSON, Markdown и журнал в одном коммите.",
     "stages":  [
                    {
@@ -601,8 +601,9 @@
                        "number":  75,
                        "title":  "Единый рендер/монтаж из оригинала для обоих форматов",
                        "area":  "Монтаж",
-                       "status":  "planned",
-                       "acceptance":  "One FFmpeg exporter, source resolution/quality tests"
+                       "status":  "recorded",
+                       "acceptance":  "One FFmpeg exporter, source resolution/quality tests",
+                       "journalSection":  75
                    },
                    {
                        "number":  76,
