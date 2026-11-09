@@ -79,6 +79,7 @@ fn app_with_gate(state: Arc<AppState>, gate: Arc<runtime::ShutdownGate>) -> Rout
         .route("/internal/rewrite-status", get(runtime::rewrite_status))
         .route("/studio/rust", get(studio_web::index))
         .route("/studio/rust/app.js", get(studio_web::js))
+        .route("/studio/rust/chain.js", get(studio_web::chain_js))
         .route("/studio/rust/ui.js", get(studio_web::ui_js))
         .route("/studio/rust/tabs.js", get(studio_web::tabs_js))
         .route("/studio/rust/tracks.js", get(studio_web::tracks_js))

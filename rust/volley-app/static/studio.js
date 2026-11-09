@@ -4,7 +4,7 @@
 (() => {
   const $ = id => document.getElementById(id);
   const ui = {
-    project:$("studio-project"),run:$("studio-run"),refresh:$("studio-refresh"),
+    project:$("studio-project"),analysis:$("studio-inference"),run:$("studio-run"),refresh:$("studio-refresh"),
     filter:$("studio-filter"),previous:$("studio-prev"),next:$("studio-next"),
     list:$("studio-rallies"),total:$("studio-total"),goldCount:$("studio-gold-count"),
     selectedCount:$("studio-selected-count"),banner:$("studio-banner"),
@@ -18,7 +18,8 @@
     download:$("studio-download")
   };
   const s = {
-    project:"",run:"",video:"",items:[],total:0,offset:0,limit:24,
+    project:"",analysis:"",run:"",video:"",items:[],total:0,offset:0,limit:24,
+    projectCatalog:[],projectVideos:[],chain:null,chainEpoch:0,catalogEpoch:0,
     filtered:0,gold:new Set(),revision:"absent",writable:false,selected:new Map(),
     current:"",videoKey:"",stopAt:null,generation:0,busy:false,jobId:"",timer:null
   };
@@ -145,38 +146,100 @@
       select.append(entry);
     }
   };
-  const projects=async()=>{
-    const prev=s.project;
-    const raw=await request("/api/projects");
-    const rows=(Array.isArray(raw.projects)?raw.projects:[]).filter(x=>typeof x.id==="string");
-    options(ui.project,rows,"id",x=>x.name||x.title||x.id,"Выберите проект");
-    ui.project.value=rows.some(x=>x.id===prev)?prev:
-      (rows.length===1?rows[0].id:"");
-    s.project=ui.project.value;
-    window.dispatchEvent(new Event("volley:project-ready"));
-    await loadRuns(s.project===prev?s.run:"");
-  };
-  const loadRuns=async(preferred="")=>{
+  // The linked source chain is project -> GPU analysis (video + lineage) -> CPU snapshot.
+  // Preserve selections on refresh; reset only dependent selections when an upstream
+  // source changes. Stale async responses must never reselect a different project.
+  const setRuns=async(preferred="")=>{
     reset();
-    if(!s.project){
-      options(ui.run,[],"rally_run_id",x=>x,"Сначала выберите проект");
-      message("Выберите проект для загрузки CPU-розыгрышей.");return;
-    }
-    const token=s.generation;
-    message("Загружаются сохранённые CPU-версии…");
-    const raw=await request(url("/api/cpu/native/rallies/runs",{project_id:s.project}));
-    if(token!==s.generation)return;
-    const rows=Array.isArray(raw.runs)?raw.runs:[];
+    const rows=s.chain?.byAnalysis.get(s.analysis)||[];
     options(ui.run,rows,"rally_run_id",row=>
-      (row.video||"Видео")+" · "+(row.candidate_count||0)+" розыгрышей · "+
-      String(row.rally_run_id).slice(0,8),
-      rows.length?"Выберите CPU-версию":"Нет сохранённых CPU-версий");
-    ui.run.value=rows.some(x=>x.rally_run_id===preferred)?preferred:
-      (rows.length===1?rows[0].rally_run_id:"");
+      (window.VolleyStudioChain.stamp(row.created_at)||"CPU "+row.rally_run_id.slice(0,8))+
+      " · "+(row.candidate_count||0)+" розыгрышей",
+      !s.analysis?"Сначала выберите анализ":
+        rows.length?"Выберите постобработку":"Нет CPU-версий для анализа");
+    ui.run.disabled=!s.analysis||!rows.length;
+    ui.run.value=rows.some(row=>row.rally_run_id===preferred)?preferred:
+      rows.length===1?rows[0].rally_run_id:"";
     s.run=ui.run.value;
     if(s.run)await loadPage();
-    else message(rows.length?"Выберите версию CPU-розыгрышей.":
-      "В проекте ещё нет сохранённых CPU-розыгрышей.");
+    else message(!s.analysis?"Выберите первичный GPU-анализ.":
+      rows.length?"Выберите версию постобработки.":
+      "У выбранного анализа пока нет связанной CPU-постобработки.");
+  };
+  const setAnalysis=async(preferredRun="")=>{
+    s.analysis=ui.analysis.value;
+    const source=s.chain?.choices.find(row=>row.value===s.analysis);
+    window.dispatchEvent(new CustomEvent("volley:chain-change",{
+      detail:{project_id:s.project,video:source?.video||"",analysis:s.analysis}
+    }));
+    await setRuns(preferredRun);
+  };
+  const loadChain=async(preferredAnalysis="",preferredRun="")=>{
+    const token=++s.chainEpoch,project=s.project;
+    reset();
+    s.chain=null;
+    options(ui.analysis,[],"value",x=>x,"Загрузка анализов…");
+    options(ui.run,[],"rally_run_id",x=>x,"Сначала выберите анализ");
+    ui.analysis.disabled=true;ui.run.disabled=true;
+    if(!project){
+      options(ui.analysis,[],"value",x=>x,"Сначала выберите проект");
+      message("Выберите проект для просмотра цепочки обработок.");
+      return;
+    }
+    message("Поиск сохранённых GPU-анализов и CPU-версий…");
+    const videos=s.projectVideos.slice(0,40);
+    const runs=await request(url("/api/cpu/native/rallies/runs",{project_id:project}));
+    const overviews=new Map();
+    let unavailable=0;
+    // Limit metadata requests for multi-video projects to four in flight.
+    for(let offset=0;offset<videos.length;offset+=4){
+      const batch=await Promise.all(videos.slice(offset,offset+4).map(async video=>{
+        try{
+          const value=await request(url("/api/studio/rust/analysis-overview",{
+            project_id:project,video
+          }));
+          if(value.schema!=="volley-native-analysis-overview/1"||
+              value.project_id!==project||value.video!==video||value.metadata_only!==true)
+            throw Error("Несовместимая версия индекса анализа");
+          return [video,value];
+        }catch{return [video,null];}
+      }));
+      if(token!==s.chainEpoch||s.project!==project)return;
+      for(const [video,value] of batch){
+        if(value)overviews.set(video,value);else unavailable++;
+      }
+    }
+    if(token!==s.chainEpoch||s.project!==project)return;
+    const builder=window.VolleyStudioChain;
+    if(!builder?.build)throw Error("Связанная цепочка Rust Studio недоступна");
+    s.chain=builder.build(videos,overviews,runs.runs);
+    options(ui.analysis,s.chain.choices,"value",item=>item.label,
+      s.chain.choices.length?"Выберите первичный анализ":"Нет GPU-анализов");
+    ui.analysis.disabled=!s.chain.choices.length;
+    ui.analysis.value=s.chain.choices.some(row=>row.value===preferredAnalysis)?
+      preferredAnalysis:s.chain.choices.length===1?s.chain.choices[0].value:"";
+    await setAnalysis(preferredRun);
+    if(unavailable)message("Не удалось прочитать стадии "+unavailable+
+      " видео. Для части CPU-версий происхождение GPU не подтверждено.","error");
+  };
+  const projects=async()=>{
+    const prev=s.project,selectedAnalysis=s.analysis,selectedRun=s.run;
+    const epoch=++s.catalogEpoch;
+    const raw=await request("/api/projects");
+    if(epoch!==s.catalogEpoch)return;
+    const rows=(Array.isArray(raw.projects)?raw.projects:[]).
+      filter(row=>typeof row.id==="string");
+    s.projectCatalog=rows;
+    options(ui.project,rows,"id",row=>row.name||row.title||row.id,"Выберите проект");
+    ui.project.value=rows.some(row=>row.id===prev)?prev:
+      rows.length===1?rows[0].id:"";
+    s.project=ui.project.value;
+    const current=rows.find(row=>row.id===s.project);
+    s.projectVideos=Array.isArray(current?.videos)?
+      current.videos.filter(video=>typeof video==="string"):[];
+    window.dispatchEvent(new Event("volley:project-ready"));
+    await loadChain(s.project===prev?selectedAnalysis:"",
+      s.project===prev?selectedRun:"");
   };
   const loadMarks=async(token)=>{
     const raw=await request(url("/api/cpu/native/rallies/marks",{
@@ -398,15 +461,24 @@
     finally{s.busy=false;}
   };
   ui.project.addEventListener("change",async()=>{
-    s.project=ui.project.value;
-    try{await loadRuns();}catch(e){failed(e);}
+    s.catalogEpoch++;
+    s.project=ui.project.value;s.analysis="";
+    const entry=s.projectCatalog.find(row=>row.id===s.project);
+    s.projectVideos=Array.isArray(entry?.videos)?
+      entry.videos.filter(video=>typeof video==="string"):[];
+    window.dispatchEvent(new Event("volley:project-ready"));
+    try{await loadChain();}catch(e){failed(e);}
   });
+  ui.analysis.addEventListener("change",()=>setAnalysis().catch(failed));
   ui.run.addEventListener("change",async()=>{
-    const id=ui.run.value;reset();s.run=id;
-    try{if(s.run)await loadPage();}catch(e){failed(e);}
+    const id=ui.run.value;reset();
+    if(!(s.chain?.byAnalysis.get(s.analysis)||[]).some(row=>row.rally_run_id===id))return;
+    s.run=id;
+    try{await loadPage();}catch(e){failed(e);}
   });
   ui.refresh.addEventListener("click",()=>projects().catch(failed));
   window.addEventListener("volley:refresh-projects",()=>projects().catch(failed));
+  window.addEventListener("volley:refresh-chain",()=>projects().catch(failed));
   window.addEventListener("volley:open-legacy-project",async event=>{
     const id=event.detail?.project_id;
     if(typeof id!=="string"||!/^[a-f0-9]{12}$/.test(id))return;
@@ -445,7 +517,12 @@
     if(typeof target.project!=="string"||typeof target.run!=="string"
       ||target.project!==s.project)return;
     try{
-      await loadRuns(target.run);
+      if(!s.chain?.runToAnalysis.has(target.run))await projects();
+      const analysis=s.chain?.runToAnalysis.get(target.run);
+      if(analysis){
+        ui.analysis.value=analysis;
+        await setAnalysis(target.run);
+      }
       if(s.run===target.run){
         document.getElementById("studio-nav-preview").click();
         message("Открыта выбранная CPU-версия розыгрышей.","ok");

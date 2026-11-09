@@ -7,6 +7,7 @@
   <title>Volleyball Studio — Rust Preview</title>
   <link rel="stylesheet" href="/studio/rust/app.css">
   <script src="/studio/rust/ui.js" defer></script>
+  <script src="/studio/rust/chain.js" defer></script>
   <script src="/studio/rust/app.js" defer></script>
   <script src="/studio/rust/tabs.js" defer></script>
   <script src="/studio/rust/tracks.js" defer></script>
@@ -19,13 +20,6 @@
   <div class="shell">
     <aside class="sidebar" aria-label="Панель проекта">
       <div class="brand"><span class="logo" aria-hidden="true">◈</span><div><strong>VOLLEYBALL</strong><span>STUDIO <i>RUST</i></span></div></div>
-      <div class="sidebar-heading">Проект и анализ</div>
-      <label class="field-label" for="studio-project">Проект</label>
-      <select id="studio-project" aria-label="Выберите проект"><option value="">Загрузка проектов…</option></select>
-      <label class="field-label" for="studio-run">CPU-версия розыгрышей</label>
-      <select id="studio-run" aria-label="Выберите сохранённый запуск"><option value="">Выберите проект</option></select>
-      <button id="studio-refresh" class="secondary full" type="button">↻ Обновить данные</button>
-      <div class="sidebar-divider"></div>
       <div class="sidebar-heading">Навигация</div>
       <nav class="menu">
         <a id="studio-nav-preview" class="active" href="#preview" data-studio-tab="preview" aria-current="page"><span>▣</span> Предпросмотр</a>
@@ -42,8 +36,23 @@
       </div>
     </aside>
     <main class="main">
-      <header class="topbar">
+      <header class="topbar studio-chain-topbar">
         <div class="breadcrumbs">Студия <span>›</span> <strong id="studio-section-name">Предпросмотр</strong></div>
+        <div class="studio-source-chain" role="group" aria-label="Связанные версии проекта, анализа и постобработки">
+          <div class="studio-chain-step">
+            <label class="field-label" for="studio-project">01 · Проект</label>
+            <select id="studio-project" aria-label="Выберите проект"><option value="">Загрузка проектов…</option></select>
+          </div>
+          <div class="studio-chain-step">
+            <label class="field-label" for="studio-inference">02 · Анализ GPU</label>
+            <select id="studio-inference" aria-label="Выберите первичный анализ" disabled><option value="">Сначала выберите проект</option></select>
+          </div>
+          <div class="studio-chain-step">
+            <label class="field-label" for="studio-run">03 · Постобработка CPU</label>
+            <select id="studio-run" aria-label="Выберите версию постобработки" disabled><option value="">Сначала выберите анализ</option></select>
+          </div>
+          <button id="studio-refresh" class="secondary studio-chain-refresh" type="button" aria-label="Обновить цепочку версий" title="Обновить цепочку версий">↻</button>
+        </div>
         <div class="studio-top-controls">
           <details id="studio-ui-settings" class="studio-ui-settings">
             <summary id="studio-ui-settings-summary" class="secondary" aria-label="Открыть настройки">⚙ <span id="studio-ui-settings-label">Настройки интерфейса</span></summary>

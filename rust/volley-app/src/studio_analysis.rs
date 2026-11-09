@@ -186,6 +186,9 @@ fn stage_summary(
             created(&folder),
             json!({
                 "id":id,"kind":stage,"state":state,"model":record["model"],
+                "created_at":created(&folder),
+                "ravel_job_id":record["sources"]["ravel"]["job_id"],
+                "vball_job_id":record["sources"]["vballnet"]["job_id"],
                 "count":record[count_key],"count_unit":count_key,
                 "source_fusion_id":record["source_fusion_id"],
                 "source_replay_id":record["source_replay_id"],

@@ -107,6 +107,7 @@
         throw Error("Некорректная версия ответа CPU-сервера");
       }
       announce(names[stage]+": создана новая сохранённая версия.");
+      window.dispatchEvent(new Event("volley:refresh-chain"));
       if(project===projectId()&&video===ui.video.value&&state.tab==="analysis"){
         await loadOverview();
       }
@@ -252,7 +253,10 @@
       if(["complete","cancelled","failed","interrupted"].includes(status.phase)){
         stopGpuPolling();state.gpuJob="";
         ui.gpuCancel.disabled=true;
-        if(status.phase==="complete")announce("GPU-инференс завершён.");
+        if(status.phase==="complete"){
+          announce("GPU-инференс завершён.");
+          window.dispatchEvent(new Event("volley:refresh-chain"));
+        }
         else announce("GPU: "+String(status.error||status.phase),true);
         await loadOverview();
       }
@@ -441,6 +445,15 @@
   ui.ball.addEventListener("click",()=>startGpu("ball"));
   ui.ravel.addEventListener("click",()=>startGpu("players"));
   ui.gpuCancel.addEventListener("click",cancelGpu);
+  window.addEventListener("volley:chain-change",event=>{
+    const detail=event.detail||{};
+    if(detail.project_id!==projectId()||!detail.video||state.tab!=="analysis")return;
+    if([...ui.video.options].some(option=>option.value===detail.video)&&
+        ui.video.value!==detail.video){
+      ui.video.value=detail.video;
+      loadOverview().catch(failure);
+    }
+  });
   ui.project.addEventListener("change",()=>{
     state.analysisGeneration++;
     if(state.tab==="analysis")loadVideos().catch(failure);

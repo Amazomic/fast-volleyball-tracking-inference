@@ -20,6 +20,7 @@ use std::{fs, sync::Arc, time::SystemTime};
 
 const CSS: &str = include_str!("../static/studio.css");
 const SCRIPT: &str = include_str!("../static/studio.js");
+const CHAIN_SCRIPT: &str = include_str!("../static/studio_chain.js");
 const UI_SCRIPT: &str = include_str!("../static/studio_ui.js");
 const TABS_SCRIPT: &str = include_str!("../static/studio_tabs.js");
 const TRACKS_SCRIPT: &str = include_str!("../static/studio_tracks.js");
@@ -58,6 +59,9 @@ pub async fn css() -> Response {
 }
 pub async fn js() -> Response {
     web_asset("text/javascript; charset=utf-8", SCRIPT)
+}
+pub async fn chain_js() -> Response {
+    web_asset("text/javascript; charset=utf-8", CHAIN_SCRIPT)
 }
 pub async fn ui_js() -> Response {
     web_asset("text/javascript; charset=utf-8", UI_SCRIPT)
@@ -177,6 +181,7 @@ fn list_runs(state: &AppState, project_id: &str) -> Result<Value, crate::storage
             modified,
             json!({
                 "rally_run_id":id,
+                "created_at":modified,
                 "video":manifest["video"],
                 "candidate_count":manifest["rally_candidates"],
                 "touch_candidate_count":manifest["touch_candidates_ingested"],
@@ -309,6 +314,9 @@ mod tests {
         assert!(html.contains("id=\"studio-legacy-view\""));
         assert!(html.contains("id=\"studio-legacy-archive-current\""));
         assert!(html.contains("id=\"studio-ui-locale\""));
+        assert!(html.contains("id=\"studio-inference\""));
+        assert!(html.contains("id=\"studio-run\""));
+        assert!(html.contains("/studio/rust/chain.js"));
         assert!(html.contains("id=\"studio-ui-theme\""));
         assert!(html.contains("id=\"studio-ui-density\""));
         assert!(html.contains("id=\"studio-ui-reduced-motion\""));
@@ -328,6 +336,10 @@ mod tests {
         assert!(css.contains("data-ui-theme"));
         assert!(css.contains("data-ui-density"));
         assert!(css.contains("data-ui-motion"));
+        let chain = get(addr, "/studio/rust/chain.js").await;
+        assert!(chain.starts_with("HTTP/1.1 200 OK"));
+        assert!(chain.contains("text/javascript; charset=utf-8"));
+        assert!(chain.contains("source_fusion_id"));
         let js = get(addr, "/studio/rust/app.js").await;
         assert!(js.starts_with("HTTP/1.1 200 OK"));
         assert!(js.contains("rallies/marks"));
