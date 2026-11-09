@@ -557,6 +557,162 @@ pub async fn status(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Read-only integration test against an explicitly supplied real,
+    // SHA-bound CPU replay. Runs new CPU Touch + Rally snapshots entirely
+    // inside a unique temporary directory; never reuses GPU analysis or
+    // changes the original Quick Reel's failed status / artifacts.
+    #[test]
+    #[ignore = "requires VOLLEY_REAL_TRACK_* source environment"]
+    fn real_saved_cpu_touch_to_rallies_without_gpu() {
+        let source = std::path::PathBuf::from(
+            std::env::var("VOLLEY_REAL_TRACKED_FILE").expect("real CPU replay path required"),
+        );
+        let sha = std::env::var("VOLLEY_REAL_TRACK_SHA").expect("real CPU replay SHA-256 required");
+        let parse = |name: &str| -> u64 {
+            std::env::var(name)
+                .unwrap_or_else(|_| panic!("Missing {name}"))
+                .parse::<u64>()
+                .expect("numeric source metadata required")
+        };
+        let frames = parse("VOLLEY_REAL_TRACK_FRAMES");
+        let width = u32::try_from(parse("VOLLEY_REAL_TRACK_WIDTH")).unwrap();
+        let height = u32::try_from(parse("VOLLEY_REAL_TRACK_HEIGHT")).unwrap();
+        let dir = std::env::temp_dir().join(format!("volley-real-cpu-verify-{}", Uuid::new_v4()));
+        fs::create_dir(&dir).unwrap();
+        let touches = dir.join("touch_candidates.jsonl");
+        let rallies = dir.join("rally_candidates.jsonl");
+        let result = (|| -> Result<(u64, u64), String> {
+            let (touch_sha, touch_count, raw_peaks) = crate::cpu_touches::detect_stream(
+                &source,
+                &touches,
+                &sha,
+                frames,
+                width,
+                height,
+                volley_core::touch_pipeline::TouchSettings::default(),
+            )?;
+            let (rally_sha, totals, ingested) = rebuild_from_snapshots(
+                &source,
+                &touches,
+                &sha,
+                &touch_sha,
+                frames,
+                touch_count,
+                width,
+                height,
+                RallySettings::default(),
+                &rallies,
+                "0123456789abcdef0123456789abcdef",
+                "abcdef0123456789abcdef0123456789",
+            )?;
+            let actual = format!(
+                "{:x}",
+                Sha256::digest(fs::read(&rallies).map_err(|e| e.to_string())?)
+            );
+            if actual != rally_sha || ingested.ingested_touch_candidates != touch_count {
+                return Err("Real CPU output hash or consumed touch count differs".into());
+            }
+            eprintln!(
+                "REAL_CPU_OK frames={frames} touch_candidates={touch_count} raw_peaks={raw_peaks} rally_candidates={}",
+                totals.accepted_proposals
+            );
+            Ok((touch_count, ingested.proposals))
+        })();
+        fs::remove_dir_all(&dir).unwrap();
+        let (touches, rallies) = result.expect("fresh CPU Touch -> Rally must succeed");
+        assert!(
+            touches > 0,
+            "Real source should produce physical Touch proposals"
+        );
+        assert!(
+            rallies > 0,
+            "Real source should produce provisional rallies"
+        );
+    }
+    #[test]
+    fn source_scoped_cpu_touch_then_rallies_never_publish_foreign_track_references() {
+        // Deterministic full CPU stage contract: source with a one-frame
+        // player occlusion at a reversal is processed by the same Touch
+        // writer used by Quick Reel and then fed into the strict Rally reader.
+        let root = std::env::temp_dir().join(format!("volley-touch-rally-{}", Uuid::new_v4()));
+        fs::create_dir(&root).unwrap();
+        let replay = root.join("tracked_frames.jsonl");
+        let touches = root.join("touch_candidates.jsonl");
+        let rallies = root.join("rally_candidates.jsonl");
+        let mut tracked = Vec::new();
+        let frames = 450_u64;
+        for frame in 0..frames {
+            let t = frame % 200;
+            let x = 0.10 + t.min(200 - t) as f64 * 0.005;
+            let touch = (96..=104).contains(&frame) || (296..=304).contains(&frame);
+            let players = if frame == 100 {
+                vec![]
+            } else {
+                vec![json!({
+                    "track_id":3,"is_verified_athlete":false,
+                    "detection":{
+                        "frame_index":frame,"class_name":"player","score":0.95,
+                        "bbox_xyxy_norm":[0.30,0.15,0.65,0.75],
+                        "query_index":0,
+                        "touch_probability": if touch {0.99} else {0.01}
+                    }
+                })]
+            };
+            let row = json!({
+                "frame_index":frame,"tracked_players":players,
+                "selected_ball":{"source_model":"vballnet","detection":{
+                    "frame_index":frame,"class_name":"ball","score":0.92,
+                    "bbox_xyxy_norm":[x,0.36,x+0.02,0.39]
+                }},
+                "track_ids_provisional":true,"confirmed_athlete_identities":false,
+                "touches_confirmed":false
+            });
+            tracked.extend(serde_json::to_vec(&row).unwrap());
+            tracked.push(b'\n');
+        }
+        fs::write(&replay, &tracked).unwrap();
+        let replay_sha = format!("{:x}", Sha256::digest(&tracked));
+        let result = (|| -> Result<(u64, u64), String> {
+            let (touch_sha, contacts, _) = crate::cpu_touches::detect_stream(
+                &replay,
+                &touches,
+                &replay_sha,
+                frames,
+                640,
+                360,
+                volley_core::touch_pipeline::TouchSettings::default(),
+            )?;
+            let (_, totals, ingested) = rebuild_from_snapshots(
+                &replay,
+                &touches,
+                &replay_sha,
+                &touch_sha,
+                frames,
+                contacts,
+                640,
+                360,
+                RallySettings::default(),
+                &rallies,
+                "0123456789abcdef0123456789abcdef",
+                "abcdef0123456789abcdef0123456789",
+            )?;
+            if ingested.ingested_touch_candidates != contacts {
+                return Err("CPU rally reconstruction dropped a valid Touch".into());
+            }
+            Ok((contacts, totals.accepted_proposals))
+        })();
+        fs::remove_dir_all(&root).unwrap();
+        let (contacts, rallies) = result.expect("CPU Touch and Rally stages must agree");
+        assert!(
+            contacts > 0,
+            "Synthetic ball reversal must yield physical Touch"
+        );
+        // A zero-proposal rally is valid for a synthetic segment that fails
+        // other quality gates; the old bug was a fatal foreign-ID rejection.
+        assert!(rallies <= contacts);
+    }
+
     fn fixture(
         frames: u64,
         cut: Option<(u64, u64)>,

@@ -150,7 +150,7 @@ fn emit_record(
 /// window and time-cluster NMS. A single pending event deduplicates across
 /// chunk seams. Source is hashed in the same pass. Whole matches never
 /// require their frame records or raw RAVEL boxes to be resident in memory.
-fn detect_stream(
+pub(crate) fn detect_stream(
     source: &Path,
     output: &Path,
     expected_sha: &str,
