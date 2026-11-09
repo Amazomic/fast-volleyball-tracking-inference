@@ -105,9 +105,13 @@ async fn rewrite_status(
             "POST /api/montage/native/plan (CPU-based selection, read-only)",
             "POST /api/rallies/native/marks (read/set gold marks, isolated root)",
             "POST /api/quick-reel/native/select (explicit local video refs, isolated root)",
+            "POST /api/quick-reel/native/pick (native Windows desktop dialog, original paths not copied)",
+            "POST /api/quick-reel/native/upload (streamed browser drop, isolated 2 GiB/file)",
+            "POST /api/quick-reel/native/release (safe selection/copy cleanup)",
             "POST /api/quick-reel/native/start (independent fresh CUDA GPU/CPU + original-source MP4; isolated root)",
             "GET /api/quick-reel/native/status",
             "POST /api/quick-reel/native/cancel",
+            "GET /api/quick-reel/native/media (verified MP4, Range, attachment)",
             "POST /api/inference/native/preflight (read-only model + optional ONNX sessions)",
             "POST /api/inference/native/clip-preview (one actual 9-frame window, read-only)",
             "POST /api/inference/native/window-scan (bounded multi-window ONNX diagnostic, read-only)",
@@ -169,6 +173,7 @@ fn app(state: Arc<AppState>) -> Router {
         .route("/studio/rust/tracks.js", get(studio_web::tracks_js))
         .route("/studio/rust/stats.js", get(studio_web::stats_js))
         .route("/studio/rust/highlights.js", get(studio_web::highlights_js))
+        .route("/studio/rust/quick-reel.js", get(studio_web::quick_reel_js))
         .route(
             "/studio/rust/selection.wasm",
             get(studio_web::selection_wasm),
@@ -264,9 +269,19 @@ fn app(state: Arc<AppState>) -> Router {
             "/api/quick-reel/native/select",
             post(quick_reel::select_sources),
         )
+        .route("/api/quick-reel/native/pick", post(quick_reel::native_pick))
+        .route(
+            "/api/quick-reel/native/upload",
+            post(quick_reel::upload_source).layer(axum::extract::DefaultBodyLimit::disable()),
+        )
+        .route(
+            "/api/quick-reel/native/release",
+            post(quick_reel::release_sources),
+        )
         .route("/api/quick-reel/native/start", post(quick_reel::start))
         .route("/api/quick-reel/native/status", get(quick_reel::status))
         .route("/api/quick-reel/native/cancel", post(quick_reel::cancel))
+        .route("/api/quick-reel/native/media", get(quick_reel::media))
         .route(
             "/api/inference/native/preflight",
             post(inference_native::preflight),

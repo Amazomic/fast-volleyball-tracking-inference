@@ -1,8 +1,8 @@
 {
     "schema":  "volley-rust-stage-roadmap/1",
     "plannedTotal":  85,
-    "lastRecorded":  78,
-    "nextStage":  79,
+    "lastRecorded":  79,
+    "nextStage":  80,
     "estimateNote":  "85 — текущий ориентир планирования, не обещание неизменного объема; этап != готовая подсистема. При пересмотре плана обновлять JSON, Markdown и журнал в одном коммите.",
     "stages":  [
                    {
@@ -633,8 +633,9 @@
                        "number":  79,
                        "title":  "Quick Reel: выбор файла, отмена, прогресс и скачивание",
                        "area":  "Quick Reel",
-                       "status":  "planned",
-                       "acceptance":  "Full client flow, no stale file picker or duplicate jobs"
+                       "status":  "recorded",
+                       "acceptance":  "Full client flow, no stale file picker or duplicate jobs",
+                       "journalSection":  79
                    },
                    {
                        "number":  80,

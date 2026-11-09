@@ -108,3 +108,25 @@
 .video-wrap video{height:100%;width:100%;object-fit:contain}
 .video-wrap video:fullscreen{max-width:100%;max-height:100%;width:100%;height:100%;object-fit:contain}
 .montage-controls input[type=range]{display:block;width:100%;accent-color:#4989fa}
+/* Quick Reel is independent from project tabs and never stretches videos. */
+.quick-workspace{max-width:1350px;margin:auto}
+.quick-layout{display:grid;grid-template-columns:minmax(300px,1.15fr) minmax(300px,1fr);gap:18px;margin-top:24px}
+.quick-card{background:#101b2d;border:1px solid #2b3d59;border-radius:14px;padding:20px;min-width:0}
+.quick-card h2{margin:2px 0 16px;font-size:18px}
+.quick-drop{display:flex;flex-direction:column;gap:10px;align-items:center;justify-content:center;text-align:center;min-height:155px;padding:20px;border:2px dashed #496b99;background:#14253a;border-radius:12px;color:#dce9ff;cursor:pointer}
+.quick-drop:hover,.quick-drop.drag-over,.quick-drop:focus-visible{border-color:#80b6ff;background:#1c3856;outline:none}
+.quick-drop strong{font-size:15px}.quick-drop span{font-size:13px}.quick-drop small{color:#a1b7d3}
+.quick-sources,.quick-video-status{margin:13px 0;padding-left:22px;display:grid;gap:8px;max-height:215px;overflow:auto}
+.quick-sources li,.quick-video-status li{overflow-wrap:anywhere;padding:6px 5px}
+.quick-actions{display:flex;gap:12px;align-items:center;margin-top:12px;flex-wrap:wrap}
+.quick-progress-head{display:flex;justify-content:space-between;align-items:center}
+.quick-progress-head span{font-variant-numeric:tabular-nums;font-weight:700}
+#studio-quick-progress{width:100%;height:15px;accent-color:#4b99ff}
+.quick-stages{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;margin:20px 0}
+.quick-stages span{font-size:11px;padding:10px 5px;text-align:center;background:#19283c;border:1px solid #31445e;border-radius:7px;line-height:1.4}
+.quick-stages span.current{border-color:#76b0ff;background:#24436b;color:#fff;font-weight:700}
+.quick-stages span.finished{border-color:#368c75;background:#133f36;color:#c1f0e1}
+.quick-error{color:#ffaaa9;white-space:pre-wrap}
+#studio-quick-browser{margin-top:12px}
+@media(max-width:940px){.quick-layout{grid-template-columns:1fr}.quick-stages{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.quick-sidebar-summary{display:block;color:#c9dbf5;background:#192a41;padding:11px;margin-top:auto;border:1px solid #355070;border-radius:9px;font-size:12px}.quick-sidebar-summary:hover{background:#25466c}

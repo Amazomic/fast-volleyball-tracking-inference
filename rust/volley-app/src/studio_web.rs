@@ -23,6 +23,7 @@ const TABS_SCRIPT: &str = include_str!("../static/studio_tabs.js");
 const TRACKS_SCRIPT: &str = include_str!("../static/studio_tracks.js");
 const STATS_SCRIPT: &str = include_str!("../static/studio_stats.js");
 const HIGHLIGHTS_SCRIPT: &str = include_str!("../static/studio_highlights.js");
+const QUICK_REEL_SCRIPT: &str = include_str!("../static/studio_quick_reel.js");
 const SELECTION_WASM: &[u8] = include_bytes!("../static/volley_web.wasm");
 const HTML: &str = include_str!("../static/studio.html");
 
@@ -60,6 +61,9 @@ pub async fn tabs_js() -> Response {
 }
 pub async fn highlights_js() -> Response {
     web_asset("text/javascript; charset=utf-8", HIGHLIGHTS_SCRIPT)
+}
+pub async fn quick_reel_js() -> Response {
+    web_asset("text/javascript; charset=utf-8", QUICK_REEL_SCRIPT)
 }
 pub async fn stats_js() -> Response {
     web_asset("text/javascript; charset=utf-8", STATS_SCRIPT)
@@ -292,6 +296,11 @@ mod tests {
         assert!(html.contains("id=\"studio-volume\""));
         assert!(html.contains("id=\"studio-highlights-layout\""));
         assert!(html.contains("id=\"studio-highlights-music\""));
+        assert!(html.contains("id=\"studio-nav-quick\""));
+        assert!(html.contains("id=\"studio-quick-drop\""));
+        assert!(html.contains("id=\"studio-quick-progress\""));
+        assert!(html.contains("id=\"studio-quick-cancel\""));
+        assert!(html.contains("id=\"studio-quick-download\""));
         let css = get(addr, "/studio/rust/app.css").await;
         assert!(css.starts_with("HTTP/1.1 200 OK"));
         assert!(css.contains("text/css; charset=utf-8"));
@@ -321,6 +330,23 @@ mod tests {
         assert!(highlights.contains("/api/montage/native/cancel"));
         assert!(highlights.contains("/api/montage/native/audio"));
         assert!(highlights.contains("expected_source_fingerprint"));
+        let quick = get(addr, "/studio/rust/quick-reel.js").await;
+        assert!(quick.starts_with("HTTP/1.1 200 OK"));
+        for action in [
+            "native/pick",
+            "native/upload",
+            "native/release",
+            "native/start",
+            "native/status",
+            "native/cancel",
+            "native/media",
+        ] {
+            assert!(
+                quick.contains(action),
+                "Missing Quick Reel client action {action}"
+            );
+        }
+        assert!(!quick.contains("innerHTML"));
         assert!(!tracks.contains("innerHTML"));
         let wasm = get(addr, "/studio/rust/selection.wasm").await;
         assert!(wasm.starts_with("HTTP/1.1 200 OK"));

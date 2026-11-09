@@ -11,7 +11,7 @@ pipeline is **project → prepared video → immutable VballNet/RAVEL GPU eviden
 versioned CPU player tracks/Touch/rallies → reviewed players → original-quality montage**.
 FFmpeg, ONNX Runtime and CUDA are native external runtimes, not Python components.
 
-**Rust-миграция: 78/85; следующий 79/85 (плановый объём).**
+**Rust-миграция: 79/85; следующий 80/85 (плановый объём).**
 [Stage map](docs/RUST_ROADMAP.md) ·
 [Migration journal](docs/RUST_MIGRATION.md) ·
 [Architecture and owners](docs/RUST_ARCHITECTURE.md).
@@ -75,6 +75,7 @@ cargo test --workspace --offline
 node ../scripts/ci/check_rust_ownership.mjs --self-test
 node ../scripts/ci/check_rust_roadmap.mjs --check --self-test
 node ../scripts/ci/test_volley_web_wasm.mjs
+node ../scripts/ci/test_native_quick_reel_ui.mjs
 ```
 
 Crates: `volley-app` (Axum HTTP/jobs), `volley-core` (CPU evidence),
@@ -93,8 +94,10 @@ montage UI exist, with immutable replay artifacts. Detection-based tracks and
 Touch/rally proposals are not yet verified player identities or authoritative
 game events. Independent Quick Reel now chains fresh CUDA VballNet/RAVEL GPU scans,
 SHA-verified CPU fusion/tracking/Touch/rallies and original-source montage;
-only prepared video may be reused. The browser file-picker/download flow and
-real CUDA ONNX Runtime deployment still need verification. Remaining work includes
+only prepared video may be reused. The independent Rust browser UI now
+supports Windows Explorer (no copy), drag-and-drop (isolated 2 GiB/file
+copy), music, 4-stage progress, cancel, reconnect and verified MP4 download.
+A real end-to-end CUDA reel still requires ONNX Runtime deployment. Remaining work includes
 photo-based ReID reference matching, comprehensive browser
 UI/UX and real-match acceptance, automatic game-event classification and
 release packaging. The former Python UI/features have **not** all been

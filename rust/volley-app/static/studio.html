@@ -11,6 +11,7 @@
   <script src="/studio/rust/tracks.js" defer></script>
   <script src="/studio/rust/stats.js" defer></script>
   <script src="/studio/rust/highlights.js" defer></script>
+  <script src="/studio/rust/quick-reel.js" defer></script>
 </head>
 <body>
   <div class="shell">
@@ -29,7 +30,9 @@
         <a id="studio-nav-analysis" href="#analysis" data-studio-tab="analysis"><span>▤</span> Анализ</a>
         <a id="studio-nav-players" href="#players" data-studio-tab="players"><span>♙</span> Игроки</a>
         <a id="studio-nav-montage" href="#montage" data-studio-tab="montage"><span>◧</span> Монтаж</a>
+        <a id="studio-nav-quick" href="#quick" data-studio-tab="quick"><span>▶</span> Быстрый рилс</a>
       </nav>
+      <a id="studio-quick-summary" class="quick-sidebar-summary" href="#quick" aria-label="Перейти к состоянию быстрого рилса">Быстрый рилс: ожидание</a>
       <div class="sidebar-foot">
         <span class="dot"></span><span>Отдельная Rust-разработка</span>
         <small>Данные исходного анализа не изменяются. Классификация игровых действий требует ручного подтверждения.</small>
@@ -41,6 +44,54 @@
         <div class="dev-chip">ЭКСПЕРИМЕНТАЛЬНАЯ ВЕРСИЯ</div>
       </header>
       <div class="content">
+        <section id="studio-quick-view" class="hidden tab-workspace quick-workspace" aria-labelledby="studio-quick-heading">
+          <p class="eyebrow">БЫСТРЫЙ РИЛС / ОТДЕЛЬНЫЙ АНАЛИЗ</p>
+          <h1 id="studio-quick-heading">Быстрый рилс</h1>
+          <p class="panel-note">Каждый запуск выполняет новый GPU и CPU анализ. Результаты проектов не переиспользуются. Только подготовленные видео могут быть взяты из общего кэша. Формат: вертикальный 9:16 с музыкой.</p>
+          <div class="quick-layout">
+            <section class="quick-card">
+              <h2>Исходные видео</h2>
+              <div id="studio-quick-drop" class="quick-drop" role="button" tabindex="0" aria-label="Открыть системный проводник для выбора видеозаписей">
+                <strong>Нажмите для выбора видео в проводнике</strong>
+                <span>Или перетащите файлы сюда (при перетаскивании создаётся временная копия)</span>
+                <small>Через проводник: без копирования. До 30 видео за запуск.</small>
+              </div>
+              <button id="studio-quick-browser" class="secondary" type="button">Выбрать файлы браузером</button>
+              <input id="studio-quick-files" type="file" accept=".mp4,.mov,.mkv,.avi,.webm,.m4v,.mts,video/*" multiple class="hidden" aria-label="Файлы для Quick Reel">
+              <p class="panel-note">Выбор через браузер/перетаскивание копирует файлы в изолированное хранилище (до 2 ГиБ на файл). Для больших записей используйте системный проводник.</p>
+              <ol id="studio-quick-sources" class="quick-sources" aria-label="Видео для рилса">
+                <li>Видео ещё не выбраны</li>
+              </ol>
+              <div class="quick-actions">
+                <button id="studio-quick-clear" class="secondary" type="button">Очистить выбор</button>
+                <span id="studio-quick-selection-count" class="panel-note">0 / 30</span>
+              </div>
+              <label class="field-label" for="studio-quick-music">Музыка для рилса (10–600 секунд)</label>
+              <input id="studio-quick-music" type="file" accept=".mp3,.wav,.m4a,.flac,.aac,.ogg,.opus,audio/*">
+              <p class="panel-note">Загрузите музыку перед запуском. Используются параметры профиля по умолчанию, без повторного использования GPU-результатов.</p>
+              <button id="studio-quick-start" type="button" class="primary full" disabled>Создать быстрый рилс</button>
+            </section>
+            <section class="quick-card" aria-label="Ход создания рилса">
+              <div class="quick-progress-head">
+                <h2>Обработка</h2>
+                <span id="studio-quick-percent">0%</span>
+              </div>
+              <progress id="studio-quick-progress" max="100" value="0" aria-label="Общий прогресс рилса"></progress>
+              <p id="studio-quick-status" role="status" aria-live="polite">Ожидание выбора видео.</p>
+              <div id="studio-quick-stages" class="quick-stages" aria-label="Этапы обработки">
+                <span>1. Подготовка</span><span>2. GPU</span><span>3. CPU</span><span>4. Монтаж</span>
+              </div>
+              <ul id="studio-quick-videos" class="quick-video-status" aria-label="Состояние видео"></ul>
+              <div class="quick-actions">
+                <button id="studio-quick-cancel" class="secondary hidden" type="button">Отменить обработку</button>
+                <button id="studio-quick-refresh" class="secondary" type="button">↻ Проверить состояние</button>
+              </div>
+              <a id="studio-quick-download" class="download hidden" download="quick_reel.mp4" href="#">Скачать готовый MP4</a>
+              <p id="studio-quick-error" class="panel-note quick-error hidden" role="alert"></p>
+              <p class="panel-note">Состояние последнего запуска восстанавливается при обновлении страницы. Для отменённого или ошибочного запуска MP4 недоступен.</p>
+            </section>
+          </div>
+        </section>
         <div id="studio-preview-view">
         <section class="intro">
           <div><p class="eyebrow">01 / АНАЛИЗ МАТЧА</p><h1>Предпросмотр розыгрышей</h1><p>Просматривайте игровые отрезки, отмечайте лучшие и собирайте собственную нарезку из оригинальных видео.</p></div>

@@ -6,7 +6,7 @@
   const $ = id => document.getElementById(id);
   const ui = {
     preview:$("studio-preview-view"),analysis:$("studio-analysis-view"),
-    players:$("studio-players-view"),title:$("studio-section-name"),
+    players:$("studio-players-view"),quick:$("studio-quick-view"),title:$("studio-section-name"),
     project:$("studio-project"),video:$("studio-analysis-video"),
     refresh:$("studio-analysis-refresh"),stages:$("studio-stage-list"),
     note:$("studio-analysis-note"),ball:$("studio-gpu-ball"),
@@ -51,13 +51,14 @@
     state.gpuTimer=null;
   };
   const switchTab=(requested)=>{
-    const next=requested==="analysis"||requested==="players"||requested==="montage"?
+    const next=requested==="analysis"||requested==="players"||requested==="montage"||requested==="quick"?
       requested:"preview";
     state.tab=next;
-    ui.preview.classList.toggle("hidden",next==="analysis"||next==="players");
+    ui.preview.classList.toggle("hidden",next==="analysis"||next==="players"||next==="quick");
+    ui.quick.classList.toggle("hidden",next!=="quick");
     ui.analysis.classList.toggle("hidden",next!=="analysis");
     ui.players.classList.toggle("hidden",next!=="players");
-    const labels={preview:"Предпросмотр",analysis:"Анализ",players:"Игроки",montage:"Монтаж"};
+    const labels={preview:"Предпросмотр",analysis:"Анализ",players:"Игроки",montage:"Монтаж",quick:"Быстрый рилс"};
     ui.title.textContent=labels[next];
     window.dispatchEvent(new CustomEvent("volley:tab-change",{detail:{tab:next}}));
     for(const nav of document.querySelectorAll("[data-studio-tab]")){

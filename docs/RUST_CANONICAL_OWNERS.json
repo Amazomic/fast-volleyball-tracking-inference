@@ -331,6 +331,22 @@
                                        {
                                            "path":  "/api/quick-reel/native/cancel",
                                            "handler":  "quick_reel::cancel"
+                                       },
+                                       {
+                                           "path":  "/api/quick-reel/native/pick",
+                                           "handler":  "quick_reel::native_pick"
+                                       },
+                                       {
+                                           "path":  "/api/quick-reel/native/upload",
+                                           "handler":  "quick_reel::upload_source"
+                                       },
+                                       {
+                                           "path":  "/api/quick-reel/native/release",
+                                           "handler":  "quick_reel::release_sources"
+                                       },
+                                       {
+                                           "path":  "/api/quick-reel/native/media",
+                                           "handler":  "quick_reel::media"
                                        }
                                    ],
                         "stores":  [
