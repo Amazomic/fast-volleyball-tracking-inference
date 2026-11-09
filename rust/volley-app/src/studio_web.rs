@@ -288,6 +288,10 @@ mod tests {
         assert!(home.to_lowercase().contains("location: /studio/rust"));
         assert!(html.to_lowercase().contains("content-security-policy:"));
         assert!(html.contains("id=\"studio-rallies\""));
+        assert!(html.contains("id=\"studio-layout\""));
+        assert!(html.contains("id=\"studio-volume\""));
+        assert!(html.contains("id=\"studio-highlights-layout\""));
+        assert!(html.contains("id=\"studio-highlights-music\""));
         let css = get(addr, "/studio/rust/app.css").await;
         assert!(css.starts_with("HTTP/1.1 200 OK"));
         assert!(css.contains("text/css; charset=utf-8"));
@@ -295,6 +299,8 @@ mod tests {
         let js = get(addr, "/studio/rust/app.js").await;
         assert!(js.starts_with("HTTP/1.1 200 OK"));
         assert!(js.contains("rallies/marks"));
+        assert!(js.contains("layout:") || js.contains("layout,"));
+        assert!(js.contains("audio_volume:"));
         let tabs = get(addr, "/studio/rust/tabs.js").await;
         assert!(tabs.starts_with("HTTP/1.1 200 OK"));
         assert!(tabs.contains("/api/studio/rust/analysis-overview"));
@@ -313,6 +319,8 @@ mod tests {
         assert!(highlights.starts_with("HTTP/1.1 200 OK"));
         assert!(highlights.contains("/api/montage/native/player-highlights"));
         assert!(highlights.contains("/api/montage/native/cancel"));
+        assert!(highlights.contains("/api/montage/native/audio"));
+        assert!(highlights.contains("expected_source_fingerprint"));
         assert!(!tracks.contains("innerHTML"));
         let wasm = get(addr, "/studio/rust/selection.wasm").await;
         assert!(wasm.starts_with("HTTP/1.1 200 OK"));

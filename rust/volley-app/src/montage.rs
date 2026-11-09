@@ -29,8 +29,9 @@ use tokio::{
 use uuid::Uuid;
 use volley_media::{
     montage::{
-        can_stream_copy, compose_args, concat_playlist, native_clip_format, output_profile,
-        soundtrack_args, soundtrack_is_audio, verify_original_segment, OriginalClip, SelectedClip,
+        can_stream_copy, compose_args_for_layout, concat_playlist, native_clip_format,
+        output_profile_for_layout, soundtrack_args, soundtrack_is_audio, verify_mp4_quality,
+        verify_original_segment, OriginalClip, SelectedClip, VideoLayout,
     },
     probe,
 };
@@ -49,6 +50,8 @@ pub struct MontageRequest {
     pub audio_volume: f64,
     #[serde(default)]
     pub encoder: Option<String>,
+    #[serde(default)]
+    pub layout: VideoLayout,
     #[serde(skip)]
     pub(crate) verified_highlights: Option<Value>,
 }
@@ -114,6 +117,7 @@ struct Planned {
     audio_volume: f64,
     encoder: String,
     verified_highlights: Option<Value>,
+    layout: VideoLayout,
 }
 
 fn validate_audio(state: &AppState, request: &MontageRequest) -> Result<Option<PathBuf>, ApiError> {
@@ -241,6 +245,7 @@ fn prepare_request(state: &AppState, request: MontageRequest) -> Result<Planned,
         audio_volume: request.audio_volume,
         encoder: encoder.to_owned(),
         verified_highlights: request.verified_highlights,
+        layout: request.layout,
     })
 }
 
@@ -470,15 +475,25 @@ async fn render(plan: Planned, status: Arc<Mutex<JobStatus>>, mut cancel: watch:
             paths.push(target);
         }
 
-        let final_profile = output_profile(&formats)?;
+        let final_profile = output_profile_for_layout(&formats, plan.layout)?;
         let join_index = paths.len();
         let joined = segments.join("joined.mp4");
         let playlist = segments.join("sources.concat.txt");
         fs::write(&playlist, concat_playlist(&paths)?)
             .map_err(|e| format!("Нельзя сохранить список клипов: {e}"))?;
         let mut used_copy = false;
-        if can_stream_copy(&formats) {
-            let args = compose_args(&paths, &formats, &joined, Some(&playlist), false)?;
+        if can_stream_copy(&formats)
+            && (plan.layout == VideoLayout::Original
+                || formats[0].0 == final_profile.0 && formats[0].1 == final_profile.1)
+        {
+            let args = compose_args_for_layout(
+                &paths,
+                &formats,
+                &joined,
+                Some(&playlist),
+                false,
+                plan.layout,
+            )?;
             match run_ffmpeg(
                 args,
                 total_duration,
@@ -499,8 +514,10 @@ async fn render(plan: Planned, status: Arc<Mutex<JobStatus>>, mut cancel: watch:
         if !used_copy {
             // Construct and validate both encoder plans BEFORE starting
             // FFmpeg. Never silently run an empty command on plan failure.
-            let gpu_args = compose_args(&paths, &formats, &joined, None, true)?;
-            let cpu_args = compose_args(&paths, &formats, &joined, None, false)?;
+            let gpu_args =
+                compose_args_for_layout(&paths, &formats, &joined, None, true, plan.layout)?;
+            let cpu_args =
+                compose_args_for_layout(&paths, &formats, &joined, None, false, plan.layout)?;
             encode_with_fallback(
                 |gpu| {
                     if gpu {
@@ -520,6 +537,7 @@ async fn render(plan: Planned, status: Arc<Mutex<JobStatus>>, mut cancel: watch:
         }
         validate_rendered(&joined, total_duration)?;
         validate_rendered_profile(&joined, final_profile)?;
+        verify_mp4_quality(&joined, final_profile, total_duration, false)?;
         let final_path = if let Some(audio) = &plan.audio {
             let with_music = segments.join("with_music.mp4");
             let args = soundtrack_args(
@@ -540,10 +558,17 @@ async fn render(plan: Planned, status: Arc<Mutex<JobStatus>>, mut cancel: watch:
             .await?;
             validate_rendered(&with_music, total_duration)?;
             validate_rendered_profile(&with_music, final_profile)?;
+            verify_mp4_quality(&with_music, final_profile, total_duration, true)?;
             with_music
         } else {
             joined
         };
+        let quality = verify_mp4_quality(
+            &final_path,
+            final_profile,
+            total_duration,
+            plan.audio.is_some(),
+        )?;
         if *cancel.borrow() {
             return Err("cancelled".into());
         }
@@ -554,10 +579,18 @@ async fn render(plan: Planned, status: Arc<Mutex<JobStatus>>, mut cancel: watch:
             "id":plan.job_id,
             "project_id":plan.project_id,
             "render_source":"original_recording",
-            "original_resolution_verified":true,
+            "original_resolution_verified":plan.layout==VideoLayout::Original,
+            "source_clips_native_resolution_verified":true,
+            "layout":plan.layout,
+            "entire_frame_visible_without_cropping":true,
+            "mp4_quality":quality,
             "output_dimensions":{"width":final_profile.0,"height":final_profile.1},
             "output_fps":final_profile.2,
-            "quality_policy":"native_resolution_no_downsampling_h264_crf15_nvenc_cq17",
+            "quality_policy":if plan.layout==VideoLayout::Vertical {
+                "portrait_9x16_fit_letterbox_lanczos_h264_crf15_nvenc_cq17"
+            }else{
+                "native_resolution_no_downsampling_h264_crf15_nvenc_cq17"
+            },
             "verified_highlights":plan.verified_highlights,
             "duration_sec":total_duration,
             "selected":plan.clips.iter().map(OriginalClip::receipt).collect::<Vec<_>>(),
@@ -801,6 +834,8 @@ fn list_montages(state: &AppState, project_id: &str) -> Result<Vec<Value>, ApiEr
             "duration_sec": receipt["duration_sec"],
             "verified_highlights":receipt["verified_highlights"],
             "render_source": "original_recording",
+            "layout":receipt["layout"],
+            "mp4_quality":receipt["mp4_quality"],
             "clips": receipt["selected"].as_array().map(Vec::len).unwrap_or(0),
             "music": receipt.get("music").filter(|value| !value.is_null()).is_some(),
             "size_mb": ((stat.len() as f64 / 1024.0 / 1024.0)*10.0).round()/10.0,
@@ -962,6 +997,8 @@ pub struct MontageFromRunRequest {
     pub audio_volume: f64,
     #[serde(default)]
     pub encoder: Option<String>,
+    #[serde(default)]
+    pub layout: VideoLayout,
 }
 
 /// Verified CPU-run selection is the only source of rally boundaries for
@@ -1010,6 +1047,7 @@ pub async fn start_native_from_run(
         audio_file: request.audio_file,
         audio_volume: request.audio_volume,
         encoder: request.encoder,
+        layout: request.layout,
         verified_highlights: None,
     };
     let Json(mut response) =
@@ -1065,6 +1103,7 @@ mod highlight_cancellation_tests {
             audio: None,
             audio_volume: 40.0,
             encoder: "cpu".into(),
+            layout: VideoLayout::Original,
             verified_highlights: Some(json!({"trusted":true})),
         };
         let status = fixture_status();
@@ -1083,6 +1122,22 @@ mod highlight_cancellation_tests {
         fs::remove_dir_all(root).unwrap();
     }
 
+    #[test]
+    fn montage_layout_defaults_to_original_and_rejects_stretch() {
+        let input = json!({
+            "project_id":"abcdef012345","clips":[{
+                "video":"match.mp4","start_frame":30,"end_frame":90
+            }]
+        });
+        let ordinary: MontageRequest = serde_json::from_value(input.clone()).unwrap();
+        assert_eq!(ordinary.layout, VideoLayout::Original);
+        let mut portrait = input.clone();
+        portrait["layout"] = json!("vertical");
+        let vertical: MontageRequest = serde_json::from_value(portrait.clone()).unwrap();
+        assert_eq!(vertical.layout, VideoLayout::Vertical);
+        portrait["layout"] = json!("stretch");
+        assert!(serde_json::from_value::<MontageRequest>(portrait).is_err());
+    }
     #[test]
     fn direct_user_montage_payload_cannot_forge_verified_attack_receipt() {
         let data = json!({

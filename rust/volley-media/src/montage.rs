@@ -7,6 +7,15 @@ use serde_json::Value;
 use std::path::{Path, PathBuf};
 
 pub const ANALYSIS_FPS: f64 = 30.0;
+/// Explicit output geometry. Original is the safe unscaled default.
+/// Vertical fits the entire source frame inside a portrait 9:16 canvas.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VideoLayout {
+    #[default]
+    Original,
+    Vertical,
+}
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -281,6 +290,22 @@ pub fn verify_original_segment(
     }
     Ok(())
 }
+/// Derive portrait canvas from the maximum source height at original FPS.
+pub fn output_profile_for_layout(
+    formats: &[(u32, u32, String, f64)],
+    layout: VideoLayout,
+) -> Result<(u32, u32, f64), String> {
+    let original = output_profile(formats)?;
+    if layout == VideoLayout::Original {
+        return Ok(original);
+    }
+    let height = original.1;
+    let width = ((((height as f64) * 9.0 / 16.0) / 2.0).round() as u32 * 2).max(2);
+    if u64::from(width) * u64::from(height) > 32_000_000 {
+        return Err("Vertical output exceeds maximum safe canvas".into());
+    }
+    Ok((width, height, original.2))
+}
 pub fn can_stream_copy(formats: &[(u32, u32, String, f64)]) -> bool {
     let Some(first) = formats.first() else {
         return false;
@@ -322,7 +347,27 @@ pub fn compose_args(
     playlist: Option<&Path>,
     hardware: bool,
 ) -> Result<Vec<String>, String> {
-    let (max_width, max_height, target_fps) = output_profile(formats)?;
+    compose_args_for_layout(
+        clips,
+        formats,
+        output,
+        playlist,
+        hardware,
+        VideoLayout::Original,
+    )
+}
+
+/// Both native CPU and legacy montage share this FFmpeg path. Portrait mode
+/// fits the entire frame and pads borders rather than cropping the ball.
+pub fn compose_args_for_layout(
+    clips: &[PathBuf],
+    formats: &[(u32, u32, String, f64)],
+    output: &Path,
+    playlist: Option<&Path>,
+    hardware: bool,
+    layout: VideoLayout,
+) -> Result<Vec<String>, String> {
+    let (max_width, max_height, target_fps) = output_profile_for_layout(formats, layout)?;
     if clips.is_empty() || clips.len() != formats.len() {
         return Err("Некорректные исходные фрагменты монтажа".into());
     }
@@ -333,7 +378,11 @@ pub fn compose_args(
         "error".into(),
         "-y".into(),
     ];
-    if can_stream_copy(formats) && playlist.is_some() {
+    if can_stream_copy(formats)
+        && playlist.is_some()
+        && (layout == VideoLayout::Original
+            || (formats[0].0 == max_width && formats[0].1 == max_height))
+    {
         args.extend([
             "-f".into(),
             "concat".into(),
@@ -353,9 +402,14 @@ pub fn compose_args(
         let mut filters = Vec::new();
         let mut refs = String::new();
         for (index, _) in clips.iter().enumerate() {
+            let fit = if layout == VideoLayout::Vertical {
+                format!("scale={max_width}:{max_height}:force_original_aspect_ratio=decrease:flags=lanczos,")
+            } else {
+                String::new()
+            };
             filters.push(format!(
                 "[{index}:v:0]setpts=PTS-STARTPTS,fps={target_fps:.8},\
-                 pad={max_width}:{max_height}:(ow-iw)/2:(oh-ih)/2,\
+                 {fit}pad={max_width}:{max_height}:(ow-iw)/2:(oh-ih)/2,\
                  setsar=1,format=yuv420p[v{index}]"
             ));
             refs.push_str(&format!("[v{index}]"));
@@ -401,7 +455,7 @@ pub fn soundtrack_args(
     let fade_at = (duration_sec - (duration_sec / 4.0).min(1.5)).max(0.0);
     let fade_duration = (duration_sec - fade_at).max(0.01);
     let audio_filter = format!(
-        "[1:a:0]volume={:.4},atrim=0:{:.4},asetpts=PTS-STARTPTS,\
+        "[1:a:0]aresample=48000:async=1:first_pts=0,volume={:.4},atrim=0:{:.4},asetpts=PTS-STARTPTS,\
          afade=t=out:st={:.4}:d={:.4}[music]",
         volume / 100.0,
         duration_sec,
@@ -432,6 +486,8 @@ pub fn soundtrack_args(
         "aac".into(),
         "-b:a".into(),
         "192k".into(),
+        "-ar".into(),
+        "48000".into(),
         "-t".into(),
         format!("{duration_sec:.4}"),
         "-movflags".into(),
@@ -440,6 +496,137 @@ pub fn soundtrack_args(
     ])
 }
 
+/// FFprobe evidence for a finished MP4. This validates the VIDEO stream
+/// separately from the AUDIO stream; container duration alone can hide
+/// truncated video, AAC encoder delay, and missing soundtracks.
+#[derive(Debug, Clone, Serialize)]
+pub struct RenderQuality {
+    pub width: u32,
+    pub height: u32,
+    pub fps: f64,
+    pub video_duration_sec: f64,
+    pub video_frames: Option<u64>,
+    pub has_audio: bool,
+    pub audio_duration_sec: Option<f64>,
+    pub audio_video_skew_sec: Option<f64>,
+    pub audio_codec: Option<String>,
+}
+
+fn ffprobe_start(value: &Value) -> Option<f64> {
+    value
+        .as_f64()
+        .or_else(|| value.as_str()?.parse::<f64>().ok())
+        .filter(|v| v.is_finite())
+}
+fn ffprobe_sec(value: &Value) -> Option<f64> {
+    value
+        .as_f64()
+        .or_else(|| value.as_str()?.parse::<f64>().ok())
+        .filter(|v| v.is_finite() && *v >= 0.0)
+}
+
+pub fn verify_mp4_quality(
+    path: &Path,
+    expected: (u32, u32, f64),
+    planned_duration: f64,
+    with_audio: bool,
+) -> Result<RenderQuality, String> {
+    if !planned_duration.is_finite() || planned_duration <= 0.0 {
+        return Err("Invalid planned MP4 duration".into());
+    }
+    let data = ffprobe(path)?;
+    let streams = data["streams"]
+        .as_array()
+        .ok_or("MP4 has no FFprobe streams")?;
+    let videos = streams
+        .iter()
+        .filter(|s| s["codec_type"] == "video")
+        .collect::<Vec<_>>();
+    let audios = streams
+        .iter()
+        .filter(|s| s["codec_type"] == "audio")
+        .collect::<Vec<_>>();
+    if videos.len() != 1
+        || audios.len() != usize::from(with_audio)
+        || streams.len() != 1 + usize::from(with_audio)
+    {
+        return Err("MP4 must contain exactly one H.264 video and the expected AAC audio".into());
+    }
+    let v = videos[0];
+    let width = v["width"]
+        .as_u64()
+        .and_then(|n| u32::try_from(n).ok())
+        .ok_or("Missing MP4 video width")?;
+    let height = v["height"]
+        .as_u64()
+        .and_then(|n| u32::try_from(n).ok())
+        .ok_or("Missing MP4 video height")?;
+    let fps = v["avg_frame_rate"]
+        .as_str()
+        .and_then(parse_fraction)
+        .map(|(n, d)| n as f64 / d as f64)
+        .ok_or("Missing MP4 video FPS")?;
+    if (width, height) != (expected.0, expected.1)
+        || (fps - expected.2).abs() > 0.1
+        || v["codec_name"] != "h264"
+        || v["pix_fmt"] != "yuv420p"
+        || !matches!(v["sample_aspect_ratio"].as_str(), Some("1:1" | "1/1"))
+    {
+        return Err(
+            "MP4 changed original output dimensions, frame rate, SAR, codec or pixel format".into(),
+        );
+    }
+    let video_start = ffprobe_start(&v["start_time"]).unwrap_or(0.0);
+    let video_duration = ffprobe_sec(&v["duration"])
+        .or_else(|| ffprobe_sec(&data["format"]["duration"]))
+        .ok_or("Missing MP4 video duration")?;
+    if video_start.abs() > 0.08
+        || video_duration < planned_duration - 0.34
+        || video_duration > planned_duration + 0.34
+    {
+        return Err("MP4 contains a truncated/extended video or nonzero video start time".into());
+    }
+    let frames = v["nb_frames"].as_str().and_then(|n| n.parse::<u64>().ok());
+    if frames.is_some_and(|count| {
+        let wanted = (planned_duration * expected.2).round();
+        count == 0 || (count as f64 - wanted).abs() > 3.0
+    }) {
+        return Err("MP4 frame count differs from extracted original-frame plan".into());
+    }
+    let (audio_duration, skew, codec) = if let Some(a) = audios.first() {
+        if a["codec_name"] != "aac" {
+            return Err("MP4 soundtrack must be AAC".into());
+        }
+        let sample_rate = a["sample_rate"]
+            .as_str()
+            .and_then(|s| s.parse::<u32>().ok())
+            .ok_or("Missing AAC sample rate")?;
+        if !(16_000..=192_000).contains(&sample_rate) {
+            return Err("Invalid AAC output sample rate".into());
+        }
+        let start = ffprobe_start(&a["start_time"]).unwrap_or(0.0);
+        let duration = ffprobe_sec(&a["duration"]).ok_or("Missing AAC duration")?;
+        let drift = (start + duration - (video_start + video_duration)).abs();
+        if (start - video_start).abs() > 0.08 || drift > 0.12 || duration < planned_duration - 0.12
+        {
+            return Err("Audio and video start/end are out of sync".into());
+        }
+        (Some(duration), Some(drift), Some("aac".into()))
+    } else {
+        (None, None, None)
+    };
+    Ok(RenderQuality {
+        width,
+        height,
+        fps,
+        video_duration_sec: video_duration,
+        video_frames: frames,
+        has_audio: with_audio,
+        audio_duration_sec: audio_duration,
+        audio_video_skew_sec: skew,
+        audio_codec: codec,
+    })
+}
 pub fn soundtrack_is_audio(path: &Path) -> Result<bool, String> {
     let payload: Value = ffprobe(path)?;
     Ok(payload["streams"].as_array().is_some_and(|streams| {

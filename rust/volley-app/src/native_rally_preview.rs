@@ -649,6 +649,8 @@ pub struct ManualMontageRequest {
     pub audio_volume: f64,
     #[serde(default)]
     pub encoder: Option<String>,
+    #[serde(default)]
+    pub layout: volley_media::montage::VideoLayout,
 }
 fn default_volume() -> f64 {
     40.0
@@ -758,6 +760,7 @@ pub async fn start_manual_montage(
             audio_file: request.audio_file,
             audio_volume: request.audio_volume,
             encoder: request.encoder,
+            layout: request.layout,
             verified_highlights: None,
         }),
     )

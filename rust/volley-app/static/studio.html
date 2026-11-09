@@ -81,8 +81,16 @@
           <div class="montage-controls">
             <label for="studio-encoder" class="field-label">Кодирование</label>
             <select id="studio-encoder"><option value="auto">Автоматически</option><option value="gpu">GPU</option><option value="cpu">CPU</option></select>
+            <label class="field-label" for="studio-layout">Формат ролика</label>
+            <select id="studio-layout">
+              <option value="original">Оригинальный (без масштабирования)</option>
+              <option value="vertical">Вертикальный 9:16 (весь кадр и поля)</option>
+            </select>
+            <p class="panel-note">Вертикальный вариант сохраняет всю площадку: пропорции не меняются, свободное пространство заполняется полями.</p>
             <label class="field-label" for="studio-music">Аудиотрек (необязательно)</label>
             <input id="studio-music" type="file" accept=".mp3,.m4a,.wav,.flac,.aac,.ogg,.opus,audio/*">
+            <label class="field-label" for="studio-volume">Громкость музыкальной дорожки</label>
+            <input id="studio-volume" type="range" min="0" max="100" step="5" value="40" aria-label="Громкость музыки в процентах">
             <button id="studio-render" class="primary full" type="button" disabled>Создать монтаж <span>↗</span></button>
             <div id="studio-job" class="job" role="status" aria-live="polite"></div>
             <button id="studio-cancel" class="secondary full hidden" type="button">Отменить монтаж</button>
@@ -110,6 +118,15 @@
             <div id="studio-highlights-candidates" class="native-highlights-candidates" aria-live="polite"></div>
           </div>
           <div class="montage-controls">
+            <label class="field-label" for="studio-highlights-layout">Формат нарезки</label>
+            <select id="studio-highlights-layout">
+              <option value="original">Оригинальный</option>
+              <option value="vertical">Вертикальный 9:16 (весь кадр)</option>
+            </select>
+            <label class="field-label" for="studio-highlights-music">Музыка для лучших атак (необязательно)</label>
+            <input id="studio-highlights-music" type="file" accept=".mp3,.m4a,.wav,.flac,.aac,.ogg,.opus,audio/*">
+            <label class="field-label" for="studio-highlights-volume">Громкость музыки</label>
+            <input id="studio-highlights-volume" type="range" min="0" max="100" step="5" value="40">
             <button id="studio-highlights-refresh" type="button" class="secondary full">↻ Обновить источники</button>
             <button id="studio-highlights-preview" type="button" class="secondary full" disabled>Показать атаки</button>
             <button id="studio-highlights-start" type="button" class="primary full" disabled>Собрать нарезку</button>

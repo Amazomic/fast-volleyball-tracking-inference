@@ -35,13 +35,15 @@ const ids=[
   "studio-highlights-preview","studio-highlights-start",
   "studio-highlights-cancel","studio-highlights-status",
   "studio-highlights-sources","studio-highlights-candidates",
-  "studio-highlights-job","studio-highlights-download","studio-encoder"
+  "studio-highlights-job","studio-highlights-download","studio-encoder",
+  "studio-highlights-layout","studio-highlights-music","studio-highlights-volume"
 ];
 const nodes=new Map(ids.map(id=>[id,new Element()]));
 const $=id=>nodes.get("studio-highlights-"+id);
 nodes.get("studio-project").value="1234abcdef01";
 nodes.get("studio-encoder").value="cpu";
 $("mode").value="auto";$("count").value="12";
+$("layout").value="original";$("volume").value="40";$("music").files=[];
 const run="a".repeat(32), keyA=run+":"+"b".repeat(24),keyB=run+":"+"c".repeat(24);
 const candidate=(key,count)=>({
   key,candidate_id:key.split(":")[1],rally_run_id:run,
@@ -54,6 +56,7 @@ let forgeAction=false;
 let noAttacks=false;
 let currentJob="idle";
 let requests=[];
+let soundUploads=0;
 const responseBody=payload=>{
   const candidates=noAttacks?[]:[candidate(keyA,2),candidate(keyB,1)];
   if(forgeAction)candidates[0].action_label_source="automatic_reid";
@@ -87,13 +90,24 @@ const fetch=async(url,options={})=>{
       project_id:"1234abcdef01",video:"match.mp4",metadata_only:true,
       stages:[{key:"rallies",items:[{id:run,count:4}],truncated:false}]
     })};
+  if(url==="/api/montage/native/audio"){
+    soundUploads++;
+    assert.equal(options.method,"POST");
+    assert.equal(options.body.items.length,1);
+    return {ok:true,json:async()=>({audio_file:"track_"+"d".repeat(32)+".wav"})};
+  }
   if(url==="/api/montage/native/player-highlights"){
     const payload=JSON.parse(options.body);
     assert.deepEqual(payload.rally_run_ids,[run]);
     assert.equal(payload.project_id,"1234abcdef01");
     assert.equal(payload.player_id,"athlete1");
+    assert.ok(["original","vertical"].includes(payload.layout));
+    assert.ok([40,60].includes(payload.audio_volume));
     const data=responseBody(payload);
     if(payload.operation==="start"){
+      assert.equal(payload.layout,"vertical");
+      assert.equal(payload.audio_volume,60);
+      assert.equal(payload.audio_file,"track_"+"d".repeat(32)+".wav");
       assert.equal(payload.expected_source_fingerprint,"f".repeat(64));
       data.job_id="montage_"+"1".repeat(32);
       data.status="queued";currentJob="running";
@@ -121,6 +135,7 @@ vm.runInNewContext(source,{
   location:{hash:"#montage"},fetch,URLSearchParams,Set,Map,JSON,Number,
   String,Boolean,Array,Error,Math,RegExp,Promise,
   setInterval:()=>1,clearInterval:()=>{},
+  FormData:class {constructor(){this.items=[];}append(...args){this.items.push(args);}},
 },{filename:"studio_highlights.js"});
 const tick=async()=>{for(let i=0;i<5;i++)await new Promise(r=>setTimeout(r,0));};
 await tick();
@@ -140,10 +155,17 @@ let last=requests.filter(r=>r.url==="/api/montage/native/player-highlights").at(
 assert.equal(JSON.parse(last.options.body).selection_mode,"manual");
 assert.deepEqual(JSON.parse(last.options.body).manual_rally_keys,[keyA,keyB]);
 assert.equal($("start").disabled,false);
+$("layout").value="vertical";$("layout").dispatch("change");
+assert.equal($("start").disabled,true,"Layout change invalidates preview");
+$("volume").value="60";$("volume").dispatch("change");
+await $("preview").dispatch("click");await tick();
+assert.equal($("start").disabled,false);
+$("music").files=[{name:"sample.wav",size:2048}];
 await $("start").dispatch("click");await tick();
 last=requests.filter(r=>r.url==="/api/montage/native/player-highlights").at(-1);
 assert.equal(JSON.parse(last.options.body).operation,"start");
 assert.equal(JSON.parse(last.options.body).expected_source_fingerprint,"f".repeat(64));
+assert.equal(soundUploads,1);
 assert.equal($("cancel").classList.contains("hidden"),false);
 await $("cancel").dispatch("click");await tick();
 assert.match($("job").textContent,/отменён/);

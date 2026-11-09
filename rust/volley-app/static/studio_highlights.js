@@ -11,7 +11,9 @@
     status:get("studio-highlights-status"),sources:get("studio-highlights-sources"),
     candidates:get("studio-highlights-candidates"),
     job:get("studio-highlights-job"),download:get("studio-highlights-download"),
-    encoder:get("studio-encoder")
+    encoder:get("studio-encoder"),
+    layout:get("studio-highlights-layout"),music:get("studio-highlights-music"),
+    volume:get("studio-highlights-volume")
   };
   const state={
     token:0,project:"",busy:false,sources:new Map(),selectedRuns:new Map(),
@@ -44,7 +46,8 @@
     project_id:state.project,player_id:ui.player.value,
     rally_run_ids:selectedRunIds(),operation,selection_mode:ui.mode.value,
     manual_rally_keys:ui.mode.value==="manual"?Array.from(state.chosen):[],
-    max_clips:Number(ui.count.value),encoder:ui.encoder.value
+    max_clips:Number(ui.count.value),encoder:ui.encoder.value,
+    layout:ui.layout.value,audio_volume:Number(ui.volume.value)
   });
   const selectionKey=()=>JSON.stringify(payload("preview"));
   const clearPreview=()=>{
@@ -236,6 +239,18 @@
       }
     }catch(e){ui.job.textContent=e.message;}
   };
+  const uploadAudio=async()=>{
+    const file=ui.music.files?.[0];
+    if(!file)return null;
+    if(file.size>90*1024*1024)throw Error("Музыкальный файл превышает 90 МиБ");
+    const form=new FormData();
+    form.append("file",file,file.name);
+    const result=await api("/api/montage/native/audio",{method:"POST",body:form});
+    if(typeof result.audio_file!=="string"||
+       !/^track_[a-f0-9]{32}\.(mp3|m4a|wav|flac|aac|ogg|opus)$/.test(result.audio_file))
+      throw Error("Сервер вернул недопустимую музыкальную дорожку");
+    return result.audio_file;
+  };
   const start=async()=>{
     if(state.busy||!state.previewFingerprint||
       state.previewKey!==selectionKey())return;
@@ -245,6 +260,7 @@
     state.busy=true;controls();ui.download.classList.add("hidden");
     note("Повторная проверка ручной разметки и запуск оригинального видео…");
     try{
+      request.audio_file=await uploadAudio();
       const result=await post("/api/montage/native/player-highlights",request);
       if(token!==state.token)return;
       if(result.schema!=="volley-native-reviewed-player-highlights/1"||
@@ -267,6 +283,10 @@
     state.candidates=[];state.chosen.clear();clear(ui.candidates);
     clearPreview();controls();
   });
+  for(const control of [ui.layout,ui.volume,ui.encoder]) {
+    control.addEventListener("change",()=>{clearPreview();controls();
+      note("Формат или звук изменён. Повторите предпросмотр перед монтажом.");});
+  }
   for(const control of [ui.mode,ui.count]){
     control.addEventListener("change",()=>{
       clearPreview();

@@ -13,6 +13,7 @@
     viewTitle:$("studio-view-title"),viewDescription:$("studio-view-description"),
     events:$("studio-event-summary"),selectionText:$("studio-selection-text"),
     picked:$("studio-picked"),encoder:$("studio-encoder"),music:$("studio-music"),
+    layout:$("studio-layout"),volume:$("studio-volume"),
     render:$("studio-render"),job:$("studio-job"),cancel:$("studio-cancel"),
     download:$("studio-download")
   };
@@ -375,10 +376,14 @@
     s.busy=true;ui.render.disabled=true;ui.download.classList.add("hidden");
     try{
       ui.job.textContent="Загрузка музыки и проверка исходников…";
+      const layout=ui.layout.value;
+      const volume=Number(ui.volume.value);
+      const encoder=ui.encoder.value;
       const music=await uploadAudio();
       const result=await post("/api/montage/native/start-from-rally-candidates",{
         project_id:project,rally_run_id:run,candidate_ids:ids,
-        audio_file:music,audio_volume:40,encoder:ui.encoder.value
+        audio_file:music,audio_volume:volume,
+        layout,encoder
       });
       const id=result.id||result.job_id;
       if(typeof id!=="string"||!id)throw Error("Сервер не вернул ID монтажа.");

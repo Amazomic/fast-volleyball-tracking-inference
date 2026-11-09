@@ -1,8 +1,8 @@
 {
     "schema":  "volley-rust-stage-roadmap/1",
     "plannedTotal":  85,
-    "lastRecorded":  76,
-    "nextStage":  77,
+    "lastRecorded":  77,
+    "nextStage":  78,
     "estimateNote":  "85 — текущий ориентир планирования, не обещание неизменного объема; этап != готовая подсистема. При пересмотре плана обновлять JSON, Markdown и журнал в одном коммите.",
     "stages":  [
                    {
@@ -617,8 +617,9 @@
                        "number":  77,
                        "title":  "Вертикальный монтаж, аудиодорожка и проверка качества MP4",
                        "area":  "Монтаж",
-                       "status":  "planned",
-                       "acceptance":  "Correct aspect and synchronized audio with 100% original clip extraction"
+                       "status":  "recorded",
+                       "acceptance":  "Correct aspect and synchronized audio with 100% original clip extraction",
+                       "journalSection":  77
                    },
                    {
                        "number":  78,

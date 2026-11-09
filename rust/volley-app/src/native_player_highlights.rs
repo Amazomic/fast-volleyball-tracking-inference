@@ -15,7 +15,7 @@ use std::{
     collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     sync::Arc,
 };
-use volley_media::montage::SelectedClip;
+use volley_media::montage::{SelectedClip, VideoLayout};
 
 const MAX_RUNS: usize = 40;
 const MAX_CLIPS: usize = 80;
@@ -37,12 +37,21 @@ pub struct Request {
     expected_source_fingerprint: Option<String>,
     #[serde(default)]
     encoder: Option<String>,
+    #[serde(default)]
+    layout: VideoLayout,
+    #[serde(default)]
+    audio_file: Option<String>,
+    #[serde(default = "default_volume")]
+    audio_volume: f64,
 }
 fn preview() -> String {
     "preview".into()
 }
 fn auto() -> String {
     "auto".into()
+}
+fn default_volume() -> f64 {
+    40.0
 }
 fn default_max() -> usize {
     12
@@ -157,6 +166,9 @@ fn plan(state: &AppState, request: &Request) -> Result<Plan, ApiError> {
         return Err(storage::bad_request(
             "Invalid player, native CPU runs or highlight settings",
         ));
+    }
+    if !request.audio_volume.is_finite() || !(0.0..=100.0).contains(&request.audio_volume) {
+        return Err(storage::bad_request("Soundtrack volume must be 0..100"));
     }
     if !matches!(request.operation.as_str(), "preview" | "start") {
         return Err(storage::bad_request("Supported operations: preview/start"));
@@ -373,6 +385,9 @@ pub async fn highlights(
     let operation = request.operation.clone();
     let project_id = request.project_id.clone();
     let encoder = request.encoder.clone();
+    let layout = request.layout;
+    let audio_file = request.audio_file.clone();
+    let audio_volume = request.audio_volume;
     let state_copy = state.clone();
     let planned = tokio::task::spawn_blocking(move || {
         let _guard = project_archive::archive_guard(&state_copy, &request.project_id)?;
@@ -407,9 +422,10 @@ pub async fn highlights(
         Json(montage::MontageRequest {
             project_id,
             clips: planned.clips,
-            audio_file: None,
-            audio_volume: 40.0,
+            audio_file,
+            audio_volume,
             encoder,
+            layout,
             verified_highlights: Some(evidence),
         }),
     )

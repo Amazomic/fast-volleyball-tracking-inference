@@ -9,8 +9,9 @@ use std::{
 };
 use volley_media::{
     montage::{
-        can_stream_copy, compose_args, concat_playlist, native_clip_format, output_profile,
-        verify_original_segment, OriginalClip,
+        can_stream_copy, compose_args, compose_args_for_layout, concat_playlist,
+        native_clip_format, output_profile, output_profile_for_layout, soundtrack_args,
+        verify_mp4_quality, verify_original_segment, OriginalClip, VideoLayout,
     },
     probe,
 };
@@ -242,4 +243,142 @@ fn identical_native_fps_and_size_uses_lossless_stream_copy_for_concat_stage() {
     assert_eq!((info.width, info.height), (320, 240));
     assert!((info.duration_sec - 2.0).abs() < 0.15);
     fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn vertical_rally_export_and_looped_music_preserve_original_full_frame_and_audio_sync() {
+    if !ffmpeg_ready() {
+        eprintln!("SKIP stage77 vertical/audio FFmpeg integration: codec tools unavailable");
+        return;
+    }
+    let root = temp_root();
+    let wide = source(&root, "original_wide.mp4", 640, 360, 30);
+    let tall = source(&root, "original_tall.mp4", 360, 640, 25);
+    let wide_clip = OriginalClip::from_analysis(&wide, 0, 29, 0.0).unwrap();
+    let tall_clip = OriginalClip::from_analysis(&tall, 0, 29, 0.3).unwrap();
+    let first = root.join("full_wide.mp4");
+    let second = root.join("full_tall.mp4");
+    let formats = vec![extract(&wide_clip, &first), extract(&tall_clip, &second)];
+    let profile = output_profile_for_layout(&formats, VideoLayout::Vertical).unwrap();
+    assert_eq!(
+        profile,
+        (360, 640, 30.0),
+        "Native height determines 9:16 output"
+    );
+    let joined = root.join("portrait_9x16.mp4");
+    let args = compose_args_for_layout(
+        &[first.clone(), second.clone()],
+        &formats,
+        &joined,
+        None,
+        false,
+        VideoLayout::Vertical,
+    )
+    .unwrap();
+    let filter = args
+        .iter()
+        .skip_while(|s| s.as_str() != "-filter_complex")
+        .nth(1)
+        .unwrap();
+    assert!(filter.contains("force_original_aspect_ratio=decrease"));
+    assert!(
+        !filter.contains("crop="),
+        "Never crop the source volley-ball court"
+    );
+    assert!(filter.contains("pad=360:640"));
+    assert!(!args.windows(2).any(|w| w == ["-c:v", "copy"]));
+    command("ffmpeg", &args);
+    let visual = verify_mp4_quality(&joined, profile, 2.0, false).unwrap();
+    assert_eq!((visual.width, visual.height), (360, 640));
+    assert_eq!(visual.video_frames, Some(60));
+    assert!(!visual.has_audio);
+
+    // Exercise actual soundtrack loop and fade using sub-second PCM source.
+    let tone = root.join("music.wav");
+    let mut tone_args = vec![
+        "-nostdin".into(),
+        "-hide_banner".into(),
+        "-loglevel".into(),
+        "error".into(),
+        "-y".into(),
+        "-f".into(),
+        "lavfi".into(),
+        "-i".into(),
+        "sine=frequency=440:sample_rate=48000:duration=0.47".into(),
+        "-c:a".into(),
+        "pcm_s16le".into(),
+    ];
+    tone_args.push(tone.to_string_lossy().into_owned());
+    command("ffmpeg", &tone_args);
+    let with_sound = root.join("portrait_music.mp4");
+    let args = soundtrack_args(&joined, &tone, &with_sound, 2.0, 40.0).unwrap();
+    assert!(args.windows(2).any(|w| w == ["-c:v", "copy"]));
+    command("ffmpeg", &args);
+    let qc = verify_mp4_quality(&with_sound, profile, 2.0, true).unwrap();
+    assert!(qc.has_audio);
+    assert_eq!(qc.audio_codec.as_deref(), Some("aac"));
+    assert_eq!(qc.video_frames, Some(60));
+    assert!(
+        qc.audio_duration_sec.unwrap() > 1.88,
+        "Short soundtrack must loop"
+    );
+    assert!(
+        qc.audio_video_skew_sec.unwrap() < 0.12,
+        "AAC must align to H.264 video"
+    );
+    assert!((qc.video_duration_sec - 2.0).abs() < 0.07);
+
+    // A completed MP4 must decode without FFmpeg errors, not just probe.
+    command(
+        "ffmpeg",
+        &[
+            "-nostdin",
+            "-hide_banner",
+            "-v",
+            "error",
+            "-xerror",
+            "-i",
+            &with_sound.to_string_lossy(),
+            "-f",
+            "null",
+            "-",
+        ]
+        .into_iter()
+        .map(str::to_owned)
+        .collect::<Vec<_>>(),
+    );
+    assert!(verify_mp4_quality(&with_sound, (640, 360, 30.0), 2.0, true).is_err());
+    assert!(verify_mp4_quality(&with_sound, profile, 2.0, false).is_err());
+    assert!(verify_mp4_quality(&joined, profile, 2.0, true).is_err());
+    assert!(verify_mp4_quality(&with_sound, profile, 7.0, true).is_err());
+    assert!(soundtrack_args(&joined, &tone, &with_sound, 2.0, 101.0).is_err());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn portrait_native_source_needs_no_scaling_and_layout_is_explicit() {
+    let formats = [(360, 640, "h264".into(), 30.0)];
+    assert_eq!(
+        output_profile_for_layout(&formats, VideoLayout::Original).unwrap(),
+        (360, 640, 30.0)
+    );
+    assert_eq!(
+        output_profile_for_layout(&formats, VideoLayout::Vertical).unwrap(),
+        (360, 640, 30.0)
+    );
+    assert!(serde_json::from_str::<VideoLayout>(r#""diagonal""#).is_err());
+    assert_eq!(
+        serde_json::from_str::<VideoLayout>(r#""vertical""#).unwrap(),
+        VideoLayout::Vertical
+    );
+    let args = compose_args_for_layout(
+        &[PathBuf::from("portrait.mp4")],
+        &formats,
+        Path::new("output.mp4"),
+        Some(Path::new("same.concat")),
+        false,
+        VideoLayout::Vertical,
+    )
+    .unwrap();
+    assert!(args.windows(2).any(|w| w == ["-c:v", "copy"]));
 }
