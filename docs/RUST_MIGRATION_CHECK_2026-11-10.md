@@ -68,3 +68,17 @@ cleanup defect, nor mark the UI release gate passed: re-run the complete
 suite after the separate UI refactor is committed and reconcile tests with
 the intended resulting interface. The concurrent UI source changes are not
 included in this audit commit.
+
+### Subsequent verification after UI refactor commit
+
+The concurrent UI simplification was committed as `0df4c21`.
+`studio_web::tests::axum_serves_standalone_rust_ui_assets_over_http`
+and `scripts/ci/test_studio_wasm_ui.mjs` still require controls removed
+from the HTML. These acceptance checks fail on the new checkout.
+The UI preference controls must either be restored at a supported
+location or their required functionality explicitly reviewed and the
+contract tests updated; do not hide the regression by blanket test
+deletion. With the standalone server stopped, the previously excluded
+exclusive-repository-instance test **passed**. Docker Engine is live
+but `debian:trixie-slim` is not locally cached: no source image was
+downloaded or Docker smoke falsely claimed. Stage85 remains NO-GO.
