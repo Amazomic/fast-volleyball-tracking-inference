@@ -18,7 +18,25 @@ for(const script of ["scripts/volley-rust.sh",
   assert.ok(!readFileSync(join(root,script)).includes(13),
     "CRLF corrupts Bash under Windows autocrlf: "+script);
 }
-const daemon=content("rust/volley-app/src/runtime.rs");
+const ortInstall=content("scripts/setup_rust_ort_cuda.sh");
+assert.ok(!readFileSync(join(root,"scripts/setup_rust_ort_cuda.sh")).includes(13),
+  "ORT install script must retain LF in Windows checkouts");
+execFileSync("bash",["-n",join(root,"scripts/setup_rust_ort_cuda.sh")]);
+const ortSmoke=content("scripts/ci/test_rust_cuda_runtime.sh");
+assert.ok(!readFileSync(join(root,"scripts/ci/test_rust_cuda_runtime.sh")).includes(13),
+  "CUDA smoke script must retain LF in Windows checkouts");
+execFileSync("bash",["-n",join(root,"scripts/ci/test_rust_cuda_runtime.sh")]);
+for(const value of ["onnxruntime-linux-x64-gpu-1.22.0.tgz",
+  "2a19dbfa403672ec27378c3d40a68f793ac7a6327712cd0e8240a86be2b10c55",
+  "onnxruntime-gpu[cuda,cudnn]==1.22.0","--target"]){
+  assert.ok(ortInstall.includes(value),"Pinned native CUDA installer guard missing: "+value);
+}
+assert.ok(ortSmoke.includes("VOLLEY_TEST_ORT_DEVICE=cuda"));
+assert.ok(ortSmoke.includes("native_onnx_clip_infers_and_decodes"));
+const infer=content("rust/volley-inference/src/lib.rs");
+assert.match(infer,/fn runtime_library\(/);
+assert.match(infer,/libonnxruntime_providers_cuda\.so/);
+assert.match(infer,/scripts\/setup_rust_ort_cuda\.sh/);const daemon=content("rust/volley-app/src/runtime.rs");
 assert.match(daemon,/Sha256::digest/);
 assert.match(daemon,/try_lock_exclusive/);
 for(const guard of ["ShutdownGate","try_shutdown","validate_local_request",

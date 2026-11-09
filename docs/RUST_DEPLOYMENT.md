@@ -223,3 +223,56 @@ repository's Rust workspace, and argv[0] equals the expected debug or
 release executable. It still uses SIGTERM, never SIGKILL, and refuses
 to stop when a native job is active. This rule is exercised by a real
 rebuild-during-server restart test and checked by the packaging guard.
+## Local ONNX Runtime 1.22 + CUDA 12 / cuDNN 9 (Rust GPU)
+
+The Rust ort crate 2.0.0-rc.10 dynamically loads ONNX Runtime **1.22**.
+The NVIDIA WSL driver does not include the native Linux ORT .so, CUDA
+userspace math libraries, or cuDNN. These must be provisioned separately.
+For the initial installation under the regular WSL user:
+
+    bash scripts/setup_rust_ort_cuda.sh install
+    bash scripts/setup_rust_ort_cuda.sh check
+    bash scripts/ci/test_rust_cuda_runtime.sh
+
+The script obtains Microsoft's official ONNX Runtime Linux x64 GPU 1.22
+archive and the CUDA 12/cuDNN 9 support wheels in an isolated directory
+under ~/.local/share/volley-rust/ort-1.22.0. Python pip is used only at
+**installation time** to fetch NVIDIA libraries; the running Studio,
+both inference networks and post-processing are native Rust/CUDA, with
+no Python background worker or silent CPU fallback.
+
+The Windows/WSL launcher in scripts/volley-rust.sh automatically sets
+ORT_DYLIB_PATH and LD_LIBRARY_PATH for that bundle at startup.
+Always gracefully restart the Rust server after installation, since
+changing a parent shell environment does not affect a running process.
+Do not restart while native GPU/CPU/montage jobs are active.
+The explicit smoke script executes both ONNX models on **actual GPU**;
+only its successful completion proves that the CUDA provider works.
+
+If libraries are unavailable, native Rust Engine::load returns an
+actionable error, rather than panicking a Tokio worker on
+libonnxruntime.so. A successful ldd/doctor check is not sufficient
+evidence of GPU inference until the real model smoke passes.
+### Verified on HOME-PC WSL (post-stage84 GPU runtime hotfix)
+
+Official ONNX Runtime 1.22.0 Linux GPU archive SHA-256:
+2a19dbfa403672ec27378c3d40a68f793ac7a6327712cd0e8240a86be2b10c55.
+CUDA 12.9 wheel versions and cuDNN 9.28.1.4 are explicitly pinned
+in the setup script. Windows NVIDIA driver 616.92; GPU detected in WSL:
+GeForce RTX 5070 Ti Laptop, 12227 MiB.
+
+Actual diagnostics: ldd CUDA provider resolved all shared objects;
+Rust GPU model test passed for VballNetV4c and RAVEL-013 using
+CUDAExecutionProvider (not Python/CPU fallback). The actual running
+Rust web server at 127.0.0.1:8875 opened both CUDA ONNX model
+sessions through POST /api/inference/native/preflight with
+probe_runtime=true. The optional 18-frame generated-video Rust
+integration test passed twice GPU inference -> SHA-verified model
+results -> fusion -> provisional CPU tracking -> Touch candidates ->
+rally proposals. It is synthetic functional validation, NOT human
+ground truth or measured real-match parity.
+
+The original stage84 NO-GO verdict remains valid until independent
+same-source Python/Rust match quality and Docker acceptance are done.
+This hotfix fixes runtime availability, not every possible reel
+selection or lack of qualifying game rallies.

@@ -913,7 +913,10 @@ mod tests {
                 .unwrap();
             let job_id = receipt["job_id"].as_str().unwrap().to_owned();
             let mut last = Value::Null;
-            for _ in 0..160 {
+            // A real CUDA provider session can take longer on its first
+            // Blackwell/cuDNN setup than the CPU fixture timeout.
+            let polls = if device == Device::Cuda { 1800 } else { 160 };
+            for _ in 0..polls {
                 last = status(
                     State(state.clone()),
                     Query(JobQuery {

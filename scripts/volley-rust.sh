@@ -114,7 +114,33 @@ stop_owned(){
     echo "Rust Studio is not running at $bind"
   fi
 }
+# The native ONNX Runtime GPU library is installed in the WSL user's
+# private runtime directory. UI works without it, GPU jobs do not.
+native_ort_root="$HOME/.local/share/volley-rust/ort-1.22.0"
+if [[ "$ort_lib" == __not_configured__ &&
+      -s "$native_ort_root/lib/libonnxruntime.so.1.22.0" ]];then
+  ort_lib="$native_ort_root/lib/libonnxruntime.so.1.22.0"
+fi
+configure_ort_environment(){
+  [[ "$ort_lib" != __not_configured__ ]] || return 0
+  [[ -f "$ort_lib" ]] ||
+    { echo "ORT library not found: $ort_lib" >&2; return 3; }
+  export ORT_DYLIB_PATH="$ort_lib"
+  previous_path="$(printenv LD_LIBRARY_PATH || true)"
+  export LD_LIBRARY_PATH="$(dirname "$ort_lib")"
+  if [[ "$ort_lib" == "$native_ort_root"/lib/* ]];then
+    for directory in "$native_ort_root/deps/nvidia/"*/lib;do
+      [[ -d "$directory" ]] || continue
+      LD_LIBRARY_PATH="$directory:$LD_LIBRARY_PATH"
+    done
+  fi
+  if [[ -n "$previous_path" ]];then
+    LD_LIBRARY_PATH="$LD_LIBRARY_PATH:$previous_path"
+  fi
+  export LD_LIBRARY_PATH
+}
 doctor(){
+  configure_ort_environment
   echo "Rust Studio dependencies: $repo"
   for command_name in cargo ffmpeg ffprobe curl;do
     command -v "$command_name" >/dev/null ||
@@ -208,11 +234,7 @@ case "$action" in
       export VOLLEY_RUST_DATA_ROOT="$data_root"
     fi
     export VOLLEY_RUST_BIND="$bind" VOLLEY_REPOSITORY_ROOT="$repo"
-    if [[ "$ort_lib" != __not_configured__ ]];then
-      [[ -f "$ort_lib" ]]||{ echo "ORT library missing" >&2;exit 2; }
-      export ORT_DYLIB_PATH="$ort_lib"
-      export LD_LIBRARY_PATH="$(dirname "$ort_lib")${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-    fi
+    configure_ort_environment
     if [[ "$openvino_lib" != __not_configured__ ]];then
       [[ -f "$openvino_lib" ]]||{ echo "OpenVINO library missing" >&2;exit 2; }
       export VOLLEY_OPENVINO_C_LIB="$openvino_lib"

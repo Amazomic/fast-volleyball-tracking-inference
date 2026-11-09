@@ -223,6 +223,46 @@ pub struct Output {
     pub data: Vec<f32>,
 }
 
+/// Probe the native binary BEFORE ort 2.0 load-dynamic triggers its
+/// global loader. The default loader panics when libonnxruntime.so is absent.
+/// Surface an actionable error instead; never claim CUDA->CPU fallback.
+#[cfg(target_os = "linux")]
+fn runtime_library(device: Device) -> Result<PathBuf, String> {
+    let configured = std::env::var_os("ORT_DYLIB_PATH").ok_or_else(|| {
+        "ONNX Runtime 1.22 (CUDA 12, cuDNN 9) is not installed for the Rust process. Set ORT_DYLIB_PATH to an existing libonnxruntime.so; run scripts/setup_rust_ort_cuda.sh and restart Rust Studio.".to_owned()
+    })?;
+    let path = PathBuf::from(configured);
+    if !path.is_absolute() || !path.is_file() {
+        return Err(format!(
+            "ORT_DYLIB_PATH does not point to a readable Linux ONNX Runtime shared library: {}. Run scripts/setup_rust_ort_cuda.sh and restart Rust Studio.",
+            path.display()
+        ));
+    }
+    let library = unsafe { libloading::Library::new(&path) }
+        .map_err(|error| format!("Cannot load ONNX Runtime 1.22 from {}: {error}. Check LD_LIBRARY_PATH (CUDA 12/cuDNN 9) and restart Rust Studio.", path.display()))?;
+    unsafe {
+        library
+            .get::<unsafe extern "C" fn()>(b"OrtGetApiBase\0")
+            .map_err(|error| {
+                format!("ONNX Runtime shared library has no OrtGetApiBase: {error}")
+            })?;
+    }
+    if device == Device::Cuda {
+        let provider = path
+            .parent()
+            .ok_or("ONNX Runtime library has no parent directory")?
+            .join("libonnxruntime_providers_cuda.so");
+        if !provider.is_file() {
+            return Err(format!(
+                "CUDA provider missing: {}. Install the ONNX Runtime 1.22 GPU build (CUDA 12/cuDNN 9). No CPU fallback.",
+                provider.display()
+            ));
+        }
+        // The provider has an unresolved Provider_GetHost symbol until
+        // ORT loads provider_shared. Never dlopen it independently.
+    }
+    Ok(path)
+}
 pub struct Engine {
     model: ModelSpec,
     session: Session,
@@ -237,6 +277,8 @@ impl Engine {
         let (model, path) = spec_for(repo, config.model)?;
         // load-dynamic is configured at compile time; process startup must
         // load a compatible ONNX Runtime native library through ort.
+        #[cfg(target_os = "linux")]
+        let _library_path = runtime_library(config.device)?;
         ort::init()
             .commit()
             .map_err(|e| format!("ONNX Runtime initialization: {e}"))?;
@@ -336,6 +378,17 @@ impl Engine {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn absent_native_onnx_runtime_is_actionable_before_global_loader() {
+        // Do not modify process env: the helper is exercised only if not
+        // configured. This makes the missing-runtime failure deterministic.
+        if std::env::var_os("ORT_DYLIB_PATH").is_none() {
+            let error = runtime_library(Device::Cuda).unwrap_err();
+            assert!(error.contains("ORT_DYLIB_PATH"));
+            assert!(error.contains("scripts/setup_rust_ort_cuda.sh"));
+        }
+    }
     #[test]
     fn default_shapes() {
         assert_eq!(ModelKind::Players.expected_input(), &[1, 9, 3, 360, 640]);

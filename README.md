@@ -150,3 +150,13 @@ Stage84: real 6-second Rust video montage passed (H.264/AAC,
  ground truth, matching Python/Rust GPU inference, full-match
  RAM/VRAM, Linux CUDA ONNX Runtime and Docker validation are missing.
  **Production comparison verdict: NO-GO.** Python remains primary.
+
+Native Rust CUDA runtime update (after stage84 benchmarking):
+Microsoft ONNX Runtime 1.22.0 + CUDA 12/cuDNN 9 were provisioned in
+the isolated WSL user directory and **actual CUDA inference for both
+VballNetV4c/RAVEL-013 models passed**. The native Rust GPU -> fusion ->
+CPU tracking/Touch/rally-proposal integration fixture passed. Reproducible
+setup: scripts/setup_rust_ort_cuda.sh; direct GPU tests:
+scripts/ci/test_rust_cuda_runtime.sh --full.
+This does NOT override the stage84 real-match NO-GO due to unavailable
+independent ground truth and unmatched Python/production Docker evidence.
