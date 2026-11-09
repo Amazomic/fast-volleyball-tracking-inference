@@ -1,8 +1,8 @@
 {
     "schema":  "volley-rust-stage-roadmap/1",
     "plannedTotal":  85,
-    "lastRecorded":  71,
-    "nextStage":  72,
+    "lastRecorded":  72,
+    "nextStage":  73,
     "estimateNote":  "85 — текущий ориентир планирования, не обещание неизменного объема; этап != готовая подсистема. При пересмотре плана обновлять JSON, Markdown и журнал в одном коммите.",
     "stages":  [
                    {
@@ -577,8 +577,9 @@
                        "number":  72,
                        "title":  "Классификация подач, атак и блоков по подтверждённым событиям",
                        "area":  "События",
-                       "status":  "planned",
-                       "acceptance":  "No fabricated actions when evidence insufficient"
+                       "status":  "recorded",
+                       "acceptance":  "No fabricated actions when evidence insufficient",
+                       "journalSection":  72
                    },
                    {
                        "number":  73,

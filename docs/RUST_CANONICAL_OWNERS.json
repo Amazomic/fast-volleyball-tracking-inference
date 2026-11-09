@@ -420,6 +420,27 @@
                         "stores":  [
 
                                    ]
+                    },
+                    {
+                        "id":  "game_actions",
+                        "owner":  "rust/volley-core/src/action_review.rs",
+                        "status":  "partial",
+                        "adapters":  [
+                                         "rust/volley-app/src/native_action_review.rs",
+                                         "rust/volley-app/src/native_rally_preview.rs"
+                                     ],
+                        "routes":  [
+                                       {
+                                           "path":  "/api/cpu/native/actions/review",
+                                           "handler":  "native_action_review::review"
+                                       }
+                                   ],
+                        "stores":  [
+                                       {
+                                           "source":  "native",
+                                           "path":  "projects/\u003cid\u003e/native_action_reviews/\u003crally_run_id\u003e.json"
+                                       }
+                                   ]
                     }
                 ]
 }

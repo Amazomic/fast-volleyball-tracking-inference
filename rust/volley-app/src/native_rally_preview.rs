@@ -72,7 +72,7 @@ struct NativeRally {
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct NativeMotion {
+pub(crate) struct NativeMotion {
     frame_index: u64,
     provisional_track_id: Option<u64>,
     probability: f64,
@@ -88,7 +88,16 @@ struct NativeMotion {
     athlete_identity_verified: bool,
 }
 impl NativeMotion {
-    fn valid(&self, frames: u64, width: u32, height: u32) -> bool {
+    pub(crate) fn event_key(&self) -> (u64, Option<u64>) {
+        (self.frame_index, self.provisional_track_id)
+    }
+    pub(crate) fn is_physical(&self) -> bool {
+        self.physical_motion_supported && !self.athlete_identity_verified
+    }
+    pub(crate) fn probability(&self) -> f64 {
+        self.probability
+    }
+    pub(crate) fn valid(&self, frames: u64, width: u32, height: u32) -> bool {
         self.frame_index < frames
             && self.motion_frame_index < frames
             && self.motion_frame_index.abs_diff(self.frame_index) <= 4
@@ -163,7 +172,7 @@ pub(crate) struct ValidatedRun {
     pub(crate) expected_touches: u64,
 }
 
-fn inspect_project(
+pub(crate) fn inspect_project(
     state: &AppState,
     project_id: &str,
     rally_run_id: &str,

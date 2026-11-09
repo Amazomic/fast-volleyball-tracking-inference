@@ -12,6 +12,7 @@ mod inference_fusion;
 mod inference_native;
 mod inference_stream;
 mod montage;
+mod native_action_review;
 mod native_player_tracks;
 mod native_rally_marks;
 mod native_rally_preview;
@@ -122,6 +123,7 @@ async fn rewrite_status(
             "GET /api/cpu/native/rallies/preview (verified paginated motion evidence and safe manual clips)",
             "GET /api/cpu/native/rallies/runs (browse isolated provisional snapshots)",
             "GET/POST /api/cpu/native/rallies/marks (revisioned gold candidates)",
+            "POST /api/cpu/native/actions/review (explicit human game-action labels)",
             "GET /studio/rust (standalone experimental preview/montage UI)",
             "GET /api/studio/rust/analysis-overview (metadata-only native GPU/CPU stage inventory)",
             "GET /api/inference/native/full/active (read-only reconnect to running GPU job)",
@@ -170,6 +172,10 @@ fn app(state: Arc<AppState>) -> Router {
         .route(
             "/api/studio/rust/analysis-overview",
             get(studio_analysis::get),
+        )
+        .route(
+            "/api/cpu/native/actions/review",
+            post(native_action_review::review),
         )
         .route(
             "/api/cpu/native/rallies/marks",
