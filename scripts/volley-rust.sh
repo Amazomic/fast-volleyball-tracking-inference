@@ -47,9 +47,19 @@ is_owned(){
   [[ "$pid" =~ ^[0-9]+$ && -e "/proc/$pid/exe" && -e "/proc/$pid/cwd" ]]||return 1
   exe="$(readlink -f "/proc/$pid/exe")"
   cwd="$(readlink -f "/proc/$pid/cwd")"
-  [[ "$cwd" == "$repo/rust" &&
-    ( "$exe" == "$repo/rust/target/debug/volley-app" ||
-      "$exe" == "$repo/rust/target/release/volley-app" ) ]]
+  [[ "$cwd" == "$repo/rust" ]] || return 1
+  local debug="$repo/rust/target/debug/volley-app"
+  local release="$repo/rust/target/release/volley-app"
+  if [[ "$exe" == "$debug" || "$exe" == "$release" ]];then
+    return 0
+  fi
+  # Rebuilding a running Rust ELF atomically replaces the on-disk file.
+  # Linux then reports /proc/<pid>/exe as <exact original path> (deleted).
+  # Accept only OUR exact old executable, and additionally verify argv[0].
+  [[ "$exe" == "$debug (deleted)" || "$exe" == "$release (deleted)" ]] || return 1
+  local cmdline=''
+  IFS= read -r -d '' cmdline < "/proc/$pid/cmdline" || return 1
+  [[ "$cmdline" == "$debug" || "$cmdline" == "$release" ]]
 }
 listener(){
   local data

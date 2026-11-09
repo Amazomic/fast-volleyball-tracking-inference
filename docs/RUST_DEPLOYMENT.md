@@ -213,3 +213,13 @@ browser file input receives direct user gestures, retains selections after
 cancel, supports keyboard, repeated selection and drag-drop, and never makes
 the Windows-only server dialog request. The Rust quick-reel HTTP tests check
 multipart upload safety independently.
+## Guarded restart after rebuilding a running Rust executable
+
+On Linux/WSL Cargo can replace the on-disk Rust binary while the previous
+instance continues running. /proc/PID/exe then ends in (deleted). The
+launcher accepts this exact old executable ONLY if the HTTP status names
+the Rust Studio, the reported PID exists, /proc/PID/cwd equals this
+repository's Rust workspace, and argv[0] equals the expected debug or
+release executable. It still uses SIGTERM, never SIGKILL, and refuses
+to stop when a native job is active. This rule is exercised by a real
+rebuild-during-server restart test and checked by the packaging guard.

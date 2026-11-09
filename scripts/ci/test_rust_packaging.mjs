@@ -45,6 +45,12 @@ for(const command of ["start|stop|status|restart|doctor|check",
   "VOLLEY_RUST_DATA_ROOT","ORT_DYLIB_PATH"]){
   assert.ok(bash.includes(command),"Missing Rust deployment contract: "+command);
 }
+for(const detail of ['"$debug (deleted)"','"$release (deleted)"',
+  'IFS= read -r -d',
+  '[[ "$cmdline" == "$debug" || "$cmdline" == "$release" ]]']){
+  assert.ok(bash.includes(detail),
+    'Hot-rebuilt Rust executable must still be safely stoppable: '+detail);
+}
 assert.doesNotMatch(bash,/kill -KILL|kill -9|pkill|taskkill|python\d?\s/);
 const ps=content("scripts/start-volley-rust-dev.ps1");
 assert.match(ps,/Ubuntu-25\.04/);
