@@ -405,6 +405,21 @@
                         "stores":  [
 
                                    ]
+                    },
+                    {
+                        "id":  "rally_selector",
+                        "owner":  "rust/volley-core/src/rally_selector.rs",
+                        "status":  "partial",
+                        "adapters":  [
+                                         "rust/volley-app/src/native_rally_preview.rs",
+                                         "rust/volley-app/src/rallies.rs"
+                                     ],
+                        "routes":  [
+
+                                   ],
+                        "stores":  [
+
+                                   ]
                     }
                 ]
 }

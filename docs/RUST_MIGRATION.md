@@ -743,3 +743,11 @@ Next: reconcile gold rally marking stores without silently remapping old project
 - Tests validate original legacy JSON payload byte equality on no-op, source separation, ID preservation, saturation limits, malformed IDs, duplicate clicks, native source-and-revision roundtrip and existing saved legacy context-insensitive anchor stability. Offline Rust tests: 187 passed, two optional ONNX tests ignored, format/check passed. A real pre-Rust project archive migration was not performed.
 
 Next: one typed source-scoped rally selection API for preview and montage without an inferred athlete or game action.
+## 71. Единый selector розыгрышей для предпросмотра и монтажа — 2026-11-09
+
+- Introduced the canonical, typed whole-rally selection owner rust/volley-core/src/rally_selector.rs with SourceRally (NativeCpu/LegacyCpu, source_scope, original 24-hex ID, detected interval, gold flag), SourceFormat, GoldFilter and Choice (Manual/Page/All). It returns source indices rather than fabricating media clip bounds or player/action identities.
+- Both native_rally_preview.rs and legacy rallies.rs now consume the exact same function for manual selection; native preview pages additionally compare the canonical selection indices against saved filtered-paging logic, rejecting a mismatch rather than allowing stale ordered cards. Legacy auto-selection also consumes typed All indices before its already-existing ranking and duration policies.
+- The source owner enforces bounded 200k entries, 1..80 manual IDs, original user order, duplicate/unknown/cross-video ambiguous ID veto, same source format, valid intervals, scoped gold-only/unmarked pages. Original rally IDs and cached source intervals remain unchanged; per-format adapters still own provenance and snapshot SHA verification.
+- Verified: 189 Rust tests passed with four threads (2 optional ONNX integration tests ignored), including cross-format manual/page/gold selection, source-ambiguity negative fixture, native original clip and manual selection tests. New canonical owner registered with compatibility adapters. Browser visual integration on all historical runs remains pending.
+
+Next: evidence-grounded action classification; no fabricated serve/attack/block labels.

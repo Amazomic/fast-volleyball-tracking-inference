@@ -23,6 +23,9 @@ use std::{
 use volley_core::event_evidence::{
     bounded_clips, interpret_motion, verify_rally_interval, Interval, MotionInput,
 };
+use volley_core::rally_selector::{
+    self, Choice as SharedChoice, GoldFilter, SourceFormat, SourceRally,
+};
 
 const MAX_MANIFEST: u64 = 16 * 1024;
 const MAX_EVIDENCE: u64 = 64 * 1024 * 1024 * 1024;
@@ -425,23 +428,43 @@ fn generate(run: &ValidatedRun, choice: Choice) -> Result<PreviewContent, String
             return Err("A selected rally ID is stale or absent".into());
         }
     }
+    // The one typed selector validates immutable, source-scoped IDs before
+    // either the preview page or a manual montage receives those intervals.
+    let mut original_ids = vec![""; intervals.len()];
+    for (id, idx) in &all_ids {
+        original_ids[*idx] = id;
+    }
+    let source_refs = intervals
+        .iter()
+        .enumerate()
+        .map(|(i, interval)| SourceRally {
+            source: SourceFormat::NativeCpu,
+            stable_id: original_ids[i],
+            source_scope: &run.video,
+            interval: *interval,
+            marked: marked.contains(original_ids[i]),
+        })
+        .collect::<Vec<_>>();
+    let core_indices = match manual.as_ref() {
+        Some(ids) => rally_selector::select(&source_refs, SharedChoice::Manual(ids))?,
+        None => rally_selector::select(
+            &source_refs,
+            SharedChoice::Page {
+                offset,
+                limit,
+                gold: GoldFilter::parse(&filter)?,
+            },
+        )?,
+    };
+    if manual.is_none() && core_indices != page_indices {
+        return Err("Source-scoped preview selector disagrees with saved page".into());
+    }
     let bounds = bounded_clips(&intervals, run.frames, run.context)?;
     let mut by_id = HashMap::<String, Value>::new();
     for (record, id) in records.into_iter().zip(order) {
         by_id.insert(id, record);
     }
-    let selected_indices = if let Some(ids) = manual.as_ref() {
-        ids.iter()
-            .map(|id| {
-                all_ids
-                    .get(id)
-                    .copied()
-                    .ok_or("Missing saved manual candidate")
-            })
-            .collect::<Result<Vec<_>, _>>()?
-    } else {
-        page_indices
-    };
+    let selected_indices = core_indices;
     let mut cards = Vec::<Value>::with_capacity(selected_indices.len());
     let mut clips = Vec::with_capacity(selected_indices.len());
     for &i in &selected_indices {

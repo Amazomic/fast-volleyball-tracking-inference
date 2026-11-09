@@ -1,8 +1,8 @@
 {
     "schema":  "volley-rust-stage-roadmap/1",
     "plannedTotal":  85,
-    "lastRecorded":  70,
-    "nextStage":  71,
+    "lastRecorded":  71,
+    "nextStage":  72,
     "estimateNote":  "85 — текущий ориентир планирования, не обещание неизменного объема; этап != готовая подсистема. При пересмотре плана обновлять JSON, Markdown и журнал в одном коммите.",
     "stages":  [
                    {
@@ -569,8 +569,9 @@
                        "number":  71,
                        "title":  "Единый selector розыгрышей для предпросмотра и монтажа",
                        "area":  "Розыгрыши",
-                       "status":  "planned",
-                       "acceptance":  "One typed selection API consuming both formats"
+                       "status":  "recorded",
+                       "acceptance":  "One typed selection API consuming both formats",
+                       "journalSection":  71
                    },
                    {
                        "number":  72,

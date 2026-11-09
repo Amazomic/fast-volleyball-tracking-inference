@@ -19,6 +19,9 @@ use volley_core::event_evidence::{
     verify_rally_interval, ClipBounds, Interval, VerifiedRallyInterval,
 };
 use volley_core::rallies::{self, Event, Rally, Ranking, RebuildOptions, Track, FPS};
+use volley_core::rally_selector::{
+    self, Choice as SharedChoice, GoldFilter, SourceFormat, SourceRally,
+};
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct SelectionRequest {
@@ -568,30 +571,41 @@ fn select(state: &AppState, request: &SelectionRequest) -> Result<Selection, Api
         })
         .collect();
     let matching_player_rallies = request.player_id.as_ref().map(|_| candidates.len());
-    // Manual mode trusts only known stable IDs from the selected run, never
-    // arbitrary client-provided offsets or frame ranges.
-    let mut selected: Vec<Scene> = if request.rally_selection_mode == "manual" {
-        let by_id: HashMap<&str, &Scene> = candidates
-            .iter()
-            .filter_map(|scene| Some((scene.rally.rally_id.as_deref()?, scene)))
-            .collect();
-        let mut chosen = Vec::new();
-        for id in &request.selected_rally_ids {
-            chosen.push(
-                (*by_id.get(id.as_str()).ok_or_else(|| {
-                    storage::bad_request("ID розыгрыша устарел — обновите список")
-                })?)
-                .clone(),
-            );
-        }
-        chosen
+    // The native and legacy adapters share exactly the same source-scoped
+    // manual/all index selector. Neither accepts caller-supplied clip bounds.
+    let refs = candidates
+        .iter()
+        .map(|scene| SourceRally {
+            source: SourceFormat::LegacyCpu,
+            stable_id: scene.rally.rally_id.as_deref().unwrap_or(""),
+            source_scope: &scene.video,
+            interval: Interval {
+                start: scene.rally.detected_start_frame,
+                end: scene.rally.detected_end_frame,
+            },
+            marked: scene.gold_marked,
+        })
+        .collect::<Vec<_>>();
+    let indices = if request.rally_selection_mode == "manual" {
+        rally_selector::select(&refs, SharedChoice::Manual(&request.selected_rally_ids))
     } else {
-        candidates
-            .iter()
-            .filter(|scene| {
-                // Explicit manual gold marking is sufficient eligibility
-                // evidence for an unranked rally. Duration/confidence/action
-                // thresholds still apply; no fragment is ever created.
+        rally_selector::select(
+            &refs,
+            SharedChoice::All {
+                gold: GoldFilter::parse(&request.gold_filter).map_err(storage::bad_request)?,
+            },
+        )
+    }
+    .map_err(storage::bad_request)?;
+    let mut selected: Vec<Scene> = if request.rally_selection_mode == "manual" {
+        indices.into_iter().map(|i| candidates[i].clone()).collect()
+    } else {
+        indices
+            .into_iter()
+            .filter_map(|i| {
+                let scene = &candidates[i];
+                // Manual gold marking authorizes unranked proposals for manual
+                // examination, never creates verified serve/attack classifications.
                 let mut eligibility = scene.rally.clone();
                 if request.gold_filter == "marked" && scene.gold_marked {
                     eligibility.ranked = true;
@@ -602,13 +616,13 @@ fn select(state: &AppState, request: &SelectionRequest) -> Result<Selection, Api
                     request.min_confidence,
                     &request.min_action_counts,
                     if request.player_id.is_some() {
-                        "highlights" // focus-specific event evidence is checked above.
+                        "highlights"
                     } else {
                         &request.selection_strategy
                     },
                 )
+                .then(|| scene.clone())
             })
-            .cloned()
             .collect()
     };
     if request.rally_selection_mode == "auto" {
