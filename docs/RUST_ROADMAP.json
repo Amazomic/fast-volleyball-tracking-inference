@@ -1,8 +1,8 @@
 {
     "schema":  "volley-rust-stage-roadmap/1",
     "plannedTotal":  85,
-    "lastRecorded":  67,
-    "nextStage":  68,
+    "lastRecorded":  68,
+    "nextStage":  69,
     "estimateNote":  "85 — текущий ориентир планирования, не обещание неизменного объема; этап != готовая подсистема. При пересмотре плана обновлять JSON, Markdown и журнал в одном коммите.",
     "stages":  [
                    {
@@ -545,8 +545,9 @@
                        "number":  68,
                        "title":  "Подтверждение физически обоснованных касаний вместо геометрии",
                        "area":  "Касания",
-                       "status":  "planned",
-                       "acceptance":  "Gated Touch data linked to rally and player snapshots; no false authority"
+                       "status":  "recorded",
+                       "acceptance":  "Gated Touch data linked to rally and player snapshots; no false authority",
+                       "journalSection":  68
                    },
                    {
                        "number":  69,

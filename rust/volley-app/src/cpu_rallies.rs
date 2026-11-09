@@ -56,8 +56,16 @@ struct SelectedBall {
     detection: Candidate,
 }
 #[derive(Deserialize)]
+struct ReplayTrack {
+    track_id: u64,
+    is_verified_athlete: bool,
+    detection: Candidate,
+}
+#[derive(Deserialize)]
 struct ReplayFrame {
     frame_index: u64,
+    #[serde(default)]
+    tracked_players: Vec<ReplayTrack>,
     selected_ball: Option<SelectedBall>,
     track_ids_provisional: bool,
     confirmed_athlete_identities: bool,
@@ -241,10 +249,40 @@ fn rebuild_from_snapshots(
             }
             None => None,
         };
+        if frame.tracked_players.len() > 128 {
+            return Err("Too many CPU player observations per rally frame".into());
+        }
+        let mut verified_frame_ids = std::collections::BTreeSet::<u64>::new();
+        for tracked in frame.tracked_players {
+            if tracked.track_id == 0
+                || tracked.track_id > i64::MAX as u64
+                || tracked.is_verified_athlete
+                || tracked.detection.frame_index != frame_index
+                || tracked.detection.class_name != "player"
+                || !verified_frame_ids.insert(tracked.track_id)
+            {
+                return Err("Rally source has forged or repeated Track IDs".into());
+            }
+            tracked
+                .detection
+                .validate(frame_index - frame_index % 9, "players")?;
+        }
         let mut events = Vec::new();
         while next.as_ref().is_some_and(|t| t.frame_index == frame_index) {
             let item = next.take().expect("checked");
             item.verify(frames, width, height)?;
+            if let Some(track_id) = item.provisional_track_id {
+                if !verified_frame_ids.contains(&track_id) {
+                    return Err("Touch references a Track ID absent from its source frame".into());
+                }
+            }
+            // A Touch candidate cannot claim an observed ball when the
+            // original selected-ball snapshot has no ball in this frame.
+            if ball.is_none() {
+                return Err(
+                    "Touch candidate has no selected-ball evidence in its source frame".into(),
+                );
+            }
             if previous_contact.is_some_and(|prev| item.frame_index <= prev) {
                 return Err("Motion contacts must be strictly ordered and unique".into());
             }
@@ -453,6 +491,9 @@ pub(crate) fn process(state: &AppState, request: &RallyRequest) -> Result<Value,
             "frames":frames,
             "settings":settings,
             "touch_candidates_ingested":output.ingested_touch_candidates,
+            "physical_touch_player_gate":"same_frame_verified_cpu_track",
+            "physical_touch_ball_gate":"same_frame_selected_ball",
+            "unknown_player_contacts_allowed":true,
             "rally_candidates":output.proposals,
             "diagnostics":stats,
             "file":OUTPUT_FILE,
@@ -538,6 +579,9 @@ mod tests {
             };
             let row = json!({
                 "frame_index":frame,
+                "tracked_players":[{"track_id":3,"is_verified_athlete":false,
+                    "detection":{"frame_index":frame,"class_name":"player","score":0.95,
+                    "bbox_xyxy_norm":[0.2,0.2,0.4,0.8],"query_index":0}}],
                 "selected_ball":ball,
                 "track_ids_provisional":true,
                 "confirmed_athlete_identities":false,
@@ -655,6 +699,49 @@ mod tests {
         };
         let (_, rows) = verify(&frames, &touches, &fh, &th, 140, 1, relaxed).unwrap();
         assert_eq!(rows.len(), 1);
+    }
+    /// Even with recalculated SHA-256, a Touch belongs only to a visibly
+    /// tracked player and observed selected ball in the source CPU frame.
+    #[test]
+    fn contact_snapshot_cannot_credit_absent_track_id_or_missing_ball() {
+        let (frames, touches, _, touch_sha) = fixture(140, None, &[35, 90]);
+        let rewrite = |field: &str| -> (Vec<u8>, String) {
+            let mut altered = Vec::new();
+            for raw in frames.split(|b| *b == b'\n').filter(|row| !row.is_empty()) {
+                let mut event: Value = serde_json::from_slice(raw).unwrap();
+                if event["frame_index"] == 35 {
+                    match field {
+                        "track" => event["tracked_players"][0]["track_id"] = json!(999_u64),
+                        "ball" => event["selected_ball"] = Value::Null,
+                        "verified" => {
+                            event["tracked_players"][0]["is_verified_athlete"] = json!(true)
+                        }
+                        _ => unreachable!(),
+                    }
+                }
+                altered.extend(serde_json::to_vec(&event).unwrap());
+                altered.push(b'\n');
+            }
+            let digest = format!("{:x}", Sha256::digest(&altered));
+            (altered, digest)
+        };
+        for field in ["track", "ball", "verified"] {
+            let (altered, hash) = rewrite(field);
+            let error = verify(
+                &altered,
+                &touches,
+                &hash,
+                &touch_sha,
+                140,
+                2,
+                RallySettings::default(),
+            )
+            .unwrap_err();
+            assert!(
+                error.contains("Touch") || error.contains("Track"),
+                "Unexpected reason for unsafe source {field}: {error}"
+            );
+        }
     }
     #[test]
     fn refuses_hash_corruption_out_of_order_touch_and_undeclared_rows() {

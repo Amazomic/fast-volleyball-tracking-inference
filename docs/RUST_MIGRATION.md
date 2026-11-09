@@ -720,3 +720,11 @@ Next: source-versioned trajectory and ball-motion extremum diagnostics without r
 - Verified: 180 offline Rust workspace tests passed with 4 test threads; 2 optional model tests ignored; Node JS syntax and canonical ownership guard (41 routes) passed. Source replay SHA mismatch and unsupported source tests passed. Real-match annotation/precision benchmarks remain pending.
 
 Next: tie physical Touch outputs to verified tracking/rally source stamps and prevent geometry-only credit.
+## 68. Подтверждение физически обоснованных касаний вместо геометрии — 2026-11-09
+
+- The existing native CPU Touch detector already requires RAVEL peaks, real ball-direction/speed change, a reachable player box and a consistent selected-ball source. No overlap with a player bounding box alone can manufacture a motion_supported Touch. Saved Touch events explicitly remain provisional and do not claim verified athlete identity or technique.
+- Strengthened the downstream native rally join in rust/volley-app/src/cpu_rallies.rs: each attributed Touch must refer to a real player Track ID observed in the SAME verified CPU source frame, with validated player detection and provisional status; a Touch must also have a selected ball observed in that frame. Missing, fabricated or duplicate tracked IDs, forged verified identity flags and no-ball Touch frames now fail closed even if a modified source has been rehashed. Unattributed motion contacts can still be represented without inventing player identity.
+- Snapshot lineage remains replay ID+replay SHA256 -> motion Touch ID+Touch SHA256 -> provisional rally ID. The rally manifest documents physical_touch_player_gate=same_frame_verified_cpu_track, physical_touch_ball_gate=same_frame_selected_ball. This gate intentionally favors correctness over coverage; rare off-frame model contacts require a future explicit evidence-gap handling contract instead of silent over-crediting.
+- Verified: 181 offline Rust tests passed with four threads (two hardware/model tests ignored). New adversarial test recomputes SHA after replacing a touched player's ID, deleting the observed ball and forging confirmed identity; all are rejected. Existing synthetic two-rally and 240-frame Touch streaming seam tests pass. Full-match recall is not yet measured.
+
+Next: deterministic rally interval boundary and native/legacy comparison fixtures.
