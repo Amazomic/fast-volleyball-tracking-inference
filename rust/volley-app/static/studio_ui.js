@@ -1,4 +1,49 @@
 "use strict";
+// The icon animates only while actual data requests are pending.
+// Requests shorter than 170 ms never start the animation.
+(()=>{
+  const ball=document.querySelector(".brand .volleyball-ball");
+  if(!ball)return;
+  const prefersReducedMotion=window.matchMedia("(prefers-reduced-motion: reduce)");
+  let pending=0,frame=0,lastTime=0,angle=0,speed=0;
+  const animate=time=>{
+    const dt=lastTime?Math.min((time-lastTime)/1000,0.05):0;
+    lastTime=time;
+    const moving=pending>0&&!prefersReducedMotion.matches&&
+      document.body.dataset.uiMotion!=="reduce";
+    // Continuously vary angular velocity while easing in and out.
+    const target=moving?145+130*(0.5+0.5*Math.sin(time/900)):0;
+    speed+=(target-speed)*Math.min(1,dt*(moving?3:5));
+    angle=(angle+speed*dt)%360;
+    ball.style.transform="rotate("+angle.toFixed(2)+"deg)";
+    if(moving||speed>0.2)frame=requestAnimationFrame(animate);
+    else{frame=0;lastTime=0;}
+  };
+  const ensure=()=>{if(!frame)frame=requestAnimationFrame(animate);};
+  const begin=()=>{
+    let done=false,started=false;
+    const delay=setTimeout(()=>{
+      if(done)return;
+      started=true;
+      pending++;
+      ensure();
+    },170);
+    return ()=>{
+      if(done)return;
+      done=true;
+      clearTimeout(delay);
+      if(started){pending=Math.max(0,pending-1);ensure();}
+    };
+  };
+  window.VolleyballStudioActivity={
+    begin,
+    fetch(...args){
+      const end=begin();
+      try{return window.fetch(...args).finally(end);}
+      catch(error){end();throw error;}
+    }
+  };
+})();
 // Minimal browser adapters for the canonical Rust-compiled WASM UI state.
 // Browser APIs (DOM, fetch, storage) must remain JS: user-visible decisions,
 // navigation validation, loading epochs and locale values come from WASM.
@@ -192,7 +237,7 @@
     wasm.volley_ui_set(KEYS.locale,previous);
   }
   async function boot(){
-    const response=await fetch("/studio/rust/selection.wasm",{
+    const response=await window.VolleyballStudioActivity.fetch("/studio/rust/selection.wasm",{
       cache:"no-store",credentials:"same-origin"
     });
     if(!response.ok)throw Error("Rust/WASM binary unavailable ("+response.status+")");

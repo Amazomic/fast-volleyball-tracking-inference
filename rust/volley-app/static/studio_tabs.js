@@ -31,7 +31,7 @@
   };
   const clear=node=>{while(node.firstChild)node.firstChild.remove();};
   const api=async(path,opts={})=>{
-    const res=await fetch(path,{cache:"no-store",credentials:"same-origin",...opts});
+    const res=await window.VolleyballStudioActivity.fetch(path,{cache:"no-store",credentials:"same-origin",...opts});
     const data=await res.json().catch(()=>({}));
     if(!res.ok){
       const msg=typeof data.message==="string"?data.message:

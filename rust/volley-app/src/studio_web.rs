@@ -19,6 +19,7 @@ use serde_json::{json, Value};
 use std::{fs, sync::Arc, time::SystemTime};
 
 const CSS: &str = include_str!("../static/studio.css");
+const VOLLEYBALL_SVG: &str = include_str!("../static/volleyball.svg");
 const SCRIPT: &str = include_str!("../static/studio.js");
 const CHAIN_SCRIPT: &str = include_str!("../static/studio_chain.js");
 const UI_SCRIPT: &str = include_str!("../static/studio_ui.js");
@@ -53,6 +54,9 @@ fn web_asset(mime: &'static str, contents: &'static str) -> Response {
 }
 pub async fn index() -> Response {
     web_asset("text/html; charset=utf-8", HTML)
+}
+pub async fn volleyball_svg() -> Response {
+    web_asset("image/svg+xml; charset=utf-8", VOLLEYBALL_SVG)
 }
 pub async fn css() -> Response {
     web_asset("text/css; charset=utf-8", CSS)

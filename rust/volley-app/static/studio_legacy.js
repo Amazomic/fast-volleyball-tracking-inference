@@ -18,7 +18,7 @@
     return el;
   };
   const api=async(path,options={})=>{
-    const response=await fetch(path,{cache:"no-store",credentials:"same-origin",...options});
+    const response=await window.VolleyballStudioActivity.fetch(path,{cache:"no-store",credentials:"same-origin",...options});
     const result=await response.json().catch(()=>({}));
     if(!response.ok)throw Error(typeof result.error==="string"?
       result.error:"Ошибка HTTP "+response.status);

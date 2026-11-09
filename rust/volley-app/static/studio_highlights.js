@@ -35,7 +35,7 @@
   const manualKeys=()=>state.mode==="manual"?Array.from(state.chosen):[];
   // Shared URL route is source-aware and re-verifies full SHA before rendering.
   const api=async(url,options={})=>{
-    const response=await fetch(url,{credentials:"same-origin",cache:"no-store",...options});
+    const response=await window.VolleyballStudioActivity.fetch(url,{credentials:"same-origin",cache:"no-store",...options});
     const body=await response.json().catch(()=>({}));
     if(!response.ok)throw Error(body.message||body.error||"HTTP "+response.status);
     return body;

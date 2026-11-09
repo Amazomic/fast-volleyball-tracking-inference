@@ -44,13 +44,13 @@
       state.previewSelection!==selectionKey();
   };
   const query=async url=>{
-    const response=await fetch(url,{credentials:"same-origin",cache:"no-store"});
+    const response=await window.VolleyballStudioActivity.fetch(url,{credentials:"same-origin",cache:"no-store"});
     const data=await response.json().catch(()=>({}));
     if(!response.ok)throw Error(data.message||data.error||"HTTP "+response.status);
     return data;
   };
   const post=async body=>{
-    const response=await fetch("/api/players/native/statistics",{
+    const response=await window.VolleyballStudioActivity.fetch("/api/players/native/statistics",{
       method:"POST",credentials:"same-origin",cache:"no-store",
       headers:{"Content-Type":"application/json"},body:JSON.stringify(body)
     });

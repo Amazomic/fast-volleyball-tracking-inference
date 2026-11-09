@@ -78,6 +78,7 @@ fn app_with_gate(state: Arc<AppState>, gate: Arc<runtime::ShutdownGate>) -> Rout
         // into believing this partial Rust rewrite is ready.
         .route("/internal/rewrite-status", get(runtime::rewrite_status))
         .route("/studio/rust", get(studio_web::index))
+        .route("/studio/rust/volleyball.svg", get(studio_web::volleyball_svg))
         .route("/studio/rust/app.js", get(studio_web::js))
         .route("/studio/rust/chain.js", get(studio_web::chain_js))
         .route("/studio/rust/ui.js", get(studio_web::ui_js))

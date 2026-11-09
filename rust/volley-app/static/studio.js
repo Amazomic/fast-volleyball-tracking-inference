@@ -25,7 +25,7 @@
   };
   const url=(path,params)=>path+(params?"?"+new URLSearchParams(params).toString():"");
   const request=async(path,opts={})=>{
-    const res=await fetch(path,{cache:"no-store",credentials:"same-origin",...opts});
+    const res=await window.VolleyballStudioActivity.fetch(path,{cache:"no-store",credentials:"same-origin",...opts});
     let data={};try{data=await res.json();}catch{}
     if(!res.ok)throw Error(typeof data.message==="string"?data.message:
       typeof data.error==="string"?data.error:"Ошибка HTTP "+res.status);
@@ -101,7 +101,7 @@
     values(){return Array.from(this.keys(),id=>this.labels.get(id)).values();}
   }
   const loadRustSelection=async()=>{
-    const response=await fetch("/studio/rust/selection.wasm",{
+    const response=await window.VolleyballStudioActivity.fetch("/studio/rust/selection.wasm",{
       credentials:"same-origin",cache:"no-store"
     });
     if(!response.ok)throw Error("Модуль Rust/WASM недоступен: HTTP "+response.status);

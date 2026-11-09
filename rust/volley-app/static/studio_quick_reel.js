@@ -18,7 +18,7 @@
   const valid=id=>typeof id==="string"&&/^[a-f0-9]{32}$/.test(id);
   const make=(tag,text)=>{const n=document.createElement(tag);n.textContent=String(text);return n;};
   const api=async(url,options={})=>{
-    const response=await fetch(url,{cache:"no-store",credentials:"same-origin",...options});
+    const response=await window.VolleyballStudioActivity.fetch(url,{cache:"no-store",credentials:"same-origin",...options});
     const data=await response.json().catch(()=>({}));
     if(!response.ok)throw Error(typeof data.error==="string"?data.error:"HTTP "+response.status);
     return data;

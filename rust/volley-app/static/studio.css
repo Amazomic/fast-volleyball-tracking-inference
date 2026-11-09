@@ -222,3 +222,7 @@ body[data-ui-theme="light"] .analysis-gpu-settings-grid input{background:white;c
   .studio-chain-step:first-child{grid-column:1/-1}
   .studio-chain-refresh{grid-column:3;grid-row:2}
 }
+
+/* Shared app icon: use the same SVG in the sidebar and the browser tab. */
+.brand .logo{overflow:hidden;background:#16498f;flex:none}
+.brand .logo .volleyball-ball{display:block;width:29px;height:29px;max-width:none;margin:0;transform-origin:50% 50%;will-change:transform}

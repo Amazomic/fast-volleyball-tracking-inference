@@ -28,13 +28,13 @@
   const clear=n=>{while(n.firstChild)n.firstChild.remove();};
   const path=(base,args)=>base+"?"+new URLSearchParams(args);
   const read=async url=>{
-    const response=await fetch(url,{credentials:"same-origin",cache:"no-store"});
+    const response=await window.VolleyballStudioActivity.fetch(url,{credentials:"same-origin",cache:"no-store"});
     const body=await response.json().catch(()=>({}));
     if(!response.ok)throw Error(body.message||body.error||"HTTP "+response.status);
     return body;
   };
   const post=async (url,payload)=>{
-    const response=await fetch(url,{method:"POST",cache:"no-store",
+    const response=await window.VolleyballStudioActivity.fetch(url,{method:"POST",cache:"no-store",
       credentials:"same-origin",headers:{"Content-Type":"application/json"},
       body:JSON.stringify(payload)});
     const body=await response.json().catch(()=>({}));
