@@ -165,6 +165,7 @@ fn app(state: Arc<AppState>) -> Router {
         .route("/studio/rust/app.js", get(studio_web::js))
         .route("/studio/rust/tabs.js", get(studio_web::tabs_js))
         .route("/studio/rust/tracks.js", get(studio_web::tracks_js))
+        .route("/studio/rust/stats.js", get(studio_web::stats_js))
         .route(
             "/studio/rust/selection.wasm",
             get(studio_web::selection_wasm),

@@ -35,6 +35,15 @@ pub struct Request {
     mode: String,
     #[serde(default)]
     expected_revision: Option<String>,
+    #[serde(default)]
+    expected_source_fingerprint: Option<String>,
+}
+fn expected_source_matches(current: &Value, expected: &str) -> bool {
+    expected.len() == 64
+        && expected
+            .bytes()
+            .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+        && current["source_fingerprint"].as_str() == Some(expected)
 }
 fn preview() -> String {
     "preview".into()
@@ -291,6 +300,11 @@ fn run(state: &AppState, req: &Request) -> Result<Value, ApiError> {
             "Native stats mode must be preview or recalculate",
         ));
     }
+    if req.mode == "preview" && req.expected_source_fingerprint.is_some() {
+        return Err(storage::bad_request(
+            "Preview must not claim a saved source fingerprint",
+        ));
+    }
     if req.mode == "preview" && req.expected_revision.is_some() {
         return Err(storage::bad_request(
             "Preview does not accept a write revision",
@@ -312,6 +326,13 @@ fn run(state: &AppState, req: &Request) -> Result<Value, ApiError> {
             .as_deref()
             .ok_or_else(|| storage::bad_request("Expected native statistics revision missing"))?;
         versioned_store::expect_revision(raw.as_deref(), expected).map_err(storage::conflict)?;
+        if let Some(preview_fingerprint) = req.expected_source_fingerprint.as_deref() {
+            if !expected_source_matches(&output, preview_fingerprint) {
+                return Err(storage::conflict(
+                    "CPU or reviewed-athlete sources changed after statistics preview",
+                ));
+            }
+        }
         versioned_store::write_json_checked(&project, &file, &output, MAX_STATS)
             .map_err(storage::bad_request)?;
     }
@@ -460,6 +481,33 @@ mod tests {
             "Incorrect source gate: {failure}"
         );
         fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn stats_recalculate_checks_expected_source_fingerprint() {
+        assert!(expected_source_matches(
+            &json!({"source_fingerprint":"f".repeat(64)}),
+            &"f".repeat(64),
+        ));
+        assert!(!expected_source_matches(
+            &json!({"source_fingerprint":"e".repeat(64)}),
+            &"f".repeat(64),
+        ));
+        assert!(!expected_source_matches(
+            &json!({"source_fingerprint":"f".repeat(64)}),
+            "invalid",
+        ));
+        let request: Request = serde_json::from_value(json!({
+            "project_id":"abcdef012345",
+            "sources":[{"rally_run_id":"1".repeat(32)}],
+            "mode":"recalculate",
+            "expected_revision":"absent",
+            "expected_source_fingerprint":"f".repeat(64)
+        }))
+        .unwrap();
+        assert_eq!(
+            request.expected_source_fingerprint.as_deref(),
+            Some("f".repeat(64).as_str())
+        );
     }
     #[test]
     fn native_stats_reject_double_counting_same_video_cpu_revisions() {

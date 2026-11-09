@@ -1,8 +1,8 @@
 {
     "schema":  "volley-rust-stage-roadmap/1",
     "plannedTotal":  85,
-    "lastRecorded":  73,
-    "nextStage":  74,
+    "lastRecorded":  74,
+    "nextStage":  75,
     "estimateNote":  "85 — текущий ориентир планирования, не обещание неизменного объема; этап != готовая подсистема. При пересмотре плана обновлять JSON, Markdown и журнал в одном коммите.",
     "stages":  [
                    {
@@ -593,8 +593,9 @@
                        "number":  74,
                        "title":  "Панели статистики игрока и качества событий в UI",
                        "area":  "Статистика",
-                       "status":  "planned",
-                       "acceptance":  "Correct event counts and source-version diagnostics"
+                       "status":  "recorded",
+                       "acceptance":  "Correct event counts and source-version diagnostics",
+                       "journalSection":  74
                    },
                    {
                        "number":  75,

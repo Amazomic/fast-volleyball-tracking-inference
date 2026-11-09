@@ -9,6 +9,7 @@
   <script src="/studio/rust/app.js" defer></script>
   <script src="/studio/rust/tabs.js" defer></script>
   <script src="/studio/rust/tracks.js" defer></script>
+  <script src="/studio/rust/stats.js" defer></script>
 </head>
 <body>
   <div class="shell">
@@ -111,7 +112,7 @@
         <section id="studio-players-view" class="hidden tab-workspace" aria-labelledby="studio-players-heading">
           <p class="eyebrow">03 / БИБЛИОТЕКА ИГРОКОВ</p>
           <h1 id="studio-players-heading">Игроки</h1>
-          <p class="panel-note">Имена в изолированной библиотеке Rust. Привязка RAVEL Track ID к реальному игроку и сохранение фото в этом интерфейсе ещё не готовы.</p>
+          <p class="panel-note">Библиотека игроков, ручные привязки Track ID, проверка ReID-групп и статистика подтверждённых касаний по выбранным CPU-версиям. Автоматическая идентификация игроков отключена.</p>
           <form id="studio-player-create" class="player-create">
             <label class="field-label" for="studio-player-name">Новый игрок</label>
             <div class="inline-input"><input id="studio-player-name" name="name" type="text" placeholder="Имя игрока" minlength="1" maxlength="80" required autocomplete="off"><button class="primary" type="submit">Добавить</button></div>
@@ -119,10 +120,32 @@
           <div class="section-bar"><h2>Библиотека <small id="studio-player-count">—</small></h2><button type="button" id="studio-player-refresh" class="secondary">↻ Обновить</button></div>
 
           <div id="studio-player-list" class="player-list" aria-live="polite"><div class="empty-state">Загрузка игроков…</div></div>
+          <section id="studio-native-stats-panel" class="native-track-panel" aria-labelledby="studio-native-stats-title">
+            <p class="eyebrow">СТАТИСТИКА / CPU</p>
+            <h2 id="studio-native-stats-title">Касания игроков проекта</h2>
+            <p class="panel-note">Один проверенный результат CPU на каждое видео. Только физически обоснованные касания и явно подтверждённые привязки Track ID. Касания без игрока показываются отдельно. Это не статистика атак и подач.</p>
+            <div class="track-actions">
+              <button id="studio-stats-refresh" class="secondary" type="button">↻ Найти обработки</button>
+              <button id="studio-stats-preview" class="secondary" type="button" disabled>Предпросмотр</button>
+              <button id="studio-stats-save" class="primary" type="button" disabled>Пересчитать и сохранить</button>
+            </div>
+            <p id="studio-stats-status" class="panel-note" role="status" aria-live="polite">Выберите проект и найдите CPU-обработки.</p>
+            <div id="studio-stats-sources" class="native-stats-sources" aria-label="Выбранные версии касаний по видео"></div>
+            <div id="studio-stats-summary" class="track-summary hidden" aria-live="polite">
+              <strong id="studio-stats-total">—</strong><span>Касаний</span>
+              <strong id="studio-stats-assigned">—</strong><span>Привязано</span>
+              <strong id="studio-stats-unknown">—</strong><span>Без игрока</span>
+            </div>
+            <div id="studio-stats-players" class="native-stats-players" aria-live="polite"></div>
+            <details id="studio-stats-diagnostics" class="native-stats-diagnostics hidden">
+              <summary>Версии источников и диагностика</summary>
+              <div id="studio-stats-source-details"></div>
+            </details>
+          </section>
           <section id="studio-native-track-panel" class="native-track-panel" aria-labelledby="studio-native-track-title">
             <p class="eyebrow">04 / НАТИВНЫЙ CPU ТРЕКИНГ</p>
             <h2 id="studio-native-track-title">Ручная привязка Track ID</h2>
-            <p class="panel-note">ID предварительные. Привязка к игроку выполняется только вручную и сохраняется для выбранной версии CPU-трекинга. Фото используется только для предпросмотра; ReID и сохранение фотоэталонов ещё не подключены.</p>
+            <p class="panel-note">ID предварительные. Привязка к игроку выполняется вручную для выбранной CPU-версии. Фото доступно для предпросмотра; ReID-группы требуют проверки, без автоматической идентификации.</p>
             <div class="track-controls">
               <div><label class="field-label" for="studio-track-video">Видео проекта</label><select id="studio-track-video"><option value="">Выберите видео</option></select></div>
               <div><label class="field-label" for="studio-track-replay">CPU Track ID</label><select id="studio-track-replay"><option value="">Выберите обработку</option></select></div>

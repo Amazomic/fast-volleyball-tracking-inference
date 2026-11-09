@@ -80,3 +80,18 @@
 .native-reid-group span{overflow-wrap:anywhere;font-size:.85rem}
 .native-reid-group button{flex-shrink:0}
 .native-reid-results{max-height:22rem;overflow-y:auto}
+/* Verified player statistics (CPU source snapshots, no inferred action labels). */
+.native-stats-sources{display:grid;gap:.5rem;margin:.65rem 0}
+.native-stats-source-choice{display:grid;grid-template-columns:minmax(9rem,1fr) minmax(12rem,2fr);gap:.5rem;align-items:center;min-width:0}
+.native-stats-source-choice span{overflow-wrap:anywhere}
+.native-stats-source-choice select{max-width:100%;min-width:0}
+.native-stats-players{margin:.6rem 0;max-width:44rem}
+.native-stats-row{display:flex;align-items:center;justify-content:space-between;gap:1rem;padding:.5rem .8rem;border-bottom:1px solid var(--border,#45505c)}
+.native-stats-row strong{font-variant-numeric:tabular-nums}
+.native-stats-heading{font-size:.85rem;opacity:.8}
+.native-stats-unknown{font-weight:600}
+.native-stats-diagnostics{margin-top:.7rem;overflow-wrap:anywhere}
+.native-stats-diagnostics summary{cursor:pointer;font-weight:600}
+.native-stats-source{padding:.6rem .4rem;border-bottom:1px solid var(--border,#45505c)}
+.native-stats-source p{margin:.25rem 0;font-size:.8rem;word-break:break-word}
+@media(max-width:620px){.native-stats-source-choice{grid-template-columns:1fr}}
