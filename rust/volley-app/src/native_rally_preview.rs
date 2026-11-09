@@ -693,6 +693,34 @@ pub(crate) fn verified_rally_intervals(
 
 /// All selected candidates are checked against the canonical, original-video
 /// manual selector (including context, source bounds and full SHA evidence).
+/// For independent Quick Reel only: motion evidence is a HIGHLIGHT RANKING,
+/// not an authoritative rally, player or game-action classification.
+/// The canonical generator authenticates BOTH SHA-bound rally and Touch files.
+pub(crate) fn verified_quick_rally_candidates(
+    run: &ValidatedRun,
+) -> Result<Vec<(String, u64, u64, u64, f64)>, String> {
+    verified_rally_intervals(run)?;
+    let mut reader = BoundedReader::open(&run.rally_file)?;
+    let mut rows = Vec::new();
+    while let Some(line) = reader.line()? {
+        if rows.len() >= MAX_RALLIES {
+            return Err("Quick Reel rally source too large".into());
+        }
+        let item: NativeRally = serde_json::from_slice(&line)
+            .map_err(|e| format!("Invalid verified quick reel candidate: {e}"))?;
+        rows.push((
+            item.candidate_id,
+            item.detected_start_frame,
+            item.detected_end_frame,
+            item.motion_supported_touch_proposals,
+            item.ball_coverage,
+        ));
+    }
+    if rows.len() as u64 != run.expected_rallies || reader.finish() != run.rally_sha {
+        return Err("Quick Reel rally source SHA or count changed".into());
+    }
+    Ok(rows)
+}
 pub(crate) fn verified_manual_clips(
     run: &ValidatedRun,
     ids: Vec<String>,

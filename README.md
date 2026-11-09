@@ -11,7 +11,7 @@ pipeline is **project → prepared video → immutable VballNet/RAVEL GPU eviden
 versioned CPU player tracks/Touch/rallies → reviewed players → original-quality montage**.
 FFmpeg, ONNX Runtime and CUDA are native external runtimes, not Python components.
 
-**Rust-миграция: 77/85; следующий 78/85 (плановый объём).**
+**Rust-миграция: 78/85; следующий 79/85 (плановый объём).**
 [Stage map](docs/RUST_ROADMAP.md) ·
 [Migration journal](docs/RUST_MIGRATION.md) ·
 [Architecture and owners](docs/RUST_ARCHITECTURE.md).
@@ -91,8 +91,11 @@ This is the **sole application implementation, not yet a completed product**.
 The native Rust GPU→CPU pipeline and experimental analysis/player/preview/
 montage UI exist, with immutable replay artifacts. Detection-based tracks and
 Touch/rally proposals are not yet verified player identities or authoritative
-game events. Remaining work includes complete Quick Reel GPU/CPU/render
-orchestration, photo-based ReID reference embedding matching, comprehensive browser
+game events. Independent Quick Reel now chains fresh CUDA VballNet/RAVEL GPU scans,
+SHA-verified CPU fusion/tracking/Touch/rallies and original-source montage;
+only prepared video may be reused. The browser file-picker/download flow and
+real CUDA ONNX Runtime deployment still need verification. Remaining work includes
+photo-based ReID reference matching, comprehensive browser
 UI/UX and real-match acceptance, automatic game-event classification and
 release packaging. The former Python UI/features have **not** all been
 reimplemented; no fallback is supplied.

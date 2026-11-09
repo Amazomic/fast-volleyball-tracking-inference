@@ -105,7 +105,7 @@ async fn rewrite_status(
             "POST /api/montage/native/plan (CPU-based selection, read-only)",
             "POST /api/rallies/native/marks (read/set gold marks, isolated root)",
             "POST /api/quick-reel/native/select (explicit local video refs, isolated root)",
-            "POST /api/quick-reel/native/start (preparation only; inference pending)",
+            "POST /api/quick-reel/native/start (independent fresh CUDA GPU/CPU + original-source MP4; isolated root)",
             "GET /api/quick-reel/native/status",
             "POST /api/quick-reel/native/cancel",
             "POST /api/inference/native/preflight (read-only model + optional ONNX sessions)",

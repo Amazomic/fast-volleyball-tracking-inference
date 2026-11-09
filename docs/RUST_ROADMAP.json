@@ -1,8 +1,8 @@
 {
     "schema":  "volley-rust-stage-roadmap/1",
     "plannedTotal":  85,
-    "lastRecorded":  77,
-    "nextStage":  78,
+    "lastRecorded":  78,
+    "nextStage":  79,
     "estimateNote":  "85 — текущий ориентир планирования, не обещание неизменного объема; этап != готовая подсистема. При пересмотре плана обновлять JSON, Markdown и журнал в одном коммите.",
     "stages":  [
                    {
@@ -625,8 +625,9 @@
                        "number":  78,
                        "title":  "Независимый Quick Reel: свежий GPU→CPU→монтаж",
                        "area":  "Quick Reel",
-                       "status":  "planned",
-                       "acceptance":  "Reuses only media preparation; no project inference reuse"
+                       "status":  "recorded",
+                       "acceptance":  "Reuses only media preparation; no project inference reuse",
+                       "journalSection":  78
                    },
                    {
                        "number":  79,

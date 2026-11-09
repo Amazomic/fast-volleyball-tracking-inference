@@ -78,6 +78,9 @@ pub(crate) fn plan_for(
 ) -> Result<PreparationPlan, ApiError> {
     let project = projects::existing_project(state, id)?;
     storage::video_name(video)?;
+    if project["quick_reel_internal"] == true {
+        return crate::quick_reel::prepared_plan_for_quick_reel(state, &project, video);
+    }
     if !project["videos"]
         .as_array()
         .is_some_and(|videos| videos.iter().any(|name| name.as_str() == Some(video)))

@@ -1,10 +1,11 @@
 //! Independent Rust Quick Reel orchestration. NO project data and NO Python
-//! inference reuse. Until native GPU/CPU stages exist, runs end honestly as
-//! awaiting_native_inference, never with a fake finished MP4.
+//! inference reuse. Fresh CUDA/CPU stages run in a private per-reel namespace.
+//! No project inference data, analysis proxy or Python worker may be reused.
 //! All writes require VOLLEY_RUST_DATA_ROOT outside the original checkout.
 
 use crate::{
-    preparation,
+    cpu_rallies, cpu_retrack, cpu_touches, inference_full, inference_fusion, montage,
+    native_rally_preview, preparation,
     storage::{self, ApiError, ApiResult},
     AppState,
 };
@@ -15,7 +16,7 @@ use axum::{
 };
 use fs2::FileExt;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{json, Map, Value};
 use std::{
     collections::HashSet,
     fs::{self, File, OpenOptions},
@@ -26,6 +27,12 @@ use std::{
 };
 use tokio::sync::{watch, Mutex};
 use uuid::Uuid;
+use volley_media::montage::{SelectedClip, VideoLayout};
+#[path = "quick_reel_pipeline.rs"]
+mod pipeline;
+use pipeline::run_native_pipeline;
+#[cfg(test)]
+use pipeline::{best_quick_rallies, create_run_workspace, RankedRally};
 use volley_media::preparation::{PreparationPlan, PreparationReuse};
 
 const MAX_VIDEOS: usize = 30;
@@ -368,7 +375,7 @@ fn default_analysis() -> Value {
         "gpu_memory_limit_mb":0,
         "beach_volleyball":true,
         "no_court_fallback":true,
-        "cpu_golden_profile":"pending_native_cpu_port",
+        "cpu_golden_profile":"native_physical_motion_touch_rally",
         "ball_touch_extrema":true,
         "rally_selection_strategy":"highlights",
         "montage_mode":"montage",
@@ -421,6 +428,77 @@ fn checked_request(state: &AppState, input: StartRequest) -> Result<PreparedRun,
         root,
     })
 }
+/// Only the worker's per-run directory may act as an internal transient
+/// project namespace. It is NEVER entered into the real projects registry.
+/// Shared preparation is the *only* cache that the internal stages can read.
+pub(crate) fn prepared_plan_for_quick_reel(
+    state: &AppState,
+    project: &Value,
+    video: &str,
+) -> Result<PreparationPlan, ApiError> {
+    storage::video_name(video)?;
+    let scoped = state
+        .data_root
+        .canonicalize()
+        .map_err(|_| storage::bad_request("Quick Reel pipeline root missing"))?;
+    if scoped.file_name().and_then(|s| s.to_str()) != Some("pipeline") {
+        return Err(storage::bad_request(
+            "Not an internal Quick Reel pipeline namespace",
+        ));
+    }
+    let run_dir = scoped
+        .parent()
+        .ok_or_else(|| storage::bad_request("Quick Reel has no run root"))?;
+    let run_id = run_dir.file_name().and_then(|s| s.to_str()).unwrap_or("");
+    let quick_root = run_dir
+        .parent()
+        .ok_or_else(|| storage::bad_request("Quick Reel root missing"))?;
+    if !is_id(run_id)
+        || quick_root.file_name().and_then(|s| s.to_str()) != Some(QUICK_ROOT)
+        || project["quick_reel_run_id"].as_str() != Some(run_id)
+    {
+        return Err(storage::bad_request(
+            "Quick Reel virtual project does not belong to this run",
+        ));
+    }
+    let global_root = quick_root
+        .parent()
+        .ok_or_else(|| storage::bad_request("Rust root missing"))?;
+    let original = project["source_paths"][video]
+        .as_str()
+        .ok_or_else(|| storage::bad_request("Missing original Quick Reel source mapping"))?;
+    let expected_id = project["source_ids"][video]
+        .as_str()
+        .ok_or_else(|| storage::bad_request("Missing Quick Reel source token"))?;
+    // The original request was written by the server before this private
+    // namespace was constructed. Re-verify source identity for every stage.
+    let request = storage::read_json(&run_dir.join("request.json"))?
+        .ok_or_else(|| storage::bad_request("Missing original Quick Reel request"))?;
+    if request["id"].as_str() != Some(run_id)
+        || request["inference_cache_reuse"] != false
+        || request["schema"] != "volley-rust-quick-reel/1"
+    {
+        return Err(storage::conflict("Quick Reel request identity changed"));
+    }
+    let saved = request["videos"]
+        .as_array()
+        .and_then(|rows| {
+            rows.iter().find(|row| {
+                row["id"].as_str() == Some(expected_id) && row["source"].as_str() == Some(original)
+            })
+        })
+        .ok_or_else(|| storage::conflict("Quick Reel input not in immutable run request"))?;
+    let source: Source = serde_json::from_value(saved.clone())
+        .map_err(|_| storage::bad_request("Damaged Quick Reel source identity"))?;
+    let canonical = verify_source(&source)?;
+    let plan = PreparationPlan::new(&canonical, global_root, None).map_err(storage::bad_request)?;
+    if plan.ready_path().is_none() {
+        return Err(storage::conflict(
+            "Quick Reel prepared media not ready; no inference reuse allowed",
+        ));
+    }
+    Ok(plan)
+}
 fn status_file(run: &PreparedRun) -> PathBuf {
     run.root.join("status.json")
 }
@@ -438,12 +516,12 @@ fn running_json(
         "status":state,
         "stage":stage,
         "stage_index":index,
-        "stage_total":3,
+        "stage_total":4,
         "progress":(percent*100.0).round()/100.0,
         "videos":videos,
         "error":error,
         "music_duration":run.audio_duration,
-        "native_inference_available":false,
+        "native_inference_available":true,
         "default_analysis":true,
         "output":Value::Null
     })
@@ -463,7 +541,7 @@ fn planned_request(run: &PreparedRun) -> Value {
         "inference_cache_reuse":false,
         "analysis_cache_salt":run.id,
         "state":"preparing",
-        "note":"Preparation may reuse input MP4. GPU inference always must run fresh; not implemented in Rust yet."
+        "note":"Preparation only may reuse media; fresh CUDA VballNet and RAVEL, CPU fusion, tracking, Touch, rally and montage follow per run."
     })
 }
 fn latest(state: &AppState) -> Result<Option<String>, ApiError> {
@@ -621,21 +699,63 @@ async fn perform(
             status = running_json(
                 &run,
                 "cancelled",
-                "Обработка остановлена",
+                "Остановлено после подготовки",
                 1,
                 status["progress"].as_f64().unwrap_or(0.0),
                 &videos,
                 None,
             );
         } else {
-            // This is NOT success and no placeholder MP4 is published.
-            // The full RAVEL/VballNet native inference and CPU reprocess
-            // stage must be wired before the pipeline can continue.
-            status=running_json(&run,"awaiting_native_inference",
-                "Ожидается нативный GPU-инференс RAVEL-013 + VballNetV4c",2,
-                15.0,&videos,Some(
-                    "Рилс не создан: нативный GPU/CPU анализ ещё не перенесён на Rust. Подготовка завершена; анализ должен стартовать заново, без кеша готовых анализов."
-                ));
+            match run_native_pipeline(&state, &run, videos.clone(), cancelled.clone()).await {
+                Ok((output, video_status)) => {
+                    videos = video_status;
+                    status = running_json(
+                        &run,
+                        "complete",
+                        "Quick Reel MP4 готов",
+                        4,
+                        100.0,
+                        &videos,
+                        None,
+                    );
+                    status["output"] = output;
+                    status["inference_cache_reuse"] = json!(false);
+                    status["fresh_gpu_cpu"] = json!(true);
+                }
+                Err(error) => {
+                    // Keep last GPU/CPU stage and per-video provenance, even
+                    // when an ONNX CUDA provider or model weight is missing.
+                    let mut failed_stage = 2u8;
+                    let mut failed_progress = 15.0;
+                    if let Ok(Some(current)) = storage::read_json(&status_file(&run)) {
+                        failed_stage = current["stage_index"]
+                            .as_u64()
+                            .and_then(|i| u8::try_from(i).ok())
+                            .unwrap_or(2);
+                        failed_progress = current["progress"].as_f64().unwrap_or(15.0);
+                        if let Some(rows) = current["videos"].as_array() {
+                            videos = rows.clone();
+                        }
+                    }
+                    let was_cancelled = error == "cancelled" || *cancelled.borrow();
+                    status = running_json(
+                        &run,
+                        if was_cancelled { "cancelled" } else { "failed" },
+                        if was_cancelled {
+                            "Quick Reel отменён"
+                        } else {
+                            "Не удалось выполнить нативный GPU/CPU/монтаж"
+                        },
+                        failed_stage,
+                        failed_progress,
+                        &videos,
+                        (!was_cancelled).then_some(error.as_str()),
+                    );
+                    status["inference_cache_reuse"] = json!(false);
+                    // An unsuccessful reel MUST NOT publish the MP4.
+                    let _ = fs::remove_file(run.root.join("quick_reel.mp4"));
+                }
+            }
         }
         let _ = save_status(&run, &status);
     }
@@ -709,9 +829,9 @@ pub async fn start(
         cancel: tx,
     });
     tokio::spawn(perform(state.clone(), run, rx, lock));
-    Ok(Json(json!({"id":id,"status":"queued","stage_total":3,
+    Ok(Json(json!({"id":id,"status":"queued","stage_total":4,
         "default_analysis":true,"inference_cache_reuse":false,
-        "project_created":false,"native_gpu_inference_available":false})))
+        "project_created":false,"native_gpu_inference_available":true})))
 }
 
 fn status_for(state: &AppState, id: &str) -> Result<Value, ApiError> {
@@ -742,7 +862,7 @@ pub async fn status(
         None => latest(&state)?,
     };
     let Some(id) = id else {
-        return Ok(Json(json!({"status":"idle","stage_total":3})));
+        return Ok(Json(json!({"status":"idle","stage_total":4})));
     };
     let mut result = status_for(&state, &id)?;
     if matches!(result["status"].as_str(), Some("queued" | "running")) {
@@ -795,6 +915,231 @@ mod tests {
     use super::*;
 
     #[test]
+    fn quick_rally_priority_is_motion_evidence_not_invented_technique() {
+        let entry = |id: &str, touches: u64, coverage: f64, frames: u64| RankedRally {
+            run_id: "a".repeat(32),
+            candidate_id: id.into(),
+            touches,
+            coverage,
+            start: 50,
+            end: 50 + frames - 1,
+        };
+        let selected = best_quick_rallies(vec![
+            entry("unknown", 0, 1.0, 130),
+            entry("weak", 1, 0.2, 120),
+            entry("ranked", 5, 0.75, 150),
+            entry("short", 20, 0.8, 30),
+            entry("bad_coverage", 18, 0.05, 150),
+        ]);
+        assert_eq!(selected.len(), 2);
+        assert_eq!(selected[0].candidate_id, "ranked");
+        assert_eq!(selected[1].candidate_id, "weak");
+        assert!(best_quick_rallies(vec![]).is_empty());
+    }
+
+    fn fixture_state(root: &Path) -> AppState {
+        let repository_root = root.join("original_repo");
+        let data_root = root.join("sandbox");
+        fs::create_dir_all(&repository_root).unwrap();
+        fs::create_dir_all(&data_root).unwrap();
+        AppState {
+            repository_root,
+            data_root,
+            writes_enabled: true,
+            montage: montage::MontageManager::new(),
+            preparation: preparation::PreparationManager::new(),
+            preview_limit: tokio::sync::Semaphore::new(1),
+            touch_limit: tokio::sync::Semaphore::new(1),
+            continuity_limit: tokio::sync::Semaphore::new(1),
+            reid_limit: tokio::sync::Semaphore::new(1),
+            identity_limit: tokio::sync::Semaphore::new(1),
+            statistics_limit: tokio::sync::Semaphore::new(1),
+            marks_limit: tokio::sync::Semaphore::new(1),
+            quick_reel: QuickReelManager::new(),
+            inference_limit: tokio::sync::Semaphore::new(1),
+            full_inference: inference_full::FullInferenceManager::new(),
+        }
+    }
+    fn ffmpeg(cmd: &[String]) {
+        let output = std::process::Command::new("ffmpeg")
+            .args(cmd)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "FFmpeg fixture: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    #[tokio::test]
+    async fn run_private_native_gpu_preflight_never_reuses_project_inference_or_fakes_mp4() {
+        if !std::process::Command::new("ffmpeg")
+            .arg("-version")
+            .output()
+            .is_ok_and(|o| o.status.success())
+        {
+            eprintln!("SKIP stage78 Quick Reel pipeline isolation: FFmpeg not installed");
+            return;
+        }
+        let base = std::env::temp_dir().join(format!("quick-reel-78-{}", Uuid::new_v4()));
+        fs::create_dir_all(&base).unwrap();
+        let state = Arc::new(fixture_state(&base));
+        let video = base.join("rally.mp4");
+        ffmpeg(
+            &[
+                "-nostdin",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                "testsrc2=size=640x360:rate=30:duration=3",
+                "-c:v",
+                "libx264",
+                "-preset",
+                "ultrafast",
+                "-pix_fmt",
+                "yuv420p",
+                "-an",
+            ]
+            .iter()
+            .map(|s| s.to_string())
+            .chain([video.to_string_lossy().into_owned()])
+            .collect::<Vec<_>>(),
+        );
+        let music = base.join("sample.wav");
+        ffmpeg(
+            &[
+                "-nostdin",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                "sine=frequency=440:sample_rate=48000:duration=1",
+                "-c:a",
+                "pcm_s16le",
+            ]
+            .iter()
+            .map(|s| s.to_string())
+            .chain([music.to_string_lossy().into_owned()])
+            .collect::<Vec<_>>(),
+        );
+        let original = source_for(video.to_str().unwrap()).unwrap();
+        let plan = PreparationPlan::new(&video, &state.data_root, None).unwrap();
+        if plan.ready_path().is_none() {
+            fs::create_dir_all(plan.output.parent().unwrap()).unwrap();
+            fs::copy(&plan.source, &plan.output).unwrap();
+            storage::write_json_atomic(
+                &plan.manifest,
+                &json!({
+                    "identity":plan.identity,"status":"ready","progress":100
+                }),
+            )
+            .unwrap();
+        }
+        let id = Uuid::new_v4().simple().to_string();
+        let root = state.data_root.join(QUICK_ROOT).join(&id);
+        fs::create_dir_all(&root).unwrap();
+        let run = PreparedRun {
+            id: id.clone(),
+            sources: vec![original],
+            plans: vec![plan],
+            audio: music.to_string_lossy().into_owned(),
+            audio_duration: 1.0,
+            root: root.clone(),
+        };
+        storage::write_json_atomic(&root.join("request.json"), &planned_request(&run)).unwrap();
+        let work = create_run_workspace(&state, &run).unwrap();
+        assert!(
+            !state.data_root.join("projects").exists(),
+            "Quick Reel must never register a real user project"
+        );
+        assert_eq!(work.project_id, run.id[..12]);
+        let info = crate::projects::existing_project(&work.app, &work.project_id).unwrap();
+        assert_eq!(info["quick_reel_internal"], true);
+        let inspected = prepared_plan_for_quick_reel(&work.app, &info, &work.aliases[0]).unwrap();
+        let mut wrong_run = info.clone();
+        wrong_run["quick_reel_run_id"] = json!("f".repeat(32));
+        assert!(
+            prepared_plan_for_quick_reel(&work.app, &wrong_run, &work.aliases[0]).is_err(),
+            "Cross-run transient project must be rejected"
+        );
+        let mut wrong_source = info.clone();
+        wrong_source["source_paths"][&work.aliases[0]] = json!("/tmp/other-source.mp4");
+        assert!(
+            prepared_plan_for_quick_reel(&work.app, &wrong_source, &work.aliases[0]).is_err(),
+            "Quick Reel cannot import another project source without run identity"
+        );
+        assert_eq!(inspected.source, video.canonicalize().unwrap());
+        assert!(inspected.ready_path().is_some());
+        assert!(work
+            .app
+            .data_root
+            .join("projects")
+            .join(&work.project_id)
+            .exists());
+        assert!(work
+            .app
+            .data_root
+            .starts_with(state.data_root.join("quick_reels")));
+
+        let private_path = work.app.data_root.clone();
+        drop(work);
+        // An actual start always allocates its own new private workspace;
+        // discard the inspected fixture before re-entering the runner.
+        fs::remove_dir_all(private_path).unwrap();
+        // With no ONNX models in the fixture's original_repo, the real CUDA
+        // model job must fail, never publish fabricated CPU/MP4 evidence.
+        let (_, receiver) = watch::channel(false);
+        let result = tokio::time::timeout(
+            Duration::from_secs(25),
+            run_native_pipeline(&state, &run, vec![json!({"video":"rally.mp4"})], receiver),
+        )
+        .await
+        .expect("Fresh CUDA/ONNX model load never terminated");
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("GPU") && err.contains("models"),
+            "Missing real model must give explicit GPU failure: {err}"
+        );
+        assert!(!root.join("quick_reel.mp4").exists());
+        assert_eq!(video.metadata().unwrap().len(), run.sources[0].size);
+        assert!(
+            !state.data_root.join("projects").exists(),
+            "GPU adapter must not touch real project registry"
+        );
+        fs::remove_dir_all(base).unwrap();
+    }
+
+    #[tokio::test]
+    async fn cancellation_before_gpu_does_not_create_private_project_or_mp4() {
+        let root = std::env::temp_dir().join(format!("quick-cancel-78-{}", Uuid::new_v4()));
+        let state = Arc::new(fixture_state(&root));
+        let run = PreparedRun {
+            id: Uuid::new_v4().simple().to_string(),
+            sources: vec![],
+            plans: vec![],
+            audio: String::new(),
+            audio_duration: 0.0,
+            root: root.join("no-run"),
+        };
+        let (_, receiver) = watch::channel(true);
+        assert_eq!(
+            run_native_pipeline(&state, &run, vec![], receiver)
+                .await
+                .unwrap_err(),
+            "cancelled"
+        );
+        assert!(!state.data_root.join("projects").exists());
+        assert!(!run.root.exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
     fn source_token_cannot_traverse() {
         assert!(is_id("0123456789abcdef0123456789abcdef"));
         assert!(!is_id("../another-file"));
@@ -810,7 +1155,7 @@ mod tests {
         assert_eq!(config["follow_ball"], true);
     }
     #[test]
-    fn no_quick_reel_can_claim_a_finished_output_without_inference() {
+    fn incomplete_quick_reel_never_claims_finished_output() {
         let run = PreparedRun {
             id: "0123456789abcdef0123456789abcdef".into(),
             sources: vec![],
@@ -821,14 +1166,15 @@ mod tests {
         };
         let status = running_json(
             &run,
-            "awaiting_native_inference",
-            "GPU этап ещё не реализован",
+            "failed",
+            "GPU CUDA/ONNX evidence missing",
             2,
             15.0,
             &[],
             None,
         );
         assert!(status["output"].is_null());
-        assert_eq!(status["native_inference_available"], false);
+        assert_eq!(status["native_inference_available"], true);
+        assert_eq!(status["stage_total"], 4);
     }
 }
