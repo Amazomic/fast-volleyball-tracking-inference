@@ -11,9 +11,10 @@ pipeline is **project → prepared video → immutable VballNet/RAVEL GPU eviden
 versioned CPU player tracks/Touch/rallies → reviewed players → original-quality montage**.
 FFmpeg, ONNX Runtime and CUDA are native external runtimes, not Python components.
 
-**Rust-миграция: 83/85; следующий 84/85 (плановый объём).**
+**Rust-миграция: 84/85; следующий 85/85 (плановый объём).**
 [Deployment](docs/RUST_DEPLOYMENT.md) · [Stage map](docs/RUST_ROADMAP.md) ·
 [Migration journal](docs/RUST_MIGRATION.md) ·
+  [Stage84 match acceptance: NO-GO](docs/RUST_BENCHMARK_84.md) ·
 [Architecture and owners](docs/RUST_ARCHITECTURE.md).
 
 ## Start on Windows
@@ -143,3 +144,9 @@ Stage83: SHA256-verified prepared MP4 cache (unsigned copies are rebuilt),
  scripts/ci/test_rust_faults.sh; strict --require-gpu-docker refuses
  production acceptance without real native CUDA and Docker smoke.
  Representative match GPU/VRAM and Docker packaging remain unverified.
+
+Stage84: real 6-second Rust video montage passed (H.264/AAC,
+ SSIM 0.99793, SHA-256, 180 original frames), but independent match
+ ground truth, matching Python/Rust GPU inference, full-match
+ RAM/VRAM, Linux CUDA ONNX Runtime and Docker validation are missing.
+ **Production comparison verdict: NO-GO.** Python remains primary.

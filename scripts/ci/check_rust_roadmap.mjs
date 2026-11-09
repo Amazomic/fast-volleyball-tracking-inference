@@ -49,6 +49,10 @@ function check(roadmap,log){
     }
     const expected=n<=6?"foundation":n<=last?"recorded":"planned";
     if(item.status!==expected)fail("Incorrect completion status at stage "+n);
+    if(n===84 && n<=last &&
+      !["NO_GO","GO_CANDIDATE","ACCEPTED"].includes(item.acceptanceVerdict)){
+      fail("Stage84 real match verdict is required");
+    }
     if(n<=last){
       if(item.journalSection!==n || actual.get(n)!==item.title){
         fail("Roadmap stage "+n+" does not match append-only diary title");
@@ -109,7 +113,8 @@ function render(roadmap){
       lastArea=item.area;
     }
     const label=item.status==="foundation"?"Основа":
-      item.status==="recorded"?"Записан":"План";
+      item.status==="recorded"?(item.acceptanceVerdict==="NO_GO"?
+        "Записан (NO-GO: приёмка заблокирована)":"Записан"):"План";
     const details=item.status==="planned"?
       item.title+". Критерий: "+item.acceptance:item.title;
     result.push("| "+item.number+" / "+total+" | "+label+" | "+
@@ -148,6 +153,11 @@ try {
     const falseCompletion=structuredClone(data);
     falseCompletion.stages[data.nextStage-1].status="recorded";
     rejects(falseCompletion,"false completion");
+    if(last>=84){
+      const missingVerdict=structuredClone(data);
+      delete missingVerdict.stages[83].acceptanceVerdict;
+      rejects(missingVerdict,"stage84 omitted acceptance verdict");
+    }
   }
   if(process.argv.includes("--write")){
     writeFileSync(outputFile,generated,"utf8");

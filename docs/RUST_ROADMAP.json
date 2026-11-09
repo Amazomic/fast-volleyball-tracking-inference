@@ -1,8 +1,8 @@
 {
     "schema":  "volley-rust-stage-roadmap/1",
     "plannedTotal":  85,
-    "lastRecorded":  83,
-    "nextStage":  84,
+    "lastRecorded":  84,
+    "nextStage":  85,
     "estimateNote":  "85 — текущий ориентир планирования, не обещание неизменного объема; этап != готовая подсистема. При пересмотре плана обновлять JSON, Markdown и журнал в одном коммите.",
     "stages":  [
                    {
@@ -673,8 +673,11 @@
                        "number":  84,
                        "title":  "Полный тест на размеченных матчах и сравнение с Python",
                        "area":  "Приёмка",
-                       "status":  "planned",
-                       "acceptance":  "Measured touch/Track ID/rally quality, speed, GPU/RAM, montage fidelity"
+                       "status":  "recorded",
+                       "acceptance":  "Measured touch/Track ID/rally quality, speed, GPU/RAM, montage fidelity",
+                       "journalSection":  84,
+                       "acceptanceVerdict":  "NO_GO",
+                       "evidenceReport":  "docs/RUST_BENCHMARK_84.md"
                    },
                    {
                        "number":  85,

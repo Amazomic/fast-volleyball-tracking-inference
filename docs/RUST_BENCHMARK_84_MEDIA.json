@@ -1,0 +1,55 @@
+{
+  "schema": "volley-rust-real-media-benchmark/1",
+  "artifact_type": "observed_media_only",
+  "inputs": {
+    "source_kind": "existing_python_prepared_video",
+    "source_size_bytes": 151841020,
+    "source_basename": "fa5883350411c05b62783a4b43ac.mp4",
+    "clip_start_sec": 12,
+    "selected_frames": 180,
+    "analysis_fps": 30,
+    "source_sha256": "7194ba7dbda93d66b8abe31440594d22543311c7b466ffe714bd35c416deaa29",
+    "source_video": {
+      "width": 1280,
+      "height": 720,
+      "duration_sec": 544.608,
+      "fps": "30/1"
+    },
+    "soundtrack_duration_sec": 7
+  },
+  "montage": {
+    "state": "passed",
+    "engine": "native_rust_montage_ffmpeg",
+    "wall_seconds": 1.829,
+    "source_seconds": 6,
+    "relative_to_realtime": 3.281,
+    "peak_rust_server_rss_mib": 8.11,
+    "peak_observed_process_tree_rss_mib": null,
+    "peak_observed_ffmpeg_children_rss_mib": null,
+    "memory_sampling_caveat": "35ms /proc sampling did not observe FFmpeg child memory; total pipeline RSS is UNMEASURED",
+    "output_size_bytes": 396801,
+    "output_sha256": "7e13fb54797498a8c49454de2b760eed9f508975291cde2abe267a6ea85183c4",
+    "duration_sec": 6,
+    "codec_video": "h264",
+    "codec_audio": "aac",
+    "output_width": 406,
+    "output_height": 720,
+    "original_source_frames_preserved": true,
+    "provenance_checked": true,
+    "full_file_decode_verified": true,
+    "frame_ssim_against_source": 0.99793,
+    "decoded_video_frames": 180,
+    "frame_ssim_provenance": "12-18s original, FFmpeg letterbox reference, 180 frames",
+    "limitations": "Render alone: not an end-to-end GPU/CPU inference or Python Studio throughput comparison"
+  },
+  "accuracy": {
+    "touch_f1": null,
+    "track_idf1": null,
+    "rally_f1": null,
+    "reason": "Independent manual labels and comparable full native GPU inference not available"
+  },
+  "gpu": {
+    "cuda_inference": false,
+    "peak_vram_mb": null
+  }
+}
