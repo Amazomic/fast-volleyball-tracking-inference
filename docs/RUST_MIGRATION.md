@@ -712,3 +712,11 @@ Next: conservative Track ID continuity across 3–4 second detection gaps with c
 - Verified: 177 passing Rust workspace tests with four test threads, two optional model tests ignored; Node JS syntax, canonical owner route guard (40 guarded routes), and targeted source SHA tamper regression passed. Single-source read works from isolated Rust data. Full real-match quality benchmarks remain pending.
 
 Next: source-versioned trajectory and ball-motion extremum diagnostics without rerunning GPU inference.
+## 67. Единая траектория мяча и анализ экстремумов изменения движения — 2026-11-09
+
+- Physical-motion parameters in rust/volley-core/src/motion.rs are now canonical TOUCH_MOTION_CONFIG, reused by rust/volley-core/src/touch.rs; there is no separately tuned extremum model. The bounded ball_motion_extrema algorithm extracts local, gravity-compensated direction/speed discontinuities from a single selected-ball trajectory, rejects nonfinite/duplicate/out-of-order frames, and never claims player identity or confirmed contact.
+- POST /api/cpu/native/ball-extrema reads one explicitly selected, SHA256-verified and 30-FPS native CPU replay. It validates all frame indices and provisional status, refuses source-model switches inside the diagnostic window (RAVEL vs VballNet), uses original media dimensions, and examines at most 1200 selected-ball frames. Output records ball source, frame range, observed samples, physical motion extrema and explicit gpu_inference_rerun=false and touches_confirmed=false. Source evidence and saved analyses remain read-only.
+- The Players review panel now offers a bounded ball-motion diagnostic with start-frame and frame-count fields and an explicit warning: a ball motion change alone is not proof of a touch or a game action. Core synthetic trajectories distinguish reversal from straight and gravity-only flight.
+- Verified: 180 offline Rust workspace tests passed with 4 test threads; 2 optional model tests ignored; Node JS syntax and canonical ownership guard (41 routes) passed. Source replay SHA mismatch and unsupported source tests passed. Real-match annotation/precision benchmarks remain pending.
+
+Next: tie physical Touch outputs to verified tracking/rally source stamps and prevent geometry-only credit.

@@ -1,8 +1,8 @@
 {
     "schema":  "volley-rust-stage-roadmap/1",
     "plannedTotal":  85,
-    "lastRecorded":  66,
-    "nextStage":  67,
+    "lastRecorded":  67,
+    "nextStage":  68,
     "estimateNote":  "85 — текущий ориентир планирования, не обещание неизменного объема; этап != готовая подсистема. При пересмотре плана обновлять JSON, Markdown и журнал в одном коммите.",
     "stages":  [
                    {
@@ -537,8 +537,9 @@
                        "number":  67,
                        "title":  "Единая траектория мяча и анализ экстремумов изменения движения",
                        "area":  "Касания",
-                       "status":  "planned",
-                       "acceptance":  "Reuses existing core geometry and zero GPU reruns"
+                       "status":  "recorded",
+                       "acceptance":  "Reuses existing core geometry and zero GPU reruns",
+                       "journalSection":  67
                    },
                    {
                        "number":  68,

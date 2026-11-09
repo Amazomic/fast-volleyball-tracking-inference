@@ -117,7 +117,8 @@
                         "status":  "partial",
                         "adapters":  [
                                          "rust/volley-app/src/cpu_touches.rs",
-                                         "rust/volley-app/src/touch_preview.rs"
+                                         "rust/volley-app/src/touch_preview.rs",
+                                         "rust/volley-app/src/native_player_tracks.rs"
                                      ],
                         "routes":  [
                                        {
@@ -127,6 +128,10 @@
                                        {
                                            "path":  "/api/cpu/touch-preview",
                                            "handler":  "touch_preview::touch_preview"
+                                       },
+                                       {
+                                           "path":  "/api/cpu/native/ball-extrema",
+                                           "handler":  "native_player_tracks::ball_trajectory"
                                        }
                                    ],
                         "stores":  [

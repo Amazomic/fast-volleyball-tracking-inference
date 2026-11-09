@@ -22,6 +22,16 @@ pub struct MotionConfig {
     pub gravity: f64,
 }
 
+/// Shared physics thresholds for Touch detection and trajectory diagnostics.
+pub const TOUCH_MOTION_CONFIG: MotionConfig = MotionConfig {
+    velocity_window: 5,
+    min_samples: 2,
+    max_gap_frames: 4,
+    min_speed: 1.0,
+    min_residual: 6.0,
+    relative_residual: 0.30,
+    gravity: 1.0,
+};
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default)]
 pub struct MotionEvidence {
@@ -144,6 +154,76 @@ pub fn ball_motion_change(
     strongest
 }
 
+/// Local ball motion discontinuity is physical evidence, not an athlete touch.
+#[derive(Clone, Copy, Debug, serde::Serialize)]
+pub struct BallMotionExtremum {
+    pub frame_index: u64,
+    pub x_px: f64,
+    pub y_px: f64,
+    pub direction_change_deg: f64,
+    pub speed_before_px_frame: f64,
+    pub speed_after_px_frame: f64,
+    pub velocity_residual_px_frame: f64,
+    pub physical_motion_supported: bool,
+    pub athlete_identity_verified: bool,
+}
+
+/// Bounded read-only scan of one chosen ball-source trajectory. No GPU.
+pub fn ball_motion_extrema(
+    observations: &[BallObservation],
+    min_distance_frames: u64,
+) -> Result<Vec<BallMotionExtremum>, &'static str> {
+    if observations.len() > 1200
+        || !(3..=60).contains(&min_distance_frames)
+        || observations
+            .iter()
+            .any(|p| p.frame < 0 || !p.x.is_finite() || !p.y.is_finite())
+        || observations.windows(2).any(|v| v[0].frame >= v[1].frame)
+    {
+        return Err("Invalid, duplicate or oversized ball trajectory");
+    }
+    if observations.len() < 5 {
+        return Ok(Vec::new());
+    }
+    let mut ranked = Vec::new();
+    for item in observations {
+        if let Some(e) = ball_motion_change(observations, item.frame, 0, TOUCH_MOTION_CONFIG) {
+            ranked.push((item.frame, item.x, item.y, e));
+        }
+    }
+    ranked.sort_by(|a, b| {
+        b.3.residual
+            .total_cmp(&a.3.residual)
+            .then_with(|| a.0.cmp(&b.0))
+    });
+    let mut kept: Vec<(i64, f64, f64, MotionEvidence)> = Vec::new();
+    for event in ranked {
+        if kept
+            .iter()
+            .all(|old| old.0.abs_diff(event.0) >= min_distance_frames)
+        {
+            kept.push(event);
+        }
+        if kept.len() == 120 {
+            break;
+        }
+    }
+    kept.sort_by_key(|e| e.0);
+    Ok(kept
+        .into_iter()
+        .map(|(frame, x, y, e)| BallMotionExtremum {
+            frame_index: frame as u64,
+            x_px: x,
+            y_px: y,
+            direction_change_deg: e.angle,
+            speed_before_px_frame: e.speed_before,
+            speed_after_px_frame: e.speed_after,
+            velocity_residual_px_frame: e.residual,
+            physical_motion_supported: true,
+            athlete_identity_verified: false,
+        })
+        .collect())
+}
 fn config_valid(config: MotionConfig) -> bool {
     config.velocity_window >= 2
         && config.velocity_window <= 128
@@ -294,6 +374,72 @@ mod tests {
         assert!(e.angle < 10.0);
     }
 
+    #[test]
+    fn extrema_find_reversal_but_not_ballistic_gravity() {
+        let reverse = trajectory(|frame| {
+            let t = (frame - 15) as f64;
+            (
+                if frame <= 15 {
+                    200.0 + 7.0 * t
+                } else {
+                    200.0 - 6.0 * t
+                },
+                180.0,
+            )
+        });
+        let impacts = ball_motion_extrema(&reverse, 8).unwrap();
+        assert_eq!(impacts.len(), 1);
+        assert!(impacts[0].frame_index.abs_diff(15) <= 3);
+        assert!(impacts[0].direction_change_deg > 110.0);
+        assert!(impacts[0].physical_motion_supported && !impacts[0].athlete_identity_verified);
+        let gravity = trajectory(|frame| {
+            let t = frame as f64;
+            (180.0, 300.0 - 15.0 * t + t * t / 2.0)
+        });
+        assert!(ball_motion_extrema(&gravity, 8).unwrap().is_empty());
+        assert!(ball_motion_extrema(
+            &trajectory(|frame| { (100.0 + 5.0 * frame as f64, 180.0) }),
+            8
+        )
+        .unwrap()
+        .is_empty());
+    }
+    #[test]
+    fn extrema_reject_duplicate_nonfinite_and_unsorted() {
+        let a = [
+            BallObservation {
+                frame: 1,
+                x: 1.0,
+                y: 1.0,
+            },
+            BallObservation {
+                frame: 1,
+                x: 2.0,
+                y: 1.0,
+            },
+        ];
+        assert!(ball_motion_extrema(&a, 8).is_err());
+        let a = [
+            BallObservation {
+                frame: 2,
+                x: 1.0,
+                y: 1.0,
+            },
+            BallObservation {
+                frame: 1,
+                x: 2.0,
+                y: 1.0,
+            },
+        ];
+        assert!(ball_motion_extrema(&a, 8).is_err());
+        let a = [BallObservation {
+            frame: 1,
+            x: f64::NAN,
+            y: 1.0,
+        }];
+        assert!(ball_motion_extrema(&a, 8).is_err());
+        assert!(ball_motion_extrema(&[], 2).is_err());
+    }
     #[test]
     fn sparse_frames_do_not_establish_touch() {
         let short = [BallObservation {

@@ -4,7 +4,9 @@
 
 use crate::{
     bbox_iou,
-    motion::{ball_motion_change, BallObservation, MotionConfig, MotionEvidence},
+    motion::{
+        ball_motion_change, BallObservation, MotionConfig, MotionEvidence, TOUCH_MOTION_CONFIG,
+    },
 };
 use serde::Serialize;
 use std::collections::HashMap;
@@ -217,15 +219,7 @@ fn rounded(value: f64, places: i32) -> f64 {
 }
 
 fn default_motion() -> MotionConfig {
-    MotionConfig {
-        velocity_window: 5,
-        min_samples: 2,
-        max_gap_frames: 4,
-        min_speed: 1.0,
-        min_residual: 6.0,
-        relative_residual: 0.30,
-        gravity: 1.0,
-    }
+    TOUCH_MOTION_CONFIG
 }
 
 fn in_reach(peak: &TouchPeak, ball_x: f64, ball_y: f64, max_reach: f64) -> bool {

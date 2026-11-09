@@ -252,6 +252,18 @@
   const reviewGroups=node("div","native-reid-results");
   reviewPanel.append(reviewTitle,reviewText,reviewTools,reviewStatus,reviewGroups);
   ui.list.parentElement.append(reviewPanel);
+  const motionControls=node("div","native-reid-controls");
+  const motionStart=node("input");motionStart.type="number";
+  motionStart.min="0";motionStart.step="1";motionStart.value="0";
+  motionStart.setAttribute("aria-label","Начальный кадр просмотра мяча");
+  const motionFrames=node("input");motionFrames.type="number";
+  motionFrames.min="1";motionFrames.max="1200";motionFrames.step="1";
+  motionFrames.value="300";motionFrames.setAttribute("aria-label","Кадры мяча");
+  const motionRead=node("button","secondary","Экстремумы траектории");
+  motionRead.type="button";
+  motionControls.append(node("span","","Кадр"),motionStart,node("span","","Длина"),motionFrames,motionRead);
+  const motionResult=node("div","native-reid-results");
+  reviewPanel.append(motionControls,motionResult);
   const continuityControls=node("div","native-reid-controls");
   const continuityGap=node("input");continuityGap.type="number";
   continuityGap.min="0.7";continuityGap.max="4";continuityGap.step="0.1";
@@ -378,6 +390,40 @@
         " · автоматически подтверждённых игроков: 0.");
     }catch(e){reviewNote(e.message,true);}
     finally{continuityRead.disabled=false;}
+  });  motionRead.addEventListener("click",async()=>{
+    if(!reviewReady()||state.busy)return;
+    const start=Number(motionStart.value),count=Number(motionFrames.value);
+    if(!Number.isSafeInteger(start)||start<0||
+       !Number.isSafeInteger(count)||count<1||count>1200) {
+      reviewNote("Проверка мяча: начальный кадр >= 0, длина 1–1200.",true);return;
+    }
+    const scope=reviewScope(),token=state.token;
+    motionRead.disabled=true;clear(motionResult);
+    reviewNote("Проверяем источник мяча и изменение направления/скорости…");
+    try{
+      const result=await post("/api/cpu/native/ball-extrema",{
+        project_id:scope.project_id,video:scope.video,
+        replay_id:scope.replay_id,
+        expected_source_sha256:scope.expected_source_sha256,
+        start_frame:start,count
+      });
+      if(token!==state.token||scope.replay_id!==state.replay)return;
+      if(result.schema!=="volley-native-ball-extrema/1"||
+        result.touches_confirmed!==false||result.gpu_inference_rerun!==false)
+        throw Error("Неподдерживаемые физические экстремумы мяча");
+      for(const impact of (Array.isArray(result.motion_extrema)?result.motion_extrema:[])){
+        const row=node("div","native-reid-group");
+        row.append(node("span","","Кадр "+impact.frame_index+
+          " · отклонение "+Math.round(impact.direction_change_deg)+"° · "+
+          "скорость "+impact.speed_before_px_frame.toFixed(1)+" → "+
+          impact.speed_after_px_frame.toFixed(1)+" px/кадр"));
+        motionResult.append(row);
+      }
+      reviewNote("Мяч: "+result.observations+" кадров · изменений движения: "+
+        result.motion_extrema.length+
+        ". Не является подтверждением касания или определения игрока.");
+    }catch(e){reviewNote(e.message,true);}
+    finally{motionRead.disabled=false;}
   });  reviewRead.addEventListener("click",reviewLoad);
   reviewMerge.addEventListener("click",()=>reviewEdit("merge"));
   reviewSplit.addEventListener("click",()=>reviewEdit("split"));
