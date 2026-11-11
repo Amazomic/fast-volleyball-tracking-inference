@@ -1,0 +1,101 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+*.mp4
+# Virtual environments
+.venv
+
+# Local model archive - kept on disk, not in history (see README)
+old_models/
+
+# Benchmark and evaluation reports
+eval_results*/
+
+# Local runtime data
+uploads/
+db-data/
+pyproject.toml.old
+studio_work/
+studio_output/
+studio_demo*/
+studio_fixture/
+studio_doctor.*
+
+# Local media, analysis, athlete identities and job logs (never commit personal video data)
+/results/
+/project/
+
+# IDE/editor and local OS metadata
+.vscode/
+.idea/
+*.code-workspace
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Python caches, environments and test tooling
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.nox/
+.coverage
+.coverage.*
+htmlcov/
+*.prof
+*.pstats
+.env
+.env.*
+!.env.example
+venv/
+env/
+
+# JavaScript tooling cache (UI is served directly; no node_modules in git)
+node_modules/
+.npm/
+.pnpm-store/
+.cache/
+
+# Temporary logs, profiling and locally rendered media
+*.log
+*.log.*
+*.tmp
+*.temp
+*.swp
+*.swo
+*.bak
+*.orig
+*.pid
+*.trace
+*.cpuprofile
+*.heapsnapshot
+*.mkv
+*.mov
+*.avi
+*.webm
+*.wav
+*.aac
+*.flac
+*.m4a
+
+# Generated local inference/test outputs
+/output/
+/outputs/
+/benchmarks/
+/tmp/
+/temp/
+
+# Compiled Rust artifacts are local build products
+/rust/**/target/
+/rust/target/
+# WASM UI module is rebuilt by scripts/check-all.ps1 / Dockerfile, not committed
+/rust/volley-app/static/volley_web.wasm
+
+# Editor-generated timestamped backups (never part of a migration commit)
+*.bak.*
+/.studio-runtime/

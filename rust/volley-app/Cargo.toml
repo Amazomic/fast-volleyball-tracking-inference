@@ -1,0 +1,24 @@
+[package]
+name = "volley-app"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Volleyball Studio Rust-native application (full rewrite in progress)"
+
+[dependencies]
+axum = { version = "0.8", features = ["json", "http1", "tokio", "multipart"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "fs", "signal", "process", "io-util", "sync", "time"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+fs2 = "0.4"
+unicode-normalization = "0.1"
+uuid = { version = "1", features = ["v4"] }
+chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
+sha2 = "0.10"
+volley-media = { path = "../volley-media" }
+volley-inference = { path = "../volley-inference" }
+volley-core = { path = "../volley-core" }
+tokio-util = { version = "0.7", features = ["io"] }
+percent-encoding = "2"
+zip = { version = "2.2", default-features = false, features = ["deflate"] }
+half = "2.4"

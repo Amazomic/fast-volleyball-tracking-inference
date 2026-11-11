@@ -1,0 +1,19 @@
+# Linux/WSL Bash scripts must be LF even with Windows core.autocrlf=true.
+*.sh text eol=lf
+# Windows CMD launchers must keep CRLF in the working tree.
+*.cmd text eol=crlf
+# Binary assets: never normalize line endings or attempt text merges.
+*.onnx binary
+*.bin binary
+*.wasm binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.mp4 binary
+models/*.onnx filter=lfs diff=lfs merge=lfs -text
+ov/*.bin filter=lfs diff=lfs merge=lfs -text
+examples/*.mp4 filter=lfs diff=lfs merge=lfs -text
+examples/*.gif filter=lfs diff=lfs merge=lfs -text
+examples/*.jpg filter=lfs diff=lfs merge=lfs -text
+* !text !filter !merge !diff

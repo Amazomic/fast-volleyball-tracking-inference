@@ -1,0 +1,267 @@
+Быстрый рилс: ожидание	Quick Reel: idle
+Данные исходного анализа не изменяются. Классификация игровых действий требует ручного подтверждения.	Existing analysis data remain untouched. Game actions require manual verification.
+БЫСТРЫЙ РИЛС / ОТДЕЛЬНЫЙ АНАЛИЗ	QUICK REEL / INDEPENDENT ANALYSIS
+Каждый запуск выполняет новый GPU и CPU анализ. Результаты проектов не переиспользуются. Только подготовленные видео могут быть взяты из общего кэша. Формат: вертикальный 9:16 с музыкой.	Every run performs fresh GPU and CPU analysis. Project inference is never reused; only video preparation may be cached. Output is vertical 9:16 with music.
+Нажмите для выбора видео на устройстве	Click to select videos on your device
+Или перетащите файлы сюда	Or drag files here
+Работает в Windows, Linux и macOS. До 30 файлов.	Works on Windows, Linux and macOS. Up to 30 files.
+Выбранные файлы загружаются в отдельное хранилище Rust (до 32 ГиБ на файл). Оригиналы остаются без изменений. Браузер не передаёт полный путь к файлу.	Selected files are uploaded to separate project storage (up to 32 GiB each). Originals are unchanged. Browsers do not reveal full local paths.
+Видео ещё не выбраны	No videos selected
+Загрузите музыку перед запуском. Используются параметры профиля по умолчанию, без повторного использования GPU-результатов.	Add music before starting. Default GPU/CPU settings apply; inference is not reused.
+Ожидание выбора видео.	Waiting for video selection.
+Состояние последнего запуска восстанавливается при обновлении страницы. Для отменённого или ошибочного запуска MP4 недоступен.	The last run is restored on reload. Cancelled or failed runs cannot download an MP4.
+01 / АНАЛИЗ МАТЧА	01 / MATCH ANALYSIS
+Просматривайте игровые отрезки, отмечайте лучшие и собирайте собственную нарезку из оригинальных видео.	Review rallies, mark the best and assemble highlights from original footage.
+Выберите проект и сохранённую CPU-версию розыгрышей.	Choose a project and saved CPU rally version.
+Розыгрыши	Rallies
+Левый клик — посмотреть. Правая кнопка на карточке — золотая отметка.	Left-click to preview; right-click to mark the card gold.
+Фильтр	Filter
+Здесь появятся карточки после выбора CPU-анализа.	Rally cards will appear here after selecting CPU analysis.
+Временная разметка пока предварительная. Откройте видео для проверки.	Rally time boundaries are provisional. Inspect the video to verify.
+02 / РУЧНОЙ МОНТАЖ	02 / MANUAL MONTAGE
+Выберите один или несколько розыгрышей. Автоматическая классификация атак и подач пока недоступна.	Select one or more rallies. Automatic attack and serve classification is not yet available.
+Вертикальный вариант сохраняет всю площадку: пропорции не меняются, свободное пространство заполняется полями.	Vertical layout preserves the entire court with no stretching and pads empty space.
+РУЧНО ПОДТВЕРЖДЁННЫЕ ДЕЙСТВИЯ	MANUALLY CONFIRMED ACTIONS
+Лучшие атаки игрока	Best player attacks
+Ранжирование по количеству атак, вручную подтверждённых для выбранного игрока и CPU-версии. Это не автоматическое распознавание техники. После предпросмотра можно вручную изменить список эпизодов.	Rallies are ranked by manually verified attacks for the chosen player and CPU run, not automatic technique recognition. Review and adjust the clips before rendering.
+Игрок из состава проекта	Player on project roster
+Выбор	Selection
+По количеству подтверждённых атак	By number of verified attacks
+Ручной выбор проверенных розыгрышей	Manually select reviewed rallies
+Максимум розыгрышей	Maximum rallies
+Выберите проект для поиска проверенных CPU-версий.	Choose a project to find reviewed CPU runs.
+Формат нарезки	Highlight layout
+Оригинальный	Original
+Вертикальный 9:16 (весь кадр)	Vertical 9:16 (full frame)
+Музыка для лучших атак (необязательно)	Highlight music (optional)
+Громкость музыки	Music volume
+Обновить источники	Refresh sources
+Показать атаки	Preview attacks
+Собрать нарезку	Render highlights
+02 / GPU И CPU	02 / GPU AND CPU
+Результаты разделены на неизменяемый GPU-инференс и повторяемые CPU-версии. Здесь отображаются существующие стадии, а не неподтверждённая статистика матча.	Results are split into immutable GPU scans and repeatable CPU runs. This view shows recorded stages, not unverified match statistics.
+Запуск каждой нейросети создаёт отдельную версию. Объединение результатов и CPU-пересчёт выполняются отдельными стадиями; автоматический полный сценарий ещё не подключён.	Each network scan saves a separate version. Fusion and CPU recomputation remain separate stages; the automated full workflow is not yet connected.
+03 / БИБЛИОТЕКА ИГРОКОВ	03 / PLAYER LIBRARY
+Библиотека игроков, ручные привязки Track ID, проверка ReID-групп и статистика подтверждённых касаний по выбранным CPU-версиям. Автоматическая идентификация игроков отключена.	Player library, manual Track ID assignments, ReID review and verified touches per CPU run. Automatic player identification is disabled.
+Загрузка игроков…	Loading players…
+СТАТИСТИКА / CPU	STATISTICS / CPU
+Касания игроков проекта	Player touches by project
+Один проверенный результат CPU на каждое видео. Только физически обоснованные касания и явно подтверждённые привязки Track ID. Касания без игрока показываются отдельно. Это не статистика атак и подач.	One verified CPU result per video. Only physically supported touches and confirmed Track ID assignments count. Unassigned touches are separate, not attack or serve statistics.
+Найти обработки	Find CPU runs
+Пересчитать и сохранить	Recompute and save
+Выберите проект и найдите CPU-обработки.	Choose a project and find CPU runs.
+Касаний	Touches
+Привязано	Assigned
+Без игрока	Unassigned
+Версии источников и диагностика	Source versions and diagnostics
+04 / НАТИВНЫЙ CPU ТРЕКИНГ	04 / NATIVE CPU TRACKING
+Ручная привязка Track ID	Manual Track ID assignment
+ID предварительные. Привязка к игроку выполняется вручную для выбранной CPU-версии. Фото доступно для предпросмотра; ReID-группы требуют проверки, без автоматической идентификации.	IDs are provisional. Manually assign players in a chosen CPU run. Photos are previews; ReID groups require review, with no automatic matching.
+Выберите обработку	Choose CPU run
+Выберите проект, видео и версию CPU-трекинга.	Choose a project, video and CPU tracking run.
+Исключено	Excluded
+Привязать	Assign
+Снять привязку	Unassign
+Исключить ID	Exclude ID
+Восстановить ID	Restore ID
+Нет выбранной версии Track ID.	No Track ID version selected.
+Назад	Previous
+Далее	Next
+Фото Track ID	Track ID photo
+Кадр текущего CPU-трекинга; не сохранённый фотоэталон и не подтверждение личности.	A frame from the current CPU run, not an enrolled reference photo or a confirmed identity.
+Volleyball Studio — анализ матчей, игроков и видеомонтаж. Исторические данные не изменяются.	Volleyball Studio — match analysis, player review and video montage. Historical data is preserved.
+Параметры нового GPU-запуска (по умолчанию — эталонные)	New GPU run parameters (golden defaults)
+Шаг окон нейросети (1–9)	Model window stride (1–9)
+Лимит VRAM, МБ (0 = без ограничения)	VRAM cap, MB (0 = unlimited)
+Потоки CPU (1–128)	CPU threads (1–128)
+Эталонные значения: шаг 9 · VRAM без ограничения · CPU 8 потоков.	Golden defaults: stride 9 · no VRAM limit · 8 CPU threads.
+Далее ›	Next ›
+Панель проекта	Project panel
+Выберите сохранённый запуск	Select a saved run
+Перейти к состоянию быстрого рилса	Go to Quick Reel status
+Язык интерфейса	Interface language
+Открыть выбор видеозаписей на устройстве	Open video file chooser on your device
+Файлы для Quick Reel	Quick Reel files
+Видео для рилса	Reel videos
+Ход создания рилса	Quick Reel progress
+Общий прогресс рилса	Overall Quick Reel progress
+Этапы обработки	Processing stages
+Состояние видео	Video status
+Фильтр видимых карточек	Filter visible cards
+Просмотр выбранного розыгрыша	Selected rally preview
+Громкость музыки в процентах	Music volume percentage
+CPU-версии для атак	CPU versions for attacks
+Имя игрока	Player name
+Выбранные версии касаний по видео	Selected touch runs by video
+Открыть выбор файлов	Choose files
+Volleyball Studio — анализ волейбольных матчей	Volleyball Studio — volleyball match analysis
+Анализ матчей и монтаж	Match analysis and editing
+01 · Проект	01 · Project
+02 · Анализ GPU	02 · GPU analysis
+Сначала выберите проект	Select a project first
+03 · Постобработка CPU	03 · CPU postprocessing
+Сначала выберите анализ	Select an analysis first
+Новый проект	New project
+Название проекта	Project name
+Загрузка видео…	Uploading videos…
+Используются исходники из папки	Source files are taken from the folder
+репозитория, без повторного GPU-анализа. Исходные файлы не удаляются.	in the repository, without running GPU analysis again. Source files are not deleted.
+Создать проект	Create project
+Связанные версии проекта, анализа и постобработки	Linked project, analysis and postprocessing versions
+Создать новый проект	Create new project
+Выберите первичный анализ	Select primary analysis
+Выберите версию постобработки	Select postprocessing version
+Обновить цепочку версий	Refresh version chain
+Закрыть окно	Close dialog
+Название матча	Match name
+Видео для нового проекта	Videos for the new project
+Перетащите видео сюда	Drag videos here
+или нажмите, чтобы выбрать файлы в проводнике	or click to choose files in the file picker
+MP4, MOV, MKV, AVI, WEBM, M4V, MTS · до 30 файлов · до 32 ГиБ каждый	MP4, MOV, MKV, AVI, WEBM, M4V, MTS · up to 30 files · 32 GiB each
+Загрузка списка…	Loading list…
+Можно выбрать уже добавленные видео или загрузить свои. Загруженные файлы сохраняются в отдельном хранилище студии, исходники на компьютере не меняются.	Choose existing videos or upload your own. Uploads use separate studio storage; original recordings stay unchanged.
+Игроки проекта	Project players
++ Игрок	+ Player
+Выберите видео или перетащите сюда	Choose videos or drag them here
+Выбрать видео для проекта	Choose videos for the project
+Игроки для нового проекта	Players for the new project
+Имя нового игрока	New player name
+
+Выполняется	Processing
+Выберите видео из списка или загрузите свои. Файлы сохраняются отдельно, оригиналы не изменяются.	Choose a video from the list or upload your own. Files are stored separately; originals are unchanged.
+Обрезка видео и разметка площадки	Video trimming and court annotation
+Отрезок: —	Trim range: —
+▶ / Пауза	Play / Pause
+Установить начало по курсору	Set start at playhead
+Установить конец по курсору	Set end at playhead
+Передвиньте курсор на шкале под видео и задайте начало или конец фрагмента. Для площадки отметьте 4 угла по часовой стрелке; точки можно перетаскивать.	Move the playhead on the timeline below the video and set the clip start or end. Mark four court corners clockwise; points can be dragged.
+Начало, сек	Start, sec
+Конец, сек	End, sec
+Разметить поле	Mark court
+Убрать точку	Remove point
+Сбросить поле	Reset court
+Выберите видео для обрезки и разметки.	Choose a video for trimming and court annotation.
+В режиме разметки видео уменьшается, а точки можно ставить и в свободном поле вокруг кадра. Кнопки − и + меняют масштаб без изменения координат. Исходник не изменяется; сохранённый отрезок пока не ограничивает GPU-анализ автоматически.	In court marking mode, the video shrinks and points may be placed outside the frame. The minus and plus buttons change zoom without changing coordinates. The original is unchanged; the saved trim range does not yet constrain GPU analysis.
+Библиотека игроков, ручные привязки Track ID и проверка ReID-групп. Статистика подтверждённых касаний доступна во вкладке «Отчёт». Автоматическая идентификация игроков отключена.	Player library, manual Track ID assignments and ReID review. Verified touch statistics are available under Report. Automatic player identification is disabled.
+ОТЧЁТ / СТАТИСТИКА ПРОЕКТА	REPORT / PROJECT STATISTICS
+Касания игроков по подтверждённым CPU-версиям. Выберите источники, чтобы посмотреть сводку или сохранить пересчёт.	Player touches across confirmed CPU runs. Select sources to review a summary or save a recomputed report.
+Активные процессы	Active jobs
+Исходное видео для обрезки	Source video for trimming
+Разметка четырёх углов, включая точки за пределами кадра	Mark four corners, including points outside the frame
+Текущая позиция видео на временной шкале	Current video timeline position
+Масштаб изображения для разметки	Image zoom for annotation
+Уменьшить изображение	Zoom image out
+Увеличить изображение	Zoom image in
+Перезапустить студию	Restart Studio
+Безопасно перезапустить студию	Safely restart Studio
+В избранном	In favorites
+▰ Розыгрыши	▰ Rallies
+● Касания	● Touches
+⌁ Траектория	⌁ Trajectory
+▢ Игроки	▢ Players
+Выберите розыгрыш справа	Choose a rally on the right
+▶ Воспроизвести	▶ Play
+♫ Звук	♫ Sound
+⛶ На весь экран	⛶ Fullscreen
+Режим воспроизведения	Playback mode
+Розыгрыши по очереди	Rallies in sequence
+Один по кругу	Loop one rally
+Свободное воспроизведение	Free playback
+Один и остановиться	Play one and stop
+Список розыгрышей	Rally list
+Выберите для просмотра	Choose to watch
+Фильтр розыгрышей	Rally filter
+Все	All
+Длительность ↓	Duration ↓
+Касания ↓	Touches ↓
+Избранное	Favorites
+Обычные	Regular
+Шкала всего видео	Whole-video timeline
+Выберите CPU-версию	Select a CPU version
+Касания (предположительные)	Touches (provisional)
+Клик или перетаскивание — переход	Click or drag to seek
+МОНТАЖ	MONTAGE
+Монтаж видео	Video montage
+Соберите нарезку из выбранных розыгрышей или подтверждённых атак игроков.	Build a cut from selected rallies or confirmed player attacks.
+Избранное для монтажа ·	Favorites for montage ·
+Добавьте розыгрыши в избранное на вкладке предпросмотра. Автоматическая классификация атак и подач пока недоступна.	Add rallies to favorites on the preview tab. Automatic attack and serve classification is not available yet.
+02 / ПОЛНЫЙ ЦИКЛ	02 / FULL PIPELINE
+Анализ матча	Match analysis
+Один запуск создаёт новую связанную пару: первичный GPU-анализ и CPU-постобработку. Активные версии выбираются только в шапке страницы.	One run creates a new linked pair: primary GPU analysis and CPU post-processing. Active versions are selected only in the page header.
+Первичный анализ	Primary analysis
+VballNet · мяч, RAVEL · игроки. Два независимых GPU-запуска и объединение обнаружений.	VballNet · ball, RAVEL · players. Two independent GPU runs and merged detections.
+Исходное видео нового анализа	Source video for the new analysis
+Шаг окон, кадров	Window step, frames
+Лимит VRAM, МБ · 0 = без лимита	VRAM limit, MB · 0 = unlimited
+Потоки CPU	CPU threads
+По умолчанию: шаг 9 · VRAM без ограничения · 8 потоков. GPU — CUDA.	Defaults: step 9 · unlimited VRAM · 8 threads. GPU uses CUDA.
+Постобработка	Post-processing
+Новый Track ID → физические касания → розыгрыши. Не требует повторного GPU для самостоятельного CPU-пересчёта.	New Track IDs → physical touches → rallies. A standalone CPU recompute does not rerun the GPU.
+Трекинг игроков	Player tracking
+Мин. уверенность игрока	Min. player confidence
+Разрыв Track ID, кадров	Track ID gap, frames
+Касания мяча	Ball touches
+Порог экстремумов	Extremum threshold
+Мин. интервал пиков, кадров	Min. peak interval, frames
+Дальность касания, доля роста	Touch reach, growth fraction
+Мин. длина, кадров	Min. length, frames
+Мин. покрытие траектории	Min. trajectory coverage
+Дополнительные параметры CPU	Advanced CPU parameters
+Порог назначения Track ID	Track ID assignment threshold
+Порог неоднозначности	Ambiguity threshold
+Сглаживание экстремумов	Extremum smoothing
+Мин. интервал касаний, сек	Min. touch interval, sec
+Уверенность мяча	Ball confidence
+Разрыв траектории, кадров	Trajectory gap, frames
+Простой мяча, кадров	Ball idle, frames
+Порог неподвижности, пикс/кадр	Stillness threshold, px/frame
+Мин. отсчётов мяча	Min. ball samples
+Мин. касаний	Min. touches
+Макс. без касания, кадров	Max. without touch, frames
+Контекст розыгрыша, кадров	Rally context, frames
+CPU-параметры создают отдельную постобработку для выбранного GPU-анализа.	CPU parameters create a separate post-processing for the selected GPU analysis.
+↺ Вернуть эталонные настройки	↺ Restore reference settings
+▶ Полный анализ	▶ Full analysis
+Эталонный профиль активен.	Reference profile is active.
+Выберите видео и параметры. При совпадении GPU используется существующая версия; CPU-настройки создают отдельную постобработку.	Choose a video and parameters. Matching GPU settings reuse the existing version; CPU settings create a separate post-processing.
+Расширенный журнал выполнения	Extended execution log
+0 записей	0 entries
+Фактические вызовы Rust и переданные аргументы показываются отдельно от команд внешних процессов (FFmpeg). История сохраняется для каждого запуска.	Actual Rust calls and their arguments are shown separately from external process commands (FFmpeg). History is kept for every run.
+Ожидание запуска	Waiting to start
+Пока нет записей.	No entries yet.
+Источник из верхней цепочки	Source from the top chain
+Выберите анализ и постобработку в шапке.	Select analysis and post-processing in the header.
+Плеер розыгрышей	Rally player
+Просмотр исходного видео. Пробел — воспроизведение или пауза	Source video preview. Space toggles play or pause
+Визуальные фильтры плеера	Player visual filters
+Показывать или скрывать блоки розыгрышей на шкале	Show or hide rally bands on the timeline
+Показывать или скрывать касания	Show or hide touches
+Показывать или скрывать траекторию мяча	Show or hide the ball trajectory
+Показывать или скрывать рамки игроков	Show or hide player boxes
+Управление видео	Video controls
+Воспроизвести	Play
+Отключить звук	Mute
+Полноэкранный режим	Fullscreen mode
+Фильтр и сортировка розыгрышей	Rally filter and sorting
+Временная шкала всего исходного видео	Timeline of the whole source video
+Переход по видео	Video seeking
+Прогресс полного анализа	Full analysis progress
+Подробный журнал полного анализа	Detailed full analysis log
+Длительность	Duration
+Обработанные	Processed
+Мяч	Ball
+Касания	Touches
+Мяч: голубой — VballNet, оранжевый — RAVEL. Жёлтая рамка — вероятность касания.	Ball: cyan is VballNet, orange is RAVEL. A yellow box marks touch probability.
+Виды касаний — оценка CPU	Touch types — CPU estimates
+Атака	Attack
+Блок	Block
+Подача	Serve
+Передача сверху	Overhead pass
+Приём снизу	Dig
+Нижнее касание	Low touch
+Цветные метки — неподтверждённые оценки CPU, а не классы RAVEL. Блок и подача пока не определяются: нужен контекст площадки.	Colored markers are unverified CPU estimates, not RAVEL classes. Blocks and serves are unavailable without court context.
+Один результат CPU на каждое видео. Касания и розыгрыши предварительные, привязки к игрокам подтверждены вручную. Виды касаний определены приблизительно.	One CPU result per video. Touches and rallies are provisional, and player links are manually confirmed. Touch types are estimates.
+Розыгрышей-кандидатов	Rally candidates
+Ударов: атаки и подачи, оценка	Hits: attacks and serves, estimated
+В среднем на игрока	Average per player
+Ударить по мячу	Kick the ball

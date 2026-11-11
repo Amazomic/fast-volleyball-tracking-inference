@@ -1,0 +1,13 @@
+[workspace]
+resolver = "2"
+members = [
+    "volley-core",
+    "volley-media",
+    "volley-app",
+    "volley-inference",
+    "volley-web",
+]
+default-members = ["volley-app"]
+
+[profile.release]
+lto = "thin"

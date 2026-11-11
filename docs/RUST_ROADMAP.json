@@ -1,0 +1,690 @@
+{
+    "schema":  "volley-rust-stage-roadmap/1",
+    "plannedTotal":  85,
+    "lastRecorded":  84,
+    "nextStage":  85,
+    "estimateNote":  "85 — текущий ориентир планирования, не обещание неизменного объема; этап != готовая подсистема. При пересмотре плана обновлять JSON, Markdown и журнал в одном коммите.",
+    "stages":  [
+                   {
+                       "number":  1,
+                       "title":  "Target architecture and safety contract",
+                       "area":  "Основание и правила",
+                       "status":  "foundation",
+                       "journalSection":  1,
+                       "acceptance":  "Архитектурный документ; не отдельное доказательство готовности функции"
+                   },
+                   {
+                       "number":  2,
+                       "title":  "Complete rewrite plan — replaces incremental test gates",
+                       "area":  "Основание и правила",
+                       "status":  "foundation",
+                       "journalSection":  2,
+                       "acceptance":  "Архитектурный документ; не отдельное доказательство готовности функции"
+                   },
+                   {
+                       "number":  3,
+                       "title":  "Final evaluation and rollback protocol",
+                       "area":  "Основание и правила",
+                       "status":  "foundation",
+                       "journalSection":  3,
+                       "acceptance":  "Архитектурный документ; не отдельное доказательство готовности функции"
+                   },
+                   {
+                       "number":  4,
+                       "title":  "Stage log (append, never silently rewrite historic results)",
+                       "area":  "Основание и правила",
+                       "status":  "foundation",
+                       "journalSection":  4,
+                       "acceptance":  "Архитектурный документ; не отдельное доказательство готовности функции"
+                   },
+                   {
+                       "number":  5,
+                       "title":  "Handoff to the next AI / engineer",
+                       "area":  "Основание и правила",
+                       "status":  "foundation",
+                       "journalSection":  5,
+                       "acceptance":  "Архитектурный документ; не отдельное доказательство готовности функции"
+                   },
+                   {
+                       "number":  6,
+                       "title":  "Superseding decision",
+                       "area":  "Основание и правила",
+                       "status":  "foundation",
+                       "journalSection":  6,
+                       "acceptance":  "Архитектурный документ; не отдельное доказательство готовности функции"
+                   },
+                   {
+                       "number":  7,
+                       "title":  "R01 initial implementation checkpoint",
+                       "area":  "Существующие CPU-функции",
+                       "status":  "recorded",
+                       "journalSection":  7,
+                       "acceptance":  "Зафиксировано в журнале и Git; проверить полноту функциональности отдельно"
+                   },
+                   {
+                       "number":  8,
+                       "title":  "Full rewrite continuation: native project/catalog/history/media layers",
+                       "area":  "Существующие CPU-функции",
+                       "status":  "recorded",
+                       "journalSection":  8,
+                       "acceptance":  "Зафиксировано в журнале и Git; проверить полноту функциональности отдельно"
+                   },
+                   {
+                       "number":  9,
+                       "title":  "Native Rust video-preparation lifecycle",
+                       "area":  "Существующие CPU-функции",
+                       "status":  "recorded",
+                       "journalSection":  9,
+                       "acceptance":  "Зафиксировано в журнале и Git; проверить полноту функциональности отдельно"
+                   },
+                   {
+                       "number":  10,
+                       "title":  "Rust-native HTTP preview and prepared MP4 streaming",
+                       "area":  "Существующие CPU-функции",
+                       "status":  "recorded",
+                       "journalSection":  10,
+                       "acceptance":  "Зафиксировано в журнале и Git; проверить полноту функциональности отдельно"
+                   },
+                   {
+                       "number":  11,
+                       "title":  "Native-source manual montage engine and sandbox API",
+                       "area":  "Существующие CPU-функции",
+                       "status":  "recorded",
+                       "journalSection":  11,
+                       "acceptance":  "Зафиксировано в журнале и Git; проверить полноту функциональности отдельно"
+                   },
+                   {
+                       "number":  12,
+                       "title":  "Native CPU-evidence rally reconstruction and selection",
+                       "area":  "Существующие CPU-функции",
+                       "status":  "recorded",
+                       "journalSection":  12,
+                       "acceptance":  "Зафиксировано в журнале и Git; проверить полноту функциональности отдельно"
+                   },
+                   {
+                       "number":  13,
+                       "title":  "Rust-only RAVEL Touch peak and motion diagnostic",
+                       "area":  "Существующие CPU-функции",
+                       "status":  "recorded",
+                       "journalSection":  13,
+                       "acceptance":  "Зафиксировано в журнале и Git; проверить полноту функциональности отдельно"
+                   },
+                   {
+                       "number":  14,
+                       "title":  "Native provisional player continuity and safe Touch grouping",
+                       "area":  "Существующие CPU-функции",
+                       "status":  "recorded",
+                       "journalSection":  14,
+                       "acceptance":  "Зафиксировано в журнале и Git; проверить полноту функциональности отдельно"
+                   },
+                   {
+                       "number":  15,
+                       "title":  "Rust-native cached ReID comparison",
+                       "area":  "Существующие CPU-функции",
+                       "status":  "recorded",
+                       "journalSection":  15,
+                       "acceptance":  "Зафиксировано в журнале и Git; проверить полноту функциональности отдельно"
+                   },
+                   {
+                       "number":  16,
+                       "title":  "Isolated Rust manual player identities",
+                       "area":  "Существующие CPU-функции",
+                       "status":  "recorded",
+                       "journalSection":  16,
+                       "acceptance":  "Зафиксировано в журнале и Git; проверить полноту функциональности отдельно"
+                   },
+                   {
+                       "number":  17,
+                       "title":  "Native manual ReID candidate group merge/split",
+                       "area":  "Существующие CPU-функции",
+                       "status":  "recorded",
+                       "journalSection":  17,
+                       "acceptance":  "Зафиксировано в журнале и Git; проверить полноту функциональности отдельно"
+                   },
+                   {
+                       "number":  18,
+                       "title":  "Native CPU player touch/action statistics",
+                       "area":  "Существующие CPU-функции",
+                       "status":  "recorded",
+                       "journalSection":  18,
+                       "acceptance":  "Зафиксировано в журнале и Git; проверить полноту функциональности отдельно"
+                   },
+                   {
+                       "number":  19,
+                       "title":  "Native personalized full-rally montage selection",
+                       "area":  "Существующие CPU-функции",
+                       "status":  "recorded",
+                       "journalSection":  19,
+                       "acceptance":  "Зафиксировано в журнале и Git; проверить полноту функциональности отдельно"
+                   },
+                   {
+                       "number":  20,
+                       "title":  "Native gold-marked rallies and montage filters",
+                       "area":  "Существующие CPU-функции",
+                       "status":  "recorded",
+                       "journalSection":  20,
+                       "acceptance":  "Зафиксировано в журнале и Git; проверить полноту функциональности отдельно"
+                   },
+                   {
+                       "number":  21,
+                       "title":  "Rust Quick Reel independent selection, preparation and job state",
+                       "area":  "Существующие CPU-функции",
+                       "status":  "recorded",
+                       "journalSection":  21,
+                       "acceptance":  "Зафиксировано в журнале и Git; проверить полноту функциональности отдельно"
+                   },
+                   {
+                       "number":  22,
+                       "title":  "Native ONNX Runtime one-clip GPU inference kernel",
+                       "area":  "Нативный GPU/ONNX",
+                       "status":  "recorded",
+                       "journalSection":  22,
+                       "acceptance":  "Зафиксировано в журнале и Git; проверить полноту функциональности отдельно"
+                   },
+                   {
+                       "number":  23,
+                       "title":  "Native global player catalog editor",
+                       "area":  "Нативный GPU/ONNX",
+                       "status":  "recorded",
+                       "journalSection":  23,
+                       "acceptance":  "Зафиксировано в журнале и Git; проверить полноту функциональности отдельно"
+                   },
+                   {
+                       "number":  24,
+                       "title":  "Safe WSL Rust developer launch command",
+                       "area":  "Нативный GPU/ONNX",
+                       "status":  "recorded",
+                       "journalSection":  24,
+                       "acceptance":  "Зафиксировано в журнале и Git; проверить полноту функциональности отдельно"
+                   },
+                   {
+                       "number":  25,
+                       "title":  "Isolated Rust project archival and task cancellation",
+                       "area":  "Нативный GPU/ONNX",
+                       "status":  "recorded",
+                       "journalSection":  25,
+                       "acceptance":  "Зафиксировано в журнале и Git; проверить полноту функциональности отдельно"
+                   },
+                   {
+                       "number":  26,
+                       "title":  "Bounded raw-frame streaming windows and shared ONNX input layout",
+                       "area":  "Нативный GPU/ONNX",
+                       "status":  "recorded",
+                       "journalSection":  26,
+                       "acceptance":  "Зафиксировано в журнале и Git; проверить полноту функциональности отдельно"
+                   },
+                   {
+                       "number":  27,
+                       "title":  "Single-FFmpeg raw-frame window streaming",
+                       "area":  "Нативный GPU/ONNX",
+                       "status":  "recorded",
+                       "journalSection":  27,
+                       "acceptance":  "Зафиксировано в журнале и Git; проверить полноту функциональности отдельно"
+                   },
+                   {
+                       "number":  28,
+                       "title":  "Persistent ONNX session over bounded native FFmpeg stream",
+                       "area":  "Нативный GPU/ONNX",
+                       "status":  "recorded",
+                       "journalSection":  28,
+                       "acceptance":  "Зафиксировано в журнале и Git; проверить полноту функциональности отдельно"
+                   },
+                   {
+                       "number":  29,
+                       "title":  "Versioned isolated native ONNX proposal evidence",
+                       "area":  "Нативный GPU/ONNX",
+                       "status":  "recorded",
+                       "journalSection":  29,
+                       "acceptance":  "Зафиксировано в журнале и Git; проверить полноту функциональности отдельно"
+                   },
+                   {
+                       "number":  30,
+                       "title":  "Touch smoothing regression fixture corrected; full Rust unit suite green",
+                       "area":  "Нативный GPU/ONNX",
+                       "status":  "recorded",
+                       "journalSection":  30,
+                       "acceptance":  "Зафиксировано в журнале и Git; проверить полноту функциональности отдельно"
+                   },
+                   {
+                       "number":  31,
+                       "title":  "Native RAVEL-013/VballNet ONNX detection decoder",
+                       "area":  "Нативный GPU/ONNX",
+                       "status":  "recorded",
+                       "journalSection":  31,
+                       "acceptance":  "Зафиксировано в журнале и Git; проверить полноту функциональности отдельно"
+                   },
+                   {
+                       "number":  32,
+                       "title":  "Full prepared-video FFmpeg streaming input for native ONNX",
+                       "area":  "Нативный GPU/ONNX",
+                       "status":  "recorded",
+                       "journalSection":  32,
+                       "acceptance":  "Зафиксировано в журнале и Git; проверить полноту функциональности отдельно"
+                   },
+                   {
+                       "number":  33,
+                       "title":  "Expose unconfirmed per-frame detections from native ONNX scans",
+                       "area":  "Нативный GPU/ONNX",
+                       "status":  "recorded",
+                       "journalSection":  33,
+                       "acceptance":  "Зафиксировано в журнале и Git; проверить полноту функциональности отдельно"
+                   },
+                   {
+                       "number":  34,
+                       "title":  "Native full-video model detection job lifecycle",
+                       "area":  "Нативный GPU/ONNX",
+                       "status":  "recorded",
+                       "journalSection":  34,
+                       "acceptance":  "Зафиксировано в журнале и Git; проверить полноту функциональности отдельно"
+                   },
+                   {
+                       "number":  35,
+                       "title":  "Actual ORT CPU/CUDA inference and isolated full-video GPU smoke",
+                       "area":  "Нативный GPU/ONNX",
+                       "status":  "recorded",
+                       "journalSection":  35,
+                       "acceptance":  "Зафиксировано в журнале и Git; проверить полноту функциональности отдельно"
+                   },
+                   {
+                       "number":  36,
+                       "title":  "Verified RAVEL + VballNet source fusion into isolated CPU replay frames",
+                       "area":  "Нативный GPU/ONNX",
+                       "status":  "recorded",
+                       "journalSection":  36,
+                       "acceptance":  "Зафиксировано в журнале и Git; проверить полноту функциональности отдельно"
+                   },
+                   {
+                       "number":  37,
+                       "title":  "End-to-end native CUDA model fusion smoke",
+                       "area":  "Нативный GPU/ONNX",
+                       "status":  "recorded",
+                       "journalSection":  37,
+                       "acceptance":  "Зафиксировано в журнале и Git; проверить полноту функциональности отдельно"
+                   },
+                   {
+                       "number":  38,
+                       "title":  "Provisional CPU Track ID reconstruction from RAVEL boxes",
+                       "area":  "CPU-трекинг и предпросмотр",
+                       "status":  "recorded",
+                       "journalSection":  38,
+                       "acceptance":  "Зафиксировано в журнале и Git; проверить полноту функциональности отдельно"
+                   },
+                   {
+                       "number":  39,
+                       "title":  "Isolated CPU replay of provisional player tracks from immutable GPU fusion",
+                       "area":  "CPU-трекинг и предпросмотр",
+                       "status":  "recorded",
+                       "journalSection":  39,
+                       "acceptance":  "Зафиксировано в журнале и Git; проверить полноту функциональности отдельно"
+                   },
+                   {
+                       "number":  40,
+                       "title":  "CPU physical Touch gating for native fused detections",
+                       "area":  "CPU-трекинг и предпросмотр",
+                       "status":  "recorded",
+                       "journalSection":  40,
+                       "acceptance":  "Зафиксировано в журнале и Git; проверить полноту функциональности отдельно"
+                   },
+                   {
+                       "number":  41,
+                       "title":  "Full native CPU motion-gated Touch proposal replay",
+                       "area":  "CPU-трекинг и предпросмотр",
+                       "status":  "recorded",
+                       "journalSection":  41,
+                       "acceptance":  "Зафиксировано в журнале и Git; проверить полноту функциональности отдельно"
+                   },
+                   {
+                       "number":  42,
+                       "title":  "Streaming ball-supported provisional rally reconstruction",
+                       "area":  "CPU-трекинг и предпросмотр",
+                       "status":  "recorded",
+                       "journalSection":  42,
+                       "acceptance":  "Зафиксировано в журнале и Git; проверить полноту функциональности отдельно"
+                   },
+                   {
+                       "number":  43,
+                       "title":  "Native CPU rally snapshot linked to verified Track ID and Touch inputs",
+                       "area":  "CPU-трекинг и предпросмотр",
+                       "status":  "recorded",
+                       "journalSection":  43,
+                       "acceptance":  "Зафиксировано в журнале и Git; проверить полноту функциональности отдельно"
+                   },
+                   {
+                       "number":  44,
+                       "title":  "Conservative event evidence labels and safe provisional clip boundaries",
+                       "area":  "CPU-трекинг и предпросмотр",
+                       "status":  "recorded",
+                       "journalSection":  44,
+                       "acceptance":  "Зафиксировано в журнале и Git; проверить полноту функциональности отдельно"
+                   },
+                   {
+                       "number":  45,
+                       "title":  "Verified native rally preview and manual original-source montage route",
+                       "area":  "CPU-трекинг и предпросмотр",
+                       "status":  "recorded",
+                       "journalSection":  45,
+                       "acceptance":  "Зафиксировано в журнале и Git; проверить полноту функциональности отдельно"
+                   },
+                   {
+                       "number":  46,
+                       "title":  "Rust-served first standalone preview/montage UI, native gold marks and global filtered paging",
+                       "area":  "CPU-трекинг и предпросмотр",
+                       "status":  "recorded",
+                       "journalSection":  46,
+                       "acceptance":  "Зафиксировано в журнале и Git; проверить полноту функциональности отдельно"
+                   },
+                   {
+                       "number":  47,
+                       "title":  "First real Rust/WebAssembly client engine compiled and executed",
+                       "area":  "Rust/WASM UI и игроки",
+                       "status":  "recorded",
+                       "journalSection":  47,
+                       "acceptance":  "Зафиксировано в журнале и Git; проверить полноту функциональности отдельно"
+                   },
+                   {
+                       "number":  48,
+                       "title":  "Native Analysis and Players tabs with explicit GPU/CPU version flow",
+                       "area":  "Rust/WASM UI и игроки",
+                       "status":  "recorded",
+                       "journalSection":  48,
+                       "acceptance":  "Зафиксировано в журнале и Git; проверить полноту функциональности отдельно"
+                   },
+                   {
+                       "number":  49,
+                       "title":  "GPU job progress survives Rust Studio page reload",
+                       "area":  "Rust/WASM UI и игроки",
+                       "status":  "recorded",
+                       "journalSection":  49,
+                       "acceptance":  "Зафиксировано в журнале и Git; проверить полноту функциональности отдельно"
+                   },
+                   {
+                       "number":  50,
+                       "title":  "Standalone native provisional Track ID ↔ project player manual registry",
+                       "area":  "Rust/WASM UI и игроки",
+                       "status":  "recorded",
+                       "journalSection":  50,
+                       "acceptance":  "Зафиксировано в журнале и Git; проверить полноту функциональности отдельно"
+                   },
+                   {
+                       "number":  51,
+                       "title":  "Native Track ID manual review UI and verified crop-on-demand photo",
+                       "area":  "Rust/WASM UI и игроки",
+                       "status":  "recorded",
+                       "journalSection":  51,
+                       "acceptance":  "Зафиксировано в журнале и Git; проверить полноту функциональности отдельно"
+                   },
+                   {
+                       "number":  52,
+                       "title":  "Duplication audit, canonical ownership map and mandatory no-repeat gate",
+                       "area":  "Защита архитектуры",
+                       "status":  "recorded",
+                       "journalSection":  52,
+                       "acceptance":  "Зафиксировано в журнале и Git; проверить полноту функциональности отдельно"
+                   },
+                   {
+                       "number":  53,
+                       "title":  "Remove duplicated mutable sidecar implementations, preserve legacy/native schemas",
+                       "area":  "Защита архитектуры",
+                       "status":  "recorded",
+                       "journalSection":  53,
+                       "acceptance":  "Зафиксировано в журнале и Git; проверить полноту функциональности отдельно"
+                   },
+                   {
+                       "number":  54,
+                       "title":  "Типизированный EvidenceSource и проверка происхождения",
+                       "area":  "Контракты",
+                       "status":  "recorded",
+                       "acceptance":  "Проверяемый формат provenance, отдельные legacy/native адаптеры; наличие unknown FPS/SHA не подменяется данными native; тесты roundtrip, SHA, FPS и разных source-scopes пройдены",
+                       "journalSection":  54
+                   },
+                   {
+                       "number":  55,
+                       "title":  "Два адаптера чтения Track ID для одного identity-сервиса",
+                       "area":  "Игроки",
+                       "status":  "recorded",
+                       "acceptance":  "Legacy/natively source readers implement one review input contract without copying IDs",
+                       "journalSection":  55
+                   },
+                   {
+                       "number":  56,
+                       "title":  "Rust-only executable entrypoint and retirement of Python application tree",
+                       "area":  "Игроки",
+                       "status":  "recorded",
+                       "acceptance":  "The primary Windows launcher runs only Rust on 8875; no tracked Python application sources or old browser tests remain, the original Git checkpoint and model assets are preserved, and Rust HTTP/build/guard tests pass",
+                       "journalSection":  56
+                   },
+                   {
+                       "number":  57,
+                       "title":  "Перевод старых и нативных API на общий identity-сервис",
+                       "area":  "Игроки",
+                       "status":  "recorded",
+                       "journalSection":  57,
+                       "acceptance":  "Both route contracts persist existing JSON and pass old-project test fixtures"
+                   },
+                   {
+                       "number":  58,
+                       "title":  "Проверка совпадений и конфликтов визуальных ReID предложений",
+                       "area":  "ReID",
+                       "status":  "recorded",
+                       "journalSection":  58,
+                       "acceptance":  "Candidate score is distinguishable from verified identity; no overlap conflict"
+                   },
+                   {
+                       "number":  59,
+                       "title":  "Общие подтверждённые identity решения для статистики и монтажа",
+                       "area":  "Игроки",
+                       "status":  "recorded",
+                       "journalSection":  59,
+                       "acceptance":  "Consumers access same reviewed identity snapshot across both source readers"
+                   },
+                   {
+                       "number":  60,
+                       "title":  "Извлечение ReID embeddings из новых native Track ID",
+                       "area":  "ReID",
+                       "status":  "recorded",
+                       "journalSection":  60,
+                       "acceptance":  "One specified encoder, checkpoint fingerprint, tested embedding vectors"
+                   },
+                   {
+                       "number":  61,
+                       "title":  "Сохранение фотоэталонов игрока с проверкой источника",
+                       "area":  "ReID",
+                       "status":  "recorded",
+                       "journalSection":  61,
+                       "acceptance":  "Explicit manual photo enrollment, undo, versioned storage, stale-source refusal"
+                   },
+                   {
+                       "number":  62,
+                       "title":  "Версионирование модели embeddings и инвалидирование кеша",
+                       "area":  "ReID",
+                       "status":  "recorded",
+                       "acceptance":  "Model versions cannot be compared across spaces; cache verified",
+                       "journalSection":  62
+                   },
+                   {
+                       "number":  63,
+                       "title":  "Общий ReID cosine и предложения между группами Track ID",
+                       "area":  "ReID",
+                       "status":  "recorded",
+                       "acceptance":  "Use existing volley-core algorithm; test similarity against fixtures",
+                       "journalSection":  63
+                   },
+                   {
+                       "number":  64,
+                       "title":  "Ручная проверка ReID групп и порога автопредложений",
+                       "area":  "ReID",
+                       "status":  "recorded",
+                       "acceptance":  "UI review/merge/split with explicit consent and conflict-safe revision",
+                       "journalSection":  64
+                   },
+                   {
+                       "number":  65,
+                       "title":  "Проверка одновременной видимости и отсутствия подмены игроков",
+                       "area":  "ReID",
+                       "status":  "recorded",
+                       "acceptance":  "Co-occurrence blocks incorrect merges, rejects lookalikes in sample fixture",
+                       "journalSection":  65
+                   },
+                   {
+                       "number":  66,
+                       "title":  "Консервативная непрерывность Track ID при разрыве 3–4 секунды",
+                       "area":  "Трекинг",
+                       "status":  "recorded",
+                       "acceptance":  "Configurable bounded gap, crossing collision tests and review-only guesses",
+                       "journalSection":  66
+                   },
+                   {
+                       "number":  67,
+                       "title":  "Единая траектория мяча и анализ экстремумов изменения движения",
+                       "area":  "Касания",
+                       "status":  "recorded",
+                       "acceptance":  "Reuses existing core geometry and zero GPU reruns",
+                       "journalSection":  67
+                   },
+                   {
+                       "number":  68,
+                       "title":  "Подтверждение физически обоснованных касаний вместо геометрии",
+                       "area":  "Касания",
+                       "status":  "recorded",
+                       "acceptance":  "Gated Touch data linked to rally and player snapshots; no false authority",
+                       "journalSection":  68
+                   },
+                   {
+                       "number":  69,
+                       "title":  "Сопоставление границ розыгрышей native/legacy",
+                       "area":  "Розыгрыши",
+                       "status":  "recorded",
+                       "acceptance":  "Deterministic stable source intervals and annotated boundary tests",
+                       "journalSection":  69
+                   },
+                   {
+                       "number":  70,
+                       "title":  "Единая политика золотых отметок и прежние сохранения",
+                       "area":  "Розыгрыши",
+                       "status":  "recorded",
+                       "acceptance":  "Adapters preserve existing IDs/stores without silent remap",
+                       "journalSection":  70
+                   },
+                   {
+                       "number":  71,
+                       "title":  "Единый selector розыгрышей для предпросмотра и монтажа",
+                       "area":  "Розыгрыши",
+                       "status":  "recorded",
+                       "acceptance":  "One typed selection API consuming both formats",
+                       "journalSection":  71
+                   },
+                   {
+                       "number":  72,
+                       "title":  "Классификация подач, атак и блоков по подтверждённым событиям",
+                       "area":  "События",
+                       "status":  "recorded",
+                       "acceptance":  "No fabricated actions when evidence insufficient",
+                       "journalSection":  72
+                   },
+                   {
+                       "number":  73,
+                       "title":  "Пересчёт касаний конкретных игроков по всему проекту",
+                       "area":  "Статистика",
+                       "status":  "recorded",
+                       "acceptance":  "Verified athlete stats track provenance and avoid double count",
+                       "journalSection":  73
+                   },
+                   {
+                       "number":  74,
+                       "title":  "Панели статистики игрока и качества событий в UI",
+                       "area":  "Статистика",
+                       "status":  "recorded",
+                       "acceptance":  "Correct event counts and source-version diagnostics",
+                       "journalSection":  74
+                   },
+                   {
+                       "number":  75,
+                       "title":  "Единый рендер/монтаж из оригинала для обоих форматов",
+                       "area":  "Монтаж",
+                       "status":  "recorded",
+                       "acceptance":  "One FFmpeg exporter, source resolution/quality tests",
+                       "journalSection":  75
+                   },
+                   {
+                       "number":  76,
+                       "title":  "Автонарезка лучших атак выбранного игрока",
+                       "area":  "Монтаж",
+                       "status":  "recorded",
+                       "acceptance":  "Uses verified identity/action and manual override; cancels cleanly",
+                       "journalSection":  76
+                   },
+                   {
+                       "number":  77,
+                       "title":  "Вертикальный монтаж, аудиодорожка и проверка качества MP4",
+                       "area":  "Монтаж",
+                       "status":  "recorded",
+                       "acceptance":  "Correct aspect and synchronized audio with 100% original clip extraction",
+                       "journalSection":  77
+                   },
+                   {
+                       "number":  78,
+                       "title":  "Независимый Quick Reel: свежий GPU→CPU→монтаж",
+                       "area":  "Quick Reel",
+                       "status":  "recorded",
+                       "acceptance":  "Reuses only media preparation; no project inference reuse",
+                       "journalSection":  78
+                   },
+                   {
+                       "number":  79,
+                       "title":  "Quick Reel: выбор файла, отмена, прогресс и скачивание",
+                       "area":  "Quick Reel",
+                       "status":  "recorded",
+                       "acceptance":  "Full client flow, no stale file picker or duplicate jobs",
+                       "journalSection":  79
+                   },
+                   {
+                       "number":  80,
+                       "title":  "Совместимость старых проектов и безопасная очистка/архивация",
+                       "area":  "Совместимость",
+                       "status":  "recorded",
+                       "acceptance":  "Reopen real old project; no user data destruction",
+                       "journalSection":  80
+                   },
+                   {
+                       "number":  81,
+                       "title":  "Полноценный Rust/WASM интерфейс с RU/EN и настройками",
+                       "area":  "Интерфейс",
+                       "status":  "recorded",
+                       "acceptance":  "No legacy JS feature gaps; browser navigation and loading tests",
+                       "journalSection":  81
+                   },
+                   {
+                       "number":  82,
+                       "title":  "Windows/WSL/Docker сборка, ресурсы и один рабочий экземпляр",
+                       "area":  "Развёртывание",
+                       "status":  "recorded",
+                       "acceptance":  "Stable launch/stop/restart, no Python service dependency",
+                       "journalSection":  82
+                   },
+                   {
+                       "number":  83,
+                       "title":  "Регрессионный аудит security, SHA, cancellation и кеша",
+                       "area":  "Приёмка",
+                       "status":  "recorded",
+                       "acceptance":  "All CI gates, fault injection, cancellation, bounded RAM/VRAM",
+                       "journalSection":  83
+                   },
+                   {
+                       "number":  84,
+                       "title":  "Полный тест на размеченных матчах и сравнение с Python",
+                       "area":  "Приёмка",
+                       "status":  "recorded",
+                       "acceptance":  "Measured touch/Track ID/rally quality, speed, GPU/RAM, montage fidelity",
+                       "journalSection":  84,
+                       "acceptanceVerdict":  "NO_GO",
+                       "evidenceReport":  "docs/RUST_BENCHMARK_84.md"
+                   },
+                   {
+                       "number":  85,
+                       "title":  "Финальный выбор Rust-релиза или безопасного отката",
+                       "area":  "Приёмка",
+                       "status":  "planned",
+                       "acceptance":  "Accepted results, selected commit, reversible user-data-safe rollout"
+                   }
+               ]
+}

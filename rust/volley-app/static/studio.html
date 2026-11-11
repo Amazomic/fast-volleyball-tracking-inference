@@ -1,0 +1,538 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Volleyball Studio — анализ волейбольных матчей</title>
+  <link rel="icon" type="image/png" href="/studio/volleyball-photo.png">
+  <link rel="stylesheet" href="/studio/app.css">
+  <script src="/studio/ui.js" defer></script>
+  <script src="/studio/chain.js" defer></script>
+  <script src="/studio/hash.js" defer></script>
+  <script src="/studio/upload.js" defer></script>
+  <script src="/studio/tasks.js" defer></script>
+  <script src="/studio/overview.js" defer></script>
+  <script src="/studio/app.js" defer></script>
+  <script src="/studio/editor.js" defer></script>
+  <script src="/studio/tabs.js" defer></script>
+  <script src="/studio/tracks.js" defer></script>
+  <script src="/studio/stats.js" defer></script>
+  <script src="/studio/highlights.js" defer></script>
+  <script src="/studio/quick-reel.js" defer></script>
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar" aria-label="Панель проекта">
+      <div class="brand"><button class="logo" type="button" aria-label="Ударить по мячу" title="Ударить по мячу"><span class="volleyball-ball-stage" aria-hidden="true"><img class="volleyball-ball" src="/studio/volleyball-photo.png" alt=""></span></button><div><strong>VOLLEYBALL</strong><span>STUDIO</span></div></div>
+      <div class="sidebar-heading">Навигация</div>
+      <nav class="menu">
+        <a id="studio-nav-players" href="#players" data-studio-tab="players"><span>♙</span> Игроки</a>
+        <a id="studio-nav-analysis" href="#analysis" data-studio-tab="analysis"><span>▤</span> Анализ</a>
+        <a id="studio-nav-preview" class="active" href="#preview" data-studio-tab="preview" aria-current="page"><span>▣</span> Предпросмотр</a>
+        <a id="studio-nav-report" href="#report" data-studio-tab="report"><span>▥</span> Отчёт</a>
+        <a id="studio-nav-montage" href="#montage" data-studio-tab="montage"><span>◧</span> Монтаж</a>
+      </nav>
+      <div class="studio-sidebar-bottom">
+        <section id="studio-sidebar-tasks" class="studio-sidebar-tasks hidden" aria-label="Активные процессы" aria-live="polite">
+          <div class="studio-sidebar-tasks-heading"><span class="studio-sidebar-tasks-indicator" aria-hidden="true"></span>Выполняется</div>
+          <div id="studio-sidebar-task-list" class="studio-sidebar-task-list"></div>
+        </section>
+        <button id="studio-restart" class="studio-sidebar-restart" type="button" title="Безопасно перезапустить студию" aria-label="Перезапустить студию">
+          <span class="studio-sidebar-restart-icon" aria-hidden="true">↻</span>
+          <span>Перезапустить студию</span>
+        </button>
+        <small id="studio-restart-status" class="studio-sidebar-restart-status hidden" role="status" aria-live="polite"></small>
+      </div>
+    </aside>
+    <main class="main">
+      <header class="topbar studio-chain-topbar">
+        <div class="studio-source-chain" role="group" aria-label="Связанные версии проекта, анализа и постобработки">
+          <div class="studio-chain-step">
+            <label class="field-label" for="studio-project">01 · Проект</label>
+            <div class="studio-project-picker">
+              <button id="studio-project-new" class="secondary studio-project-new" type="button" aria-label="Создать новый проект" title="Создать новый проект">+</button>
+              <select id="studio-project" aria-label="Выберите проект"><option value="">Загрузка проектов…</option></select>
+            </div>
+          </div>
+          <div class="studio-chain-step">
+            <label class="field-label" for="studio-inference">02 · Анализ GPU</label>
+            <select id="studio-inference" aria-label="Выберите первичный анализ" disabled><option value="">Сначала выберите проект</option></select>
+          </div>
+          <div class="studio-chain-step">
+            <label class="field-label" for="studio-run">03 · Постобработка CPU</label>
+            <select id="studio-run" aria-label="Выберите версию постобработки" disabled><option value="">Сначала выберите анализ</option></select>
+          </div>
+          <button id="studio-quick-open" class="studio-quick-reel-launch" data-studio-tab="quick" type="button" aria-label="Создать быстрый рилс" title="Создать быстрый рилс">
+            <svg class="studio-quick-reel-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+              <path d="M4 9h16v11H4z"/>
+              <path d="m4 9 2-5h14l-2 5"/>
+              <path d="m10 4-2 5M16 4l-2 5"/>
+              <path d="m10 12 5 3-5 3z" fill="currentColor" stroke="none"/>
+            </svg>
+          </button>
+        </div>
+      </header>
+      <dialog id="studio-project-dialog" class="studio-create-dialog" aria-labelledby="studio-project-dialog-title">
+        <form id="studio-project-create-form">
+          <div class="studio-dialog-heading">
+            <h2 id="studio-project-dialog-title">Новый проект</h2>
+            <button id="studio-project-close" class="secondary studio-dialog-close" type="button" aria-label="Закрыть окно">×</button>
+          </div>
+          <label class="field-label" for="studio-project-name">Название проекта</label>
+          <input id="studio-project-name" type="text" maxlength="100" required autocomplete="off" placeholder="Название матча">
+          <div class="studio-project-create-grid">
+            <section class="studio-project-create-col" aria-label="Видео проекта">
+              <label class="field-label" for="studio-project-file-input">Исходные видео</label>
+              <div id="studio-project-drop" class="studio-project-drop" role="button" tabindex="0" aria-label="Выберите видео или перетащите сюда">
+                <strong>Перетащите видео сюда</strong>
+                <span>или нажмите, чтобы выбрать файлы в проводнике</span>
+                <small>MP4, MOV, MKV, AVI, WEBM, M4V, MTS · до 30 файлов · до 32 ГиБ каждый</small>
+              </div>
+              <input id="studio-project-file-input" class="sr-only" tabindex="-1" type="file" accept=".mp4,.mov,.mkv,.avi,.webm,.m4v,.mts,video/*" multiple aria-label="Выбрать видео для проекта">
+              <p id="studio-project-upload-progress" class="studio-project-upload-status" role="status" aria-live="polite"></p>
+              <div id="studio-project-videos" class="studio-project-video-options" role="group" aria-label="Видео для нового проекта">Загрузка списка…</div>
+              <p class="studio-project-help">Выберите видео из списка или загрузите свои. Файлы сохраняются отдельно, оригиналы не изменяются.</p>
+            </section>
+            <section class="studio-project-create-col" aria-label="Игроки проекта">
+              <label class="field-label">Игроки проекта</label>
+              <div id="studio-project-players" class="studio-project-player-options" role="group" aria-label="Игроки для нового проекта">Загрузка игроков…</div>
+              <div class="studio-project-add-player">
+                <input id="studio-project-player-name" type="text" maxlength="80" placeholder="Имя нового игрока" aria-label="Имя нового игрока" autocomplete="off">
+                <button id="studio-project-add-player" type="button" class="secondary">+ Игрок</button>
+              </div>
+            </section>
+          </div>
+          <p id="studio-project-create-error" class="studio-project-error" role="alert" aria-live="polite"></p>
+          <div class="studio-dialog-actions">
+            <button id="studio-project-cancel" type="button" class="secondary">Отмена</button>
+            <button id="studio-project-submit" type="submit" class="primary" disabled>Создать проект</button>
+          </div>
+        </form>
+      </dialog>
+      <div class="content">
+        <section id="studio-quick-view" class="hidden tab-workspace quick-workspace" aria-labelledby="studio-quick-heading">
+          <p id="studio-quick-heading" class="eyebrow">БЫСТРЫЙ РИЛС / ОТДЕЛЬНЫЙ АНАЛИЗ</p>
+          <div class="quick-layout">
+            <section class="quick-card">
+              <h2>Исходные видео</h2>
+              <div id="studio-quick-drop" class="quick-drop" role="button" tabindex="0" aria-label="Открыть выбор видеозаписей на устройстве">
+                <strong>Нажмите для выбора видео на устройстве</strong>
+                <span>Или перетащите файлы сюда</span>
+                <small>Работает в Windows, Linux и macOS. До 30 файлов.</small>
+              </div>
+              <button id="studio-quick-browser" class="secondary" type="button">Открыть выбор файлов</button>
+              <input id="studio-quick-files" type="file" accept=".mp4,.mov,.mkv,.avi,.webm,.m4v,.mts,video/*" multiple class="sr-only" tabindex="-1" aria-label="Файлы для Quick Reel">
+              <p class="panel-note">Выбранные файлы загружаются в отдельное хранилище Rust (до 32 ГиБ на файл). Оригиналы остаются без изменений. Браузер не передаёт полный путь к файлу.</p>
+              <ol id="studio-quick-sources" class="quick-sources" aria-label="Видео для рилса">
+                <li>Видео ещё не выбраны</li>
+              </ol>
+              <div class="quick-actions">
+                <button id="studio-quick-clear" class="secondary" type="button">Очистить выбор</button>
+                <span id="studio-quick-selection-count" class="panel-note">0 / 30</span>
+              </div>
+              <label class="field-label" for="studio-quick-music">Музыка для рилса (10–600 секунд)</label>
+              <input id="studio-quick-music" type="file" accept=".mp3,.wav,.m4a,.flac,.aac,.ogg,.opus,audio/*">
+              <p class="panel-note">Загрузите музыку перед запуском. Используются параметры профиля по умолчанию, без повторного использования GPU-результатов.</p>
+              <button id="studio-quick-start" type="button" class="primary full" disabled>Создать быстрый рилс</button>
+            </section>
+            <section class="quick-card" aria-label="Ход создания рилса">
+              <div class="quick-progress-head">
+                <h2>Обработка</h2>
+                <span id="studio-quick-percent">0%</span>
+              </div>
+              <progress id="studio-quick-progress" max="100" value="0" aria-label="Общий прогресс рилса"></progress>
+              <p id="studio-quick-status" role="status" aria-live="polite">Ожидание выбора видео.</p>
+              <div id="studio-quick-stages" class="quick-stages" aria-label="Этапы обработки">
+                <span>1. Подготовка</span><span>2. GPU</span><span>3. CPU</span><span>4. Монтаж</span>
+              </div>
+              <ul id="studio-quick-videos" class="quick-video-status" aria-label="Состояние видео"></ul>
+              <div class="quick-actions">
+                <button id="studio-quick-cancel" class="secondary hidden" type="button">Отменить обработку</button>
+                <button id="studio-quick-refresh" class="secondary" type="button">↻ Проверить состояние</button>
+              </div>
+              <a id="studio-quick-download" class="download hidden" download="quick_reel.mp4" href="#">Скачать готовый MP4</a>
+              <p id="studio-quick-error" class="panel-note quick-error hidden" role="alert"></p>
+              <p class="panel-note">Состояние последнего запуска восстанавливается при обновлении страницы. Для отменённого или ошибочного запуска MP4 недоступен.</p>
+            </section>
+          </div>
+        </section>
+        <div id="studio-preview-view" aria-labelledby="studio-preview-heading">
+        <section class="intro">
+          <div><p id="studio-preview-heading" class="eyebrow">01 / АНАЛИЗ МАТЧА</p></div>
+          <div class="overview">
+            <div><strong id="studio-total">—</strong><span>Розыгрышей</span></div>
+            <div><strong id="studio-gold-count">—</strong><span>В избранном</span></div>
+          </div>
+        </section>
+        <div id="studio-banner" class="banner hidden" hidden aria-hidden="true"></div>
+        <section class="workspace">
+          <div class="viewer-layout">
+            <section class="viewer-panel" aria-label="Плеер розыгрышей">
+              <div class="viewer-head"><strong>Просмотр видео</strong><span id="studio-video-time">—</span></div>
+              <div class="video-wrap">
+                <video id="studio-video" tabindex="0" preload="metadata" playsinline aria-label="Просмотр исходного видео. Пробел — воспроизведение или пауза"></video>
+                <canvas id="studio-video-overlay" class="video-overlay" aria-hidden="true"></canvas>
+                <div class="video-overlay-toggles" role="group" aria-label="Визуальные фильтры плеера">
+                  <button type="button" id="studio-overlay-rallies" class="video-overlay-toggle" aria-pressed="true" title="Показывать или скрывать блоки розыгрышей на шкале">▰ Розыгрыши</button>
+                  <button type="button" id="studio-overlay-touches" class="video-overlay-toggle" aria-pressed="true" title="Показывать или скрывать касания">● Касания</button>
+                  <button type="button" id="studio-overlay-trajectory" class="video-overlay-toggle" aria-pressed="true" title="Показывать или скрывать траекторию мяча">⌁ Траектория</button>
+                  <button type="button" id="studio-overlay-players" class="video-overlay-toggle" aria-pressed="true" title="Показывать или скрывать рамки игроков">▢ Игроки</button>
+                  <button type="button" id="studio-overlay-mode" class="video-overlay-toggle" aria-pressed="false">Обработанные</button>
+                </div>
+                <div id="studio-overlay-raw-controls" class="video-overlay-raw-controls hidden">
+                  <label>Мяч <input id="studio-raw-ball" type="range" min="0" max="100" value="50"><output id="studio-raw-ball-value">50%</output></label>
+                  <label>Игроки <input id="studio-raw-player" type="range" min="0" max="100" value="50"><output id="studio-raw-player-value">50%</output></label>
+                  <label>Касания <input id="studio-raw-touch" type="range" min="0" max="100" value="50"><output id="studio-raw-touch-value">50%</output></label>
+                  <small>Мяч: голубой — VballNet, оранжевый — RAVEL. Жёлтая рамка — вероятность касания.</small>
+                  <fieldset class="video-overlay-actions">
+                    <legend>Виды касаний — оценка CPU</legend>
+                    <label><input type="checkbox" data-overlay-action="attack" checked><span class="action-attack">●</span> Атака</label>
+                    <label><input type="checkbox" data-overlay-action="block" checked><span class="action-block">●</span> Блок</label>
+                    <label><input type="checkbox" data-overlay-action="serve" checked><span class="action-serve">●</span> Подача</label>
+                    <label><input type="checkbox" data-overlay-action="overhead_pass" checked><span class="action-overhead-pass">●</span> Передача сверху</label>
+                    <label><input type="checkbox" data-overlay-action="dig" checked><span class="action-dig">●</span> Приём снизу</label>
+                    <label><input type="checkbox" data-overlay-action="low_touch" checked><span class="action-low-touch">●</span> Нижнее касание</label>
+                  </fieldset>
+                  <small>Цветные метки — неподтверждённые оценки CPU, а не классы RAVEL. Блок и подача пока не определяются: нужен контекст площадки.</small>
+                </div>
+                <span id="studio-overlay-status" class="video-overlay-status hidden" role="status"></span>
+                <span id="studio-video-empty">Выберите розыгрыш справа</span>
+
+
+                <div class="viewer-playback-controls" role="group" aria-label="Управление видео">
+                  <button id="studio-video-play" type="button" class="secondary" aria-label="Воспроизвести">▶ Воспроизвести</button>
+                  <button id="studio-video-mute" type="button" class="secondary" aria-label="Отключить звук" aria-pressed="false">♫ Звук</button>
+                  <button id="studio-video-fullscreen" type="button" class="secondary" aria-label="Полноэкранный режим">⛶ На весь экран</button>
+                </div>
+                <div class="video-playback-mode">
+                  <label class="sr-only" for="studio-video-mode">Режим воспроизведения</label>
+                  <select id="studio-video-mode" aria-label="Режим воспроизведения" title="Режим воспроизведения">
+                    <option value="sequence">Розыгрыши по очереди</option>
+                    <option value="loop">Один по кругу</option>
+                    <option value="free">Свободное воспроизведение</option>
+                    <option value="once">Один и остановиться</option>
+                  </select>
+                </div>
+              </div>
+              <div class="viewer-details" hidden aria-hidden="true">
+                <h3 id="studio-view-title">Розыгрыш не выбран</h3>
+                <p id="studio-view-description">Временная разметка пока предварительная. Откройте видео для проверки.</p>
+                <div id="studio-event-summary" class="event-summary"></div>
+              </div>
+            </section>
+            <aside class="rallies-panel" aria-label="Список розыгрышей">
+              <div class="rallies-panel-head">
+                <div class="rallies-panel-titles"><strong>Список розыгрышей</strong><span>Выберите для просмотра</span></div>
+                <label class="sr-only" for="studio-filter">Фильтр розыгрышей</label>
+                <select id="studio-filter" aria-label="Фильтр и сортировка розыгрышей" title="Фильтр и сортировка розыгрышей">
+                  <option value="all">Все</option>
+                  <option value="duration_desc">Длительность ↓</option>
+                  <option value="touches_desc">Касания ↓</option>
+                  <option value="marked">Избранное</option>
+                  <option value="unmarked">Обычные</option>
+                </select>
+              </div>
+              <div id="studio-rallies" class="rally-grid" aria-live="polite"><div class="empty-state">Здесь появятся карточки после выбора CPU-анализа.</div></div>
+            </aside>
+
+              <div id="studio-timeline" class="video-timeline" aria-label="Временная шкала всего исходного видео">
+                <div class="video-timeline-head">
+                  <strong>Шкала всего видео</strong>
+                  <span id="studio-timeline-status" aria-live="polite">Выберите CPU-версию</span>
+                </div>
+                <div id="studio-timeline-track" class="video-timeline-track" tabindex="0"
+                     role="slider" aria-label="Переход по видео" aria-valuemin="0"
+                     aria-valuemax="0" aria-valuenow="0" aria-valuetext="Нет видео">
+                  <canvas id="studio-timeline-canvas" aria-hidden="true"></canvas>
+                  <div id="studio-timeline-playhead" class="video-timeline-playhead" aria-hidden="true"></div>
+                </div>
+                <div class="video-timeline-axis">
+                  <span>00:00</span><span id="studio-timeline-middle">—</span><span id="studio-timeline-end">—</span>
+                </div>
+                <div class="video-timeline-legend">
+                  <span id="studio-timeline-rally-key"><i class="rally-key"></i> Розыгрыши</span>
+                  <span id="studio-timeline-touch-key"><i class="touch-key"></i> Касания (предположительные)</span>
+                  <span>Клик или перетаскивание — переход</span>
+                </div>
+              </div>
+          </div>
+        </section>
+        </div>
+        <section id="studio-montage-view" class="hidden tab-workspace" aria-labelledby="studio-montage-heading">
+          <div class="intro">
+            <div>
+              <p id="studio-montage-heading" class="eyebrow">МОНТАЖ</p>
+            </div>
+          </div>
+        <section id="studio-montage" class="montage-panel">
+          <div><p class="eyebrow">02 / РУЧНОЙ МОНТАЖ</p><h2>Избранное для монтажа · <span id="studio-selected-count">0</span></h2><p id="studio-selection-text">Добавьте розыгрыши в избранное на вкладке предпросмотра. Автоматическая классификация атак и подач пока недоступна.</p><div id="studio-picked" class="picked-list"></div></div>
+          <div class="montage-controls">
+            <label for="studio-encoder" class="field-label">Кодирование</label>
+            <select id="studio-encoder"><option value="auto">Автоматически</option><option value="gpu">GPU</option><option value="cpu">CPU</option></select>
+            <label class="field-label" for="studio-layout">Формат ролика</label>
+            <select id="studio-layout">
+              <option value="original">Оригинальный (без масштабирования)</option>
+              <option value="vertical">Вертикальный 9:16 (весь кадр и поля)</option>
+            </select>
+            <p class="panel-note">Вертикальный вариант сохраняет всю площадку: пропорции не меняются, свободное пространство заполняется полями.</p>
+            <label class="field-label" for="studio-music">Аудиотрек (необязательно)</label>
+            <input id="studio-music" type="file" accept=".mp3,.m4a,.wav,.flac,.aac,.ogg,.opus,audio/*">
+            <label class="field-label" for="studio-volume">Громкость музыкальной дорожки</label>
+            <input id="studio-volume" type="range" min="0" max="100" step="5" value="40" aria-label="Громкость музыки в процентах">
+            <button id="studio-render" class="primary full" type="button" disabled>Создать монтаж <span>↗</span></button>
+            <div id="studio-job" class="job" role="status" aria-live="polite"></div>
+            <button id="studio-cancel" class="secondary full hidden" type="button">Отменить монтаж</button>
+            <a id="studio-download" class="download hidden" href="#" download>Скачать MP4</a>
+          </div>
+        </section>
+        <section id="studio-highlights-panel" class="montage-panel" aria-labelledby="studio-highlights-title">
+          <div>
+            <p class="eyebrow">РУЧНО ПОДТВЕРЖДЁННЫЕ ДЕЙСТВИЯ</p>
+            <h2 id="studio-highlights-title">Лучшие атаки игрока</h2>
+            <p class="panel-note">Ранжирование по количеству атак, вручную подтверждённых для выбранного игрока и CPU-версии. Это не автоматическое распознавание техники. После предпросмотра можно вручную изменить список эпизодов.</p>
+            <div class="native-highlights-options">
+              <label class="field-label" for="studio-highlights-player">Игрок из состава проекта</label>
+              <select id="studio-highlights-player"><option value="">Выберите игрока</option></select>
+              <label class="field-label" for="studio-highlights-mode">Выбор</label>
+              <select id="studio-highlights-mode">
+                <option value="auto">По количеству подтверждённых атак</option>
+                <option value="manual">Ручной выбор проверенных розыгрышей</option>
+              </select>
+              <label class="field-label" for="studio-highlights-count">Максимум розыгрышей</label>
+              <input id="studio-highlights-count" type="number" min="1" max="80" value="12">
+            </div>
+            <p id="studio-highlights-status" class="panel-note" role="status" aria-live="polite">Выберите проект для поиска проверенных CPU-версий.</p>
+            <div id="studio-highlights-sources" class="native-stats-sources" aria-label="CPU-версии для атак"></div>
+            <div id="studio-highlights-candidates" class="native-highlights-candidates" aria-live="polite"></div>
+          </div>
+          <div class="montage-controls">
+            <label class="field-label" for="studio-highlights-layout">Формат нарезки</label>
+            <select id="studio-highlights-layout">
+              <option value="original">Оригинальный</option>
+              <option value="vertical">Вертикальный 9:16 (весь кадр)</option>
+            </select>
+            <label class="field-label" for="studio-highlights-music">Музыка для лучших атак (необязательно)</label>
+            <input id="studio-highlights-music" type="file" accept=".mp3,.m4a,.wav,.flac,.aac,.ogg,.opus,audio/*">
+            <label class="field-label" for="studio-highlights-volume">Громкость музыки</label>
+            <input id="studio-highlights-volume" type="range" min="0" max="100" step="5" value="40">
+            <button id="studio-highlights-refresh" type="button" class="secondary full">↻ Обновить источники</button>
+            <button id="studio-highlights-preview" type="button" class="secondary full" disabled>Показать атаки</button>
+            <button id="studio-highlights-start" type="button" class="primary full" disabled>Собрать нарезку</button>
+            <button id="studio-highlights-cancel" type="button" class="secondary full hidden">Отменить монтаж</button>
+            <div id="studio-highlights-job" class="job" role="status" aria-live="polite"></div>
+            <a id="studio-highlights-download" class="download hidden" href="#" download>Скачать MP4</a>
+          </div>
+        </section>
+        </section>
+        <section id="studio-analysis-view" class="hidden tab-workspace" aria-labelledby="studio-analysis-heading">
+          <p id="studio-analysis-heading" class="eyebrow">02 / ПОЛНЫЙ ЦИКЛ</p>
+          <div class="analysis-profile-grid">
+            <section class="analysis-profile-card" aria-labelledby="studio-primary-heading">
+              <div class="analysis-profile-heading">
+                <span class="analysis-profile-number">01</span>
+                <div><h2 id="studio-primary-heading">Первичный анализ</h2>
+                  <p>VballNet · мяч, RAVEL · игроки. Два независимых GPU-запуска и объединение обнаружений.</p></div>
+                <button id="studio-analysis-gpu-only" class="primary analysis-stage-launch" type="button" title="Запустить только GPU и создать отдельную версию первичного анализа">▶ Начать анализ</button>
+              </div>
+              <div class="analysis-profile-fields">
+                <div class="analysis-profile-source">
+                  <label class="field-label" for="studio-analysis-video">Исходное видео нового анализа</label>
+                  <select id="studio-analysis-video"><option value="">Выберите проект</option></select>
+                </div>
+                <div><label class="field-label" for="studio-gpu-stride">Шаг окон, кадров</label>
+                  <input id="studio-gpu-stride" type="number" min="1" max="9" step="1" value="9" data-default="9"></div>
+                <div><label class="field-label" for="studio-gpu-memory">Лимит VRAM, МБ · 0 = без лимита</label>
+                  <input id="studio-gpu-memory" type="number" min="0" max="131072" step="1" value="0" data-default="0"></div>
+                <div><label class="field-label" for="studio-gpu-threads">Потоки CPU</label>
+                  <input id="studio-gpu-threads" type="number" min="1" max="128" step="1" value="8" data-default="8"></div>
+              </div>
+              <p class="analysis-profile-hint">По умолчанию: шаг 9 · VRAM без ограничения · 8 потоков. GPU — CUDA.</p>
+          <details id="studio-analysis-editor" class="analysis-editor">
+            <summary>Обрезка видео и разметка площадки</summary>
+            <div class="analysis-editor-grid">
+              <div class="analysis-editor-media">
+                <div id="studio-analysis-stage" class="analysis-editor-stage">
+                  <div id="studio-analysis-frame" class="analysis-editor-frame">
+                    <video id="studio-analysis-player" controls preload="metadata" playsinline aria-label="Исходное видео для обрезки"></video>
+                  </div>
+                  <canvas id="studio-analysis-court" aria-label="Разметка четырёх углов, включая точки за пределами кадра" role="img"></canvas>
+                </div>
+                <div class="analysis-editor-timeline">
+                  <div class="analysis-editor-ruler">
+                    <div id="studio-analysis-selected-range" class="analysis-editor-selected-range"></div>
+                    <div id="studio-analysis-start-marker" class="analysis-editor-marker is-start"></div>
+                    <div id="studio-analysis-end-marker" class="analysis-editor-marker is-end"></div>
+                    <div id="studio-analysis-playhead" class="analysis-editor-marker is-current"></div>
+                    <input id="studio-analysis-seek" type="range" min="0" max="1000" step="1" value="0" aria-label="Текущая позиция видео на временной шкале">
+                  </div>
+                  <div class="analysis-editor-time"><span id="studio-analysis-time">00:00 / 00:00</span><span id="studio-analysis-range-label">Отрезок: —</span></div>
+                  <div class="analysis-editor-timeline-actions">
+                    <button type="button" class="secondary" id="studio-analysis-toggle-play">▶ / Пауза</button>
+                    <button type="button" class="secondary" id="studio-analysis-set-start">Установить начало по курсору</button>
+                    <button type="button" class="secondary" id="studio-analysis-set-end">Установить конец по курсору</button>
+                  </div>
+                </div>
+              </div>
+              <div class="analysis-editor-controls">
+                <p class="panel-note">Передвиньте курсор на шкале под видео и задайте начало или конец фрагмента. Для площадки отметьте 4 угла по часовой стрелке; точки можно перетаскивать.</p>
+                <div class="analysis-editor-trim">
+                  <label>Начало, сек<input id="studio-analysis-trim-start" type="number" min="0" step="0.01" value="0"></label>
+                  <label>Конец, сек<input id="studio-analysis-trim-end" type="number" min="0" step="0.01" value="0"></label>
+                </div>
+                <div class="analysis-editor-actions">
+                  <button type="button" class="secondary" id="studio-analysis-court-mode">Разметить поле</button>
+                  <div class="analysis-editor-zoom" role="group" aria-label="Масштаб изображения для разметки">
+                    <button type="button" class="secondary" id="studio-analysis-zoom-out" aria-label="Уменьшить изображение">−</button>
+                    <output id="studio-analysis-zoom-label" aria-live="off">84%</output>
+                    <button type="button" class="secondary" id="studio-analysis-zoom-in" aria-label="Увеличить изображение">+</button>
+                  </div>
+                  <button type="button" class="secondary" id="studio-analysis-court-undo">Убрать точку</button>
+                  <button type="button" class="secondary" id="studio-analysis-court-clear">Сбросить поле</button>
+                  <button type="button" class="primary" id="studio-analysis-edit-save">Сохранить</button>
+                </div>
+                <p id="studio-analysis-edit-status" class="panel-note" role="status" aria-live="polite">Выберите видео для обрезки и разметки.</p>
+                <p class="panel-note">В режиме разметки видео уменьшается, а точки можно ставить и в свободном поле вокруг кадра. Кнопки − и + меняют масштаб без изменения координат. Исходник не изменяется; сохранённый отрезок пока не ограничивает GPU-анализ автоматически.</p>
+              </div>
+            </div>
+          </details>
+            </section>
+            <section class="analysis-profile-card" aria-labelledby="studio-post-heading">
+              <div class="analysis-profile-heading">
+                <span class="analysis-profile-number">02</span>
+                <div><h2 id="studio-post-heading">Постобработка</h2>
+                  <p>Новый Track ID → физические касания → розыгрыши. Не требует повторного GPU для самостоятельного CPU-пересчёта.</p></div>
+                <button id="studio-analysis-post-only" class="primary analysis-stage-launch" type="button" title="Запустить CPU на выбранной в шапке GPU-версии и сохранить новую постобработку">▶ Начать анализ</button>
+              </div>
+              <div class="analysis-profile-subtitle">Трекинг игроков</div>
+              <div class="analysis-profile-fields">
+                <div><label class="field-label" for="studio-post-player-score">Мин. уверенность игрока</label><input id="studio-post-player-score" type="number" min="0.05" max="1" step="0.01" value="0.30" data-default="0.30"></div>
+                <div><label class="field-label" for="studio-post-max-gap">Восстановление Track ID, кадров (90 = 3 сек)</label><input id="studio-post-max-gap" type="number" min="90" max="180" step="1" value="90" data-default="90"></div>
+                <div><label class="field-label" for="studio-post-min-track-frames">Мин. кадров для подтверждения ID</label><input id="studio-post-min-track-frames" type="number" min="6" max="90" step="1" value="12" data-default="12" title="ID с меньшим числом реальных обнаружений удаляется из CPU-результата"></div>
+              </div>
+              <div class="analysis-profile-subtitle">Касания мяча</div>
+              <div class="analysis-profile-fields">
+                <div><label class="field-label" for="studio-post-touch-threshold">Порог экстремумов</label><input id="studio-post-touch-threshold" type="number" min="0" max="1" step="0.01" value="0.50" data-default="0.50"></div>
+                <div><label class="field-label" for="studio-post-touch-gap">Мин. интервал пиков, кадров</label><input id="studio-post-touch-gap" type="number" min="1" max="150" step="1" value="10" data-default="10"></div>
+                <div><label class="field-label" for="studio-post-reach">Дальность касания, доля роста</label><input id="studio-post-reach" type="number" min="0.05" max="1" step="0.01" value="0.35" data-default="0.35"></div>
+              </div>
+              <div class="analysis-profile-subtitle">Розыгрыши</div>
+              <div class="analysis-profile-fields">
+                <div><label class="field-label" for="studio-post-rally-min">Мин. длина, кадров</label><input id="studio-post-rally-min" type="number" min="15" max="900" step="1" value="45" data-default="45"></div>
+                <div><label class="field-label" for="studio-post-coverage">Мин. покрытие траектории</label><input id="studio-post-coverage" type="number" min="0.05" max="1" step="0.01" value="0.25" data-default="0.25"></div>
+              </div>
+              <details class="analysis-profile-advanced">
+                <summary>Дополнительные параметры CPU</summary>
+                <div class="analysis-profile-fields">
+                  <div><label class="field-label" for="studio-post-nms">NMS IoU</label><input id="studio-post-nms" type="number" min="0.6" max="0.99" step="0.01" value="0.88" data-default="0.88"></div>
+                  <div><label class="field-label" for="studio-post-assignment">Порог назначения Track ID</label><input id="studio-post-assignment" type="number" min="0.2" max="1" step="0.01" value="0.48" data-default="0.48"></div>
+                  <div><label class="field-label" for="studio-post-margin">Порог неоднозначности</label><input id="studio-post-margin" type="number" min="0" max="0.5" step="0.01" value="0.11" data-default="0.11"></div>
+                  <div><label class="field-label" for="studio-post-smooth">Сглаживание экстремумов</label><input id="studio-post-smooth" type="number" min="1" max="31" step="1" value="5" data-default="5"></div>
+                  <div><label class="field-label" for="studio-post-interval">Мин. интервал касаний, сек</label><input id="studio-post-interval" type="number" min="0.10" max="3" step="0.01" value="0.35" data-default="0.35"></div>
+                  <div><label class="field-label" for="studio-post-ball-score">Уверенность мяча</label><input id="studio-post-ball-score" type="number" min="0.01" max="1" step="0.01" value="0.35" data-default="0.35"></div>
+                  <div><label class="field-label" for="studio-post-ball-gap">Разрыв траектории, кадров</label><input id="studio-post-ball-gap" type="number" min="1" max="120" step="1" value="75" data-default="75"></div>
+                  <div><label class="field-label" for="studio-post-idle">Простой мяча, кадров</label><input id="studio-post-idle" type="number" min="15" max="180" step="1" value="60" data-default="60"></div>
+                  <div><label class="field-label" for="studio-post-stationary">Порог неподвижности, пикс/кадр</label><input id="studio-post-stationary" type="number" min="0.1" max="15" step="0.1" value="2" data-default="2"></div>
+                  <div><label class="field-label" for="studio-post-samples">Мин. отсчётов мяча</label><input id="studio-post-samples" type="number" min="3" max="900" step="1" value="12" data-default="12"></div>
+                  <div><label class="field-label" for="studio-post-min-touches">Мин. касаний</label><input id="studio-post-min-touches" type="number" min="1" max="10" step="1" value="2" data-default="2"></div>
+                  <div><label class="field-label" for="studio-post-no-touch">Макс. без касания, кадров</label><input id="studio-post-no-touch" type="number" min="90" max="900" step="1" value="180" data-default="180"></div>
+                  <div><label class="field-label" for="studio-post-context">Контекст розыгрыша, кадров</label><input id="studio-post-context" type="number" min="0" max="180" step="1" value="45" data-default="45"></div>
+                </div>
+              </details>
+              <p class="analysis-profile-hint">CPU-параметры создают отдельную постобработку для выбранного GPU-анализа. <a href="#" id="studio-analysis-reset" class="analysis-reset-link">↺ Вернуть эталонные настройки</a></p>
+            </section>
+          </div>
+          <div class="analysis-run-toolbar">
+            <div class="analysis-run-actions">
+              <button id="studio-analysis-start" type="button" class="primary">▶ Полный анализ</button>
+            </div>
+            <p id="studio-analysis-profile-delta" class="panel-note">Эталонный профиль активен.</p>
+            <progress id="studio-analysis-progress" max="100" value="0" aria-label="Прогресс полного анализа"></progress>
+            <p id="studio-analysis-note" class="panel-note" role="status" aria-live="polite">Выберите видео и параметры. При совпадении GPU используется существующая версия; CPU-настройки создают отдельную постобработку.</p>
+            <details id="studio-analysis-log-panel" class="analysis-run-log-panel">
+              <summary>Расширенный журнал выполнения <span id="studio-analysis-log-count">0 записей</span></summary>
+              <div class="analysis-run-log-content">
+                <p class="analysis-run-log-info">Фактические вызовы Rust и переданные аргументы показываются отдельно от команд внешних процессов (FFmpeg). История сохраняется для каждого запуска.</p>
+                <div id="studio-analysis-log-current" class="analysis-run-log-current" aria-live="polite">Ожидание запуска</div>
+                <pre id="studio-analysis-log-output" class="analysis-run-log-output" tabindex="0" aria-label="Подробный журнал полного анализа">Пока нет записей.</pre>
+              </div>
+            </details>
+          </div>
+        </section>
+        <section id="studio-players-view" class="hidden tab-workspace" aria-labelledby="studio-players-heading">
+          <p id="studio-players-heading" class="eyebrow">03 / БИБЛИОТЕКА ИГРОКОВ</p>
+          <form id="studio-player-create" class="player-create">
+            <label class="field-label" for="studio-player-name">Новый игрок</label>
+            <div class="inline-input"><input id="studio-player-name" name="name" type="text" placeholder="Имя игрока" minlength="1" maxlength="80" required autocomplete="off"><button class="primary" type="submit">Добавить</button></div>
+          </form>
+          <div class="section-bar"><h2>Библиотека <small id="studio-player-count">—</small></h2><button type="button" id="studio-player-refresh" class="secondary">↻ Обновить</button></div>
+
+          <div id="studio-player-list" class="player-list" aria-live="polite"><div class="empty-state">Загрузка игроков…</div></div>
+          <section id="studio-native-track-panel" class="native-track-panel" aria-labelledby="studio-native-track-title">
+            <p class="eyebrow">04 / НАТИВНЫЙ CPU ТРЕКИНГ</p>
+            <h2 id="studio-native-track-title">Ручная привязка Track ID</h2>
+            <p class="panel-note">ID предварительные. Привязка к игроку выполняется вручную для выбранной CPU-версии. Фото доступно для предпросмотра; ReID-группы требуют проверки, без автоматической идентификации.</p>
+            <div class="track-controls track-controls-header">
+              <div><label class="field-label">Источник из верхней цепочки</label>
+                <p id="studio-track-source" class="panel-note">Выберите анализ и постобработку в шапке.</p></div>
+              <select id="studio-track-video" class="sr-only" tabindex="-1" aria-hidden="true"><option value="">—</option></select>
+              <select id="studio-track-replay" class="sr-only" tabindex="-1" aria-hidden="true"><option value="">—</option></select>
+              <button id="studio-track-refresh" type="button" class="secondary">↻ Обновить данные</button>
+            </div>
+            <p id="studio-track-status" class="panel-note" role="status" aria-live="polite">Выберите проект, видео и версию CPU-трекинга.</p>
+            <div class="track-summary"><strong id="studio-track-total">—</strong><span>Track ID</span><strong id="studio-track-assigned">—</strong><span>Привязано</span><strong id="studio-track-excluded">—</strong><span>Исключено</span></div>
+            <div class="track-actions">
+              <label class="field-label" for="studio-track-player">Игрок из состава проекта</label>
+              <select id="studio-track-player"><option value="">Выберите игрока</option></select>
+              <button id="studio-track-assign" type="button" class="primary" disabled>Привязать</button>
+              <button id="studio-track-unassign" type="button" class="secondary" disabled>Снять привязку</button>
+              <button id="studio-track-exclude" type="button" class="secondary" disabled>Исключить ID</button>
+              <button id="studio-track-restore" type="button" class="secondary" disabled>Восстановить ID</button>
+            </div>
+            <div id="studio-track-list" class="native-track-list" aria-live="polite"><div class="empty-state">Нет выбранной версии Track ID.</div></div>
+            <div class="track-bottom">
+              <span id="studio-track-page">—</span>
+              <button id="studio-track-prev" type="button" class="secondary" disabled>‹ Назад</button>
+              <button id="studio-track-next" type="button" class="secondary" disabled>Далее ›</button>
+            </div>
+            <div id="studio-track-photo" class="track-photo-panel hidden">
+              <h3>Фото Track ID <span id="studio-track-photo-id"></span></h3>
+              <img id="studio-track-photo-img" alt="Кадр с выделенным игроком" loading="lazy">
+              <p>Кадр текущего CPU-трекинга; не сохранённый фотоэталон и не подтверждение личности.</p>
+            </div>
+          </section>
+        </section>
+        <section id="studio-report-view" class="hidden tab-workspace" aria-labelledby="studio-report-heading">
+          <p id="studio-report-heading" class="eyebrow">ОТЧЁТ / СТАТИСТИКА ПРОЕКТА</p>
+          <section id="studio-native-stats-panel" class="native-track-panel" aria-labelledby="studio-native-stats-title">
+            <p class="eyebrow">СТАТИСТИКА / CPU</p>
+            <h2 id="studio-native-stats-title">Касания игроков проекта</h2>
+            <p class="panel-note">Один результат CPU на каждое видео. Касания и розыгрыши предварительные, привязки к игрокам подтверждены вручную. Виды касаний определены приблизительно.</p>
+            <div class="track-actions">
+              <button id="studio-stats-refresh" class="secondary" type="button">↻ Найти обработки</button>
+              <button id="studio-stats-preview" class="secondary" type="button" disabled>Предпросмотр</button>
+              <button id="studio-stats-save" class="primary" type="button" disabled>Пересчитать и сохранить</button>
+            </div>
+            <p id="studio-stats-status" class="panel-note" role="status" aria-live="polite">Выберите проект и найдите CPU-обработки.</p>
+            <div id="studio-stats-sources" class="native-stats-sources" aria-label="Выбранные версии касаний по видео"></div>
+            <div id="studio-stats-summary" class="track-summary hidden" aria-live="polite">
+              <strong id="studio-stats-rallies">—</strong><span>Розыгрышей-кандидатов</span>
+              <strong id="studio-stats-attacks">—</strong><span>Ударов: атаки и подачи, оценка</span>
+              <strong id="studio-stats-total">—</strong><span>Касаний</span>
+              <strong id="studio-stats-mean">—</strong><span>В среднем на игрока</span>
+              <strong id="studio-stats-assigned">—</strong><span>Привязано</span>
+              <strong id="studio-stats-unknown">—</strong><span>Без игрока</span>
+            </div>
+            <div id="studio-stats-players" class="native-stats-players" aria-live="polite"></div>
+            <details id="studio-stats-diagnostics" class="native-stats-diagnostics hidden">
+              <summary>Версии источников и диагностика</summary>
+              <div id="studio-stats-source-details"></div>
+            </details>
+          </section>
+        </section>
+        <footer class="footer">Volleyball Studio — анализ матчей, игроков и видеомонтаж. Исторические данные не изменяются.</footer>
+      </div>
+    </main>
+  </div>
+</body>
+</html>

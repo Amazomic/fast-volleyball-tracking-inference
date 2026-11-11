@@ -1,0 +1,17 @@
+import assert from "node:assert/strict";
+import {readFileSync} from "node:fs";
+import {runInNewContext} from "node:vm";
+import {createHash} from "node:crypto";
+const {instance:{exports:engine}}=await WebAssembly.instantiate(readFileSync(new URL("../../rust/volley-app/static/volley_web.wasm",import.meta.url)),{});
+const window={VolleyballUi:{ready:Promise.resolve(),engine}};
+runInNewContext(readFileSync(new URL("../../rust/volley-app/static/studio_hash.js",import.meta.url),"utf8"),{window,TextDecoder,Uint8Array});
+const bytes=Buffer.alloc(4194321,97),file={size:bytes.length,slice:(a,b)=>({arrayBuffer:async()=>bytes.subarray(a,b)})};
+const progress=[];
+const [a,b]=await Promise.all([window.VolleyballSha256.digest(file,p=>progress.push(p)),window.VolleyballSha256.digest({size:0})]);
+assert.equal(a,createHash("sha256").update(bytes).digest("hex"));
+assert.equal(b,createHash("sha256").digest("hex"));
+assert.equal(progress.at(-1),100);
+let cancelled=false;
+await assert.rejects(window.VolleyballSha256.digest(file,()=>{cancelled=true;},()=>cancelled),/отменено/);
+assert.equal(await window.VolleyballSha256.digest(file),a);
+console.log("PASS: bounded browser file hashing, progress, cancellation, cleanup and concurrent contexts");

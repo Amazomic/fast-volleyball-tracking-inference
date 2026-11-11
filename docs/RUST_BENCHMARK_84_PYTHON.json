@@ -1,0 +1,24 @@
+{
+  "schema": "volley-python-baseline-audit/1",
+  "result_kind": "archived_predictions_not_human_truth",
+  "source_basename": "VID_20261031_190829.mp4",
+  "archived_inference_source_sha256": "421be6ee2356870b8d867d083bbc82539a0f45b15699dba49c1dc5f00a84f077",
+  "archived_events_sha256": "c6afe187290973f66c55cb75cb0846b12a98d6312c33d5b8d617bcb5fcf3327e",
+  "archived_event_receipt_verified": true,
+  "historical_postprocess_events": 21,
+  "event_types": {
+    "rally_start": 1,
+    "attack": 11,
+    "dig": 2,
+    "low_touch": 1,
+    "overhead_pass": 3,
+    "block": 2,
+    "rally_end": 1
+  },
+  "historical_event_stage_seconds": 0.04642867500660941,
+  "event_stage_only_not_end_to_end": true,
+  "distinct_from_rust_montage_source": true,
+  "comparative_quality_available": false,
+  "historical_input_video_not_provided_by_this_audit": true,
+  "caution": "Python predictions are heuristics, not independent labelled truth; source differs from the Rust montage capture and none of these saved timings are full inference throughput."
+}

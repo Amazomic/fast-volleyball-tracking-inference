@@ -1,0 +1,25 @@
+{
+    "schema":  "volley-parity-evidence/1",
+    "asset":  {
+                  "id":  "real-prepared-capture-fa5883350411",
+                  "sha256":  "7194ba7dbda93d66b8abe31440594d22543311c7b466ffe714bd35c416deaa29",
+                  "clip_start_sec":  12,
+                  "clip_end_sec":  18,
+                  "fps":  30
+              },
+    "truth":  null,
+    "runs":  {
+                 "python":  {
+                                "status":  "unavailable",
+                                "reason":  "Saved Python result comes from a DIFFERENT original video; no independent ground truth"
+                            },
+                 "rust":  {
+                              "status":  "blocked",
+                              "reason":  "Linux ONNX CUDA runtime absent; fresh two-model inference unavailable"
+                          }
+             },
+    "external":  {
+                     "cuda_ort_verified":  false,
+                     "docker_verified":  false
+                 }
+}

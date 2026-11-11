@@ -1,0 +1,35 @@
+"use strict";
+((root)=>{
+  let engine=null;
+  const stamp=seconds=>Number.isFinite(Number(seconds))&&Number(seconds)>0?
+    new Date(Number(seconds)*1000).toLocaleString("ru-RU",{
+      day:"2-digit",month:"2-digit",year:"2-digit",hour:"2-digit",minute:"2-digit"
+    }):"";
+  const key=(video,kind,run)=>JSON.stringify([video,kind,run]);
+  const call=(operation,value)=>{
+    if(!engine&&root?.VolleyballUi?.isReady())engine=root.VolleyballUi.engine;
+    if(!engine)throw Error("Rust/WASM module is not ready");
+    const bytes=new TextEncoder().encode(JSON.stringify(value));
+    const ptr=engine.volley_data_reserve(bytes.length);
+    if(!ptr)throw Error("Данные превышают лимит Rust/WASM");
+    new Uint8Array(engine.memory.buffer,ptr,bytes.length).set(bytes);
+    if(engine.volley_domain_call(operation)!==1)throw Error("Rust/WASM отклонил данные");
+    return JSON.parse(new TextDecoder().decode(new Uint8Array(engine.memory.buffer,
+      engine.volley_data_output_ptr(),engine.volley_data_output_len())));
+  };
+  const build=(videos,overviews,runs)=>{
+    const result=call(1,{videos,overviews:Object.fromEntries(overviews||[]),runs});
+    for(const choice of result.choices){
+      const date=stamp(choice.created_at)||choice.id.slice(0,8);
+      const model=choice.model==="ball"?"VballNet":choice.model==="players"?"RAVEL":"GPU";
+      choice.label=choice.video+" · "+(choice.kind==="fusion"?"RAVEL + VballNet · "+date:
+        choice.kind==="gpu"?model+" (не объединён) · "+date:"GPU-источник не установлен");
+    }
+    result.byAnalysis=new Map(Object.entries(result.byAnalysis));
+    result.runToAnalysis=new Map(Object.entries(result.runToAnalysis));
+    return result;
+  };
+  const api={build,key,stamp,call,setRuntime:exports=>{engine=exports;}};
+  if(root)root.VolleyStudioChain=api;
+  if(typeof module==="object"&&module.exports)module.exports=api;
+})(typeof window!=="undefined"?window:null);
