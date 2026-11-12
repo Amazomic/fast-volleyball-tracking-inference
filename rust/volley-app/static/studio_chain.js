@@ -20,10 +20,10 @@
   const build=(videos,overviews,runs)=>{
     const result=call(1,{videos,overviews:Object.fromEntries(overviews||[]),runs});
     for(const choice of result.choices){
-      const date=stamp(choice.created_at)||choice.id.slice(0,8);
-      const model=choice.model==="ball"?"VballNet":choice.model==="players"?"RAVEL":"GPU";
-      choice.label=choice.video+" · "+(choice.kind==="fusion"?"RAVEL + VballNet · "+date:
-        choice.kind==="gpu"?model+" (не объединён) · "+date:"GPU-источник не установлен");
+      const date=stamp(choice.created_at)||"Без даты";
+      choice.label=date+" · "+choice.display_name+
+        (choice.kind==="unlinked"?" · GPU-источник не установлен":
+          choice.kind==="gpu"?" · не объединён":"");
     }
     result.byAnalysis=new Map(Object.entries(result.byAnalysis));
     result.runToAnalysis=new Map(Object.entries(result.runToAnalysis));

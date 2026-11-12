@@ -37,6 +37,10 @@
                                            "handler":  "native_player_tracks::reference_photo"
                                        },
                                        {
+                                           "path":  "/api/players/library/photo",
+                                           "handler":  "native_player_tracks::library_photo"
+                                       },
+                                       {
                                            "path":  "/api/players/native/reid-review",
                                            "handler":  "native_player_tracks::reid_review"
                                        },

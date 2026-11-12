@@ -211,8 +211,7 @@ fn decode_simcc(x: &[f32], y: &[f32], bbox: [f64; 4]) -> Result<[Keypoint; KPT_C
         let py = cy + (iy as f64 / 2.0 / INPUT_HEIGHT as f64 - 0.5) * crop_h;
         let x_norm = (px / IMAGE_WIDTH as f64) as f32;
         let y_norm = (py / IMAGE_HEIGHT as f64) as f32;
-        point.score = if !(0.0..=1.0).contains(&x_norm)
-            || !(0.0..=1.0).contains(&y_norm) {
+        point.score = if !(0.0..=1.0).contains(&x_norm) || !(0.0..=1.0).contains(&y_norm) {
             0.0
         } else {
             sx.min(sy).clamp(0.0, 1.0)

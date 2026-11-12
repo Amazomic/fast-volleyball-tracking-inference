@@ -159,40 +159,64 @@ fn refine_pose_events(
     project_root: &Path,
     fusion_id: &str,
 ) -> Result<(), String> {
-    if events.is_empty() || frames.is_empty() { return Ok(()); }
-    let first=frames[0].frame_index;
-    let last=frames.last().ok_or("Empty pose source frames")?.frame_index;
-    let placeholders=events.iter().map(|event| {
-        let player=event.provisional_track_id.and_then(|id| {
-            let frame=frames.get(event.frame_index.checked_sub(first)? as usize)?;
-            frame.players.iter().find(|player|player.track_id==id).map(|p| {
-                json!({"id":id,"box":p.bbox_xyxy_norm})
-            })
-        });
-        json!({"frame":event.frame_index,"players":player.into_iter().collect::<Vec<_>>()})
-    }).collect::<Vec<Value>>();
-    let mut matches=placeholders;
-    if !native_preview_pose::enrich(project_root,fusion_id,first,last+1,&mut matches)? {
+    if events.is_empty() || frames.is_empty() {
         return Ok(());
     }
-    for (event,frame) in events.iter_mut().zip(matches) {
-        let Some(geometry)=event.action_prediction.as_ref() else{continue};
-        let Some(point)=frame["players"].as_array().and_then(|players|players.first()) else{continue};
-        let Some(pose)=point.get("pose") else{continue};
-        let Ok(keypoints)=serde_json::from_value::<[[f64;3];17]>(pose.clone()) else{continue};
-        let Some(id)=event.provisional_track_id else{continue};
-        let Some(source)=frames.get(event.frame_index.saturating_sub(first) as usize) else{continue};
-        let Some(player)=source.players.iter().find(|p|p.track_id==id) else{continue};
-        let evidence=PoseEvidence {
-            keypoints,
-            ball_x_norm:event.ball_x_px/video_width as f64,
-            ball_y_norm:event.ball_y_px/video_height as f64,
-            video_width:video_width as f64,
-            video_height:video_height as f64,
-            player_bbox_norm:player.bbox_xyxy_norm,
+    let first = frames[0].frame_index;
+    let last = frames.last().ok_or("Empty pose source frames")?.frame_index;
+    let placeholders = events
+        .iter()
+        .map(|event| {
+            let player = event.provisional_track_id.and_then(|id| {
+                let frame = frames.get(event.frame_index.checked_sub(first)? as usize)?;
+                frame
+                    .players
+                    .iter()
+                    .find(|player| player.track_id == id)
+                    .map(|p| json!({"id":id,"box":p.bbox_xyxy_norm}))
+            });
+            json!({"frame":event.frame_index,"players":player.into_iter().collect::<Vec<_>>()})
+        })
+        .collect::<Vec<Value>>();
+    let mut matches = placeholders;
+    if !native_preview_pose::enrich(project_root, fusion_id, first, last + 1, &mut matches)? {
+        return Ok(());
+    }
+    for (event, frame) in events.iter_mut().zip(matches) {
+        let Some(geometry) = event.action_prediction.as_ref() else {
+            continue;
         };
-        if let Some(refined)=pose_classification::refine(&evidence,geometry) {
-            event.action_prediction=Some(refined);
+        let Some(point) = frame["players"]
+            .as_array()
+            .and_then(|players| players.first())
+        else {
+            continue;
+        };
+        let Some(pose) = point.get("pose") else {
+            continue;
+        };
+        let Ok(keypoints) = serde_json::from_value::<[[f64; 3]; 17]>(pose.clone()) else {
+            continue;
+        };
+        let Some(id) = event.provisional_track_id else {
+            continue;
+        };
+        let Some(source) = frames.get(event.frame_index.saturating_sub(first) as usize) else {
+            continue;
+        };
+        let Some(player) = source.players.iter().find(|p| p.track_id == id) else {
+            continue;
+        };
+        let evidence = PoseEvidence {
+            keypoints,
+            ball_x_norm: event.ball_x_px / video_width as f64,
+            ball_y_norm: event.ball_y_px / video_height as f64,
+            video_width: video_width as f64,
+            video_height: video_height as f64,
+            player_bbox_norm: player.bbox_xyxy_norm,
+        };
+        if let Some(refined) = pose_classification::refine(&evidence, geometry) {
+            event.action_prediction = Some(refined);
         }
     }
     Ok(())
@@ -212,7 +236,16 @@ pub(crate) fn detect_stream(
     height: u32,
     settings: TouchSettings,
 ) -> Result<(String, u64, u64), String> {
-    detect_stream_with_pose(source,output,expected_sha,count,width,height,settings,None)
+    detect_stream_with_pose(
+        source,
+        output,
+        expected_sha,
+        count,
+        width,
+        height,
+        settings,
+        None,
+    )
 }
 
 #[expect(clippy::too_many_arguments)]
@@ -271,7 +304,7 @@ fn detect_stream_with_pose(
                 .cloned()
                 .collect::<Vec<_>>();
             let mut events = evaluate_block(&block, width, height, start, end, settings)?;
-            if let Some((root,fusion))=pose_source {
+            if let Some((root, fusion)) = pose_source {
                 refine_pose_events(&mut events, &block, width, height, root, fusion)?;
             }
             for event in events {
@@ -427,9 +460,10 @@ pub(crate) fn process(state: &AppState, req: &TouchRequest) -> Result<Value, Api
         .to_owned();
     let source = safe_file(&replay_dir, "tracked_frames.jsonl", MAX_INPUT_BYTES)
         .map_err(storage::bad_request)?;
-    let fusion_id = manifest["source_fusion_id"].as_str()
-        .filter(|id|opaque_id(id)).ok_or_else(||
-            storage::bad_request("Touch replay has no valid GPU fusion lineage"))?
+    let fusion_id = manifest["source_fusion_id"]
+        .as_str()
+        .filter(|id| opaque_id(id))
+        .ok_or_else(|| storage::bad_request("Touch replay has no valid GPU fusion lineage"))?
         .to_owned();
     let output_root = project_dir.join("native_cpu_touch_runs");
     match fs::symlink_metadata(&output_root) {
@@ -459,7 +493,8 @@ pub(crate) fn process(state: &AppState, req: &TouchRequest) -> Result<Value, Api
             dimensions.width,
             dimensions.height,
             settings,
-            req.pose_classification.then_some((project_dir.as_path(), fusion_id.as_str())),
+            req.pose_classification
+                .then_some((project_dir.as_path(), fusion_id.as_str())),
         )?;
         if inference_stream::source_stamp(prepared)? != (size, mtime) {
             return Err("Prepared source changed during CPU Touch replay".into());
@@ -556,63 +591,103 @@ mod tests {
     #[test]
     fn saved_pose_refines_motion_touch_without_rerunning_gpu() {
         use volley_core::action_prediction::{ActionKind, ActionPrediction, PredictionMethod};
-        let root=std::env::temp_dir().join(format!("touch-pose-{}", Uuid::new_v4()));
-        let fusion="a".repeat(32);
-        let pose_id="b".repeat(32);
-        let fusion_dir=root.join("native_gpu_fusions").join(&fusion);
-        let pose_dir=root.join("native_gpu_pose_runs").join(&pose_id);
+        let root = std::env::temp_dir().join(format!("touch-pose-{}", Uuid::new_v4()));
+        let fusion = "a".repeat(32);
+        let pose_id = "b".repeat(32);
+        let fusion_dir = root.join("native_gpu_fusions").join(&fusion);
+        let pose_dir = root.join("native_gpu_pose_runs").join(&pose_id);
         fs::create_dir_all(&fusion_dir).unwrap();
         fs::create_dir_all(&pose_dir).unwrap();
-        let source_sha="e".repeat(64);
-        let identity=json!({"bytes":1234,"mtime_ns":4321});
-        fs::write(fusion_dir.join("manifest.json"),serde_json::to_vec(&json!({
-            "schema":"volley-native-gpu-fusion/1","fusion_id":fusion,
-            "project_id":"abc123def456","video":"video.mp4","sha256":source_sha,
-            "source_identity":identity,
-        })).unwrap()).unwrap();
-        let mut points=[[0.5,0.5,0.0];17];
-        points[5]=[0.43,0.44,0.95];points[6]=[0.57,0.44,0.95];
-        points[7]=[0.41,0.31,0.96];points[8]=[0.59,0.31,0.96];
-        points[9]=[0.49,0.22,0.96];points[10]=[0.52,0.22,0.96];
-        let row=format!("{}\n",serde_json::to_string(&json!({"frame":30,
-            "players":[{"box":[0.35,0.17,0.65,0.90],"keypoints":points}]})).unwrap());
-        fs::write(pose_dir.join("poses.jsonl"),&row).unwrap();
-        let digest=format!("{:x}",Sha256::digest(row.as_bytes()));
-        fs::write(pose_dir.join("manifest.json"),serde_json::to_vec(&json!({
-            "schema":"volley-native-gpu-pose/1","state":"pose_evidence_complete",
-            "pose_run_id":pose_id,"fusion_id":fusion,"project_id":"abc123def456",
-            "video":"video.mp4","model_sha256":volley_inference::pose::MODEL_SHA256,
-            "source_fusion_sha256":source_sha,"source_identity":identity,
-            "file":"poses.jsonl","sha256":digest,"stride":6
-        })).unwrap()).unwrap();
-        let tracked=TouchFrame{
-            frame_index:31,
-            players:vec![TouchPlayer{
-                track_id:8,score:0.90,touch_probability:Some(0.94),
-                bbox_xyxy_norm:[0.35,0.17,0.65,0.90],
+        let source_sha = "e".repeat(64);
+        let identity = json!({"bytes":1234,"mtime_ns":4321});
+        fs::write(
+            fusion_dir.join("manifest.json"),
+            serde_json::to_vec(&json!({
+                "schema":"volley-native-gpu-fusion/1","fusion_id":fusion,
+                "project_id":"abc123def456","video":"video.mp4","sha256":source_sha,
+                "source_identity":identity,
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let mut points = [[0.5, 0.5, 0.0]; 17];
+        points[5] = [0.43, 0.44, 0.95];
+        points[6] = [0.57, 0.44, 0.95];
+        points[7] = [0.41, 0.31, 0.96];
+        points[8] = [0.59, 0.31, 0.96];
+        points[9] = [0.49, 0.22, 0.96];
+        points[10] = [0.52, 0.22, 0.96];
+        let row = format!(
+            "{}\n",
+            serde_json::to_string(&json!({"frame":30,
+            "players":[{"box":[0.35,0.17,0.65,0.90],"keypoints":points}]}))
+            .unwrap()
+        );
+        fs::write(pose_dir.join("poses.jsonl"), &row).unwrap();
+        let digest = format!("{:x}", Sha256::digest(row.as_bytes()));
+        fs::write(
+            pose_dir.join("manifest.json"),
+            serde_json::to_vec(&json!({
+                "schema":"volley-native-gpu-pose/1","state":"pose_evidence_complete",
+                "pose_run_id":pose_id,"fusion_id":fusion,"project_id":"abc123def456",
+                "video":"video.mp4","model_sha256":volley_inference::pose::MODEL_SHA256,
+                "source_fusion_sha256":source_sha,"source_identity":identity,
+                "file":"poses.jsonl","sha256":digest,"stride":6
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let tracked = TouchFrame {
+            frame_index: 31,
+            players: vec![TouchPlayer {
+                track_id: 8,
+                score: 0.90,
+                touch_probability: Some(0.94),
+                bbox_xyxy_norm: [0.35, 0.17, 0.65, 0.90],
             }],
-            selected_ball:None,
+            selected_ball: None,
         };
-        let mut events=vec![PhysicalTouchCandidate{
-            frame_index:31,provisional_track_id:Some(8),probability:0.94,
-            ball_x_px:320.0,ball_y_px:72.0,motion_frame_index:31,
-            direction_change_deg:80.0,speed_before_px_frame:7.0,
-            speed_after_px_frame:13.0,velocity_residual_px_frame:12.0,
-            technique:"unknown_touch",action_prediction:Some(ActionPrediction{
-                kind:ActionKind::Attack,evidence_score:0.87,
-                method:PredictionMethod::ContactGeometryV1,
-                depth_ratio:-0.1,posture_ratio:0.4,
-            }),physical_motion_supported:true,athlete_identity_verified:false,
+        let mut events = vec![PhysicalTouchCandidate {
+            frame_index: 31,
+            provisional_track_id: Some(8),
+            probability: 0.94,
+            ball_x_px: 320.0,
+            ball_y_px: 72.0,
+            motion_frame_index: 31,
+            direction_change_deg: 80.0,
+            speed_before_px_frame: 7.0,
+            speed_after_px_frame: 13.0,
+            velocity_residual_px_frame: 12.0,
+            technique: "unknown_touch",
+            action_prediction: Some(ActionPrediction {
+                kind: ActionKind::Attack,
+                evidence_score: 0.87,
+                method: PredictionMethod::ContactGeometryV1,
+                depth_ratio: -0.1,
+                posture_ratio: 0.4,
+            }),
+            physical_motion_supported: true,
+            athlete_identity_verified: false,
         }];
-        refine_pose_events(&mut events,std::slice::from_ref(&tracked),640,360,&root,&fusion).unwrap();
-        let changed=events[0].action_prediction.as_ref().unwrap();
-        assert_eq!(changed.kind,ActionKind::OverheadPass);
-        assert_eq!(changed.method,PredictionMethod::PoseKeypointsV1);
+        refine_pose_events(
+            &mut events,
+            std::slice::from_ref(&tracked),
+            640,
+            360,
+            &root,
+            &fusion,
+        )
+        .unwrap();
+        let changed = events[0].action_prediction.as_ref().unwrap();
+        assert_eq!(changed.kind, ActionKind::OverheadPass);
+        assert_eq!(changed.method, PredictionMethod::PoseKeypointsV1);
         // A different fusion cannot borrow the saved pose from this one.
-        refine_pose_events(&mut events,&[tracked],640,360,&root,&"c".repeat(32)).unwrap();
-        assert_eq!(events[0].action_prediction.as_ref().unwrap().method,
-            PredictionMethod::PoseKeypointsV1);
-        let _=fs::remove_dir_all(root);
+        refine_pose_events(&mut events, &[tracked], 640, 360, &root, &"c".repeat(32)).unwrap();
+        assert_eq!(
+            events[0].action_prediction.as_ref().unwrap().method,
+            PredictionMethod::PoseKeypointsV1
+        );
+        let _ = fs::remove_dir_all(root);
     }
 
     fn sample_frames(curve: bool, impact: u64) -> (Vec<u8>, String) {

@@ -14,7 +14,7 @@ const overview=(video,fusion,replay,gpu)=>({
   schema:"volley-native-analysis-overview/1",video,metadata_only:true,
   stages:[
     {key:"gpu",items:gpu||[]},
-    {key:"fusion",items:fusion.map(id=>({id,
+    {key:"fusion",items:fusion.map(id=>({id,created_at:1700000000,
       ravel_job_id:id===i(1)?i(7):null,
       vball_job_id:id===i(1)?i(8):null}))},
     {key:"tracking",items:replay.map(([id,source_fusion_id])=>({id,source_fusion_id}))},
@@ -35,6 +35,10 @@ const result=chain.build([videoA,videoB],overviews,runs);
 const a1=chain.key(videoA,"fusion",i(1));
 const a2=chain.key(videoA,"fusion",i(2));
 const b1=chain.key(videoB,"fusion",i(5));
+const named=result.choices.find(item=>item.value===a1);
+assert.match(named.label,/^\d{2}\.\d{2}\.\d{2},? \d{2}:\d{2} · \S+ \S+$/u);
+assert.equal(named.id,i(1));
+assert.equal(chain.build([videoA,videoB],overviews,runs).choices.find(item=>item.value===a1).label,named.label);
 assert.deepEqual(result.byAnalysis.get(a1).map(r=>r.rally_run_id),[i(9)]);
 assert.deepEqual(result.byAnalysis.get(a2).map(r=>r.rally_run_id),[i(10)]);
 assert.deepEqual(result.byAnalysis.get(b1).map(r=>r.rally_run_id),[i(11)]);

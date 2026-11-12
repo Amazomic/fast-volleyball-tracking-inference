@@ -78,7 +78,10 @@ impl ActionPrediction {
             && (-2.0..=3.0).contains(&self.depth_ratio)
             && self.posture_ratio.is_finite()
             && (0.0..=4.0).contains(&self.posture_ratio)
-            && matches!(self.method, PredictionMethod::ContactGeometryV1 | PredictionMethod::PoseKeypointsV1)
+            && matches!(
+                self.method,
+                PredictionMethod::ContactGeometryV1 | PredictionMethod::PoseKeypointsV1
+            )
     }
 }
 

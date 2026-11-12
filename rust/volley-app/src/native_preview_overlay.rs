@@ -386,10 +386,13 @@ pub async fn get(
     let start = query.start_frame;
     let preview_run = run.clone();
     let fusion_for_pose = if query.pose.unwrap_or(false) {
-        Some(manifest["source_fusion_id"].as_str()
-            .filter(|id| volley_core::contracts::job_id(id))
-            .ok_or_else(|| storage::bad_request("CPU replay has no valid GPU fusion for pose"))?
-            .to_owned())
+        Some(
+            manifest["source_fusion_id"]
+                .as_str()
+                .filter(|id| volley_core::contracts::job_id(id))
+                .ok_or_else(|| storage::bad_request("CPU replay has no valid GPU fusion for pose"))?
+                .to_owned(),
+        )
     } else {
         None
     };
@@ -397,7 +400,7 @@ pub async fn get(
     let (frames, poses_available) = tokio::task::spawn_blocking(move || {
         let windows = native_rally_preview::verified_track_windows(&preview_run)
             .map_err(|e| format!("Unverified rally scope: {e}"))?;
-        let mut frames=extract_frames(
+        let mut frames = extract_frames(
             &replay_path,
             &replay_sha,
             total,
@@ -411,7 +414,7 @@ pub async fn get(
         } else {
             false
         };
-        Ok::<_,String>((frames, poses_available))
+        Ok::<_, String>((frames, poses_available))
     })
     .await
     .map_err(|e| storage::internal(format!("Overlay task failure: {e}")))?

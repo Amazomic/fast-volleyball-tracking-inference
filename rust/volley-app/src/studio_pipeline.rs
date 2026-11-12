@@ -192,10 +192,10 @@ fn default_pose_classification() -> bool {
 impl Default for PostProfile {
     fn default() -> Self {
         Self {
-            tracking:TrackingOptions::default(),
-            touches:TouchSettings::default(),
-            rallies:RallySettings::default(),
-            pose_classification:true,
+            tracking: TrackingOptions::default(),
+            touches: TouchSettings::default(),
+            rallies: RallySettings::default(),
+            pose_classification: true,
         }
     }
 }
@@ -413,7 +413,8 @@ fn gpu_lineage_valid(
         let Some(pose_id) = saved["gpu_jobs"]["pose"].as_str().filter(|id| valid_id(id)) else {
             return false;
         };
-        let Some(pose) = saved_stage(project, "native_gpu_pose_runs", pose_id, "poses.jsonl") else {
+        let Some(pose) = saved_stage(project, "native_gpu_pose_runs", pose_id, "poses.jsonl")
+        else {
             return false;
         };
         if pose["schema"] != "volley-native-gpu-pose/1"
@@ -1016,36 +1017,58 @@ async fn pipeline(
 
     // RTMPose is a separate GPU evidence stage. It uses the immutable fusion
     // source, never Track IDs, and is intentionally never executed in Post mode.
-    if request.mode.allows_gpu_execution() && request.gpu.pose_enabled
-        && status["gpu_jobs"]["pose"].as_str().is_none() {
-            if cancel.load(Ordering::Acquire) {
-                return Err("cancelled".into());
-            }
-            let fusion_id = require_id(status, "analysis_id")?;
-            progress(path, status, "GPU · RTMPose-M: позы игроков", 82.0)?;
-            log_native(
-                path,
-                "GPU · RTMPose-M",
-                "pose_inference::process",
-                json!({"fusion_id":fusion_id,"model":"RTMPose-M-Body7","stride":request.gpu.pose_stride,
+    if request.mode.allows_gpu_execution()
+        && request.gpu.pose_enabled
+        && status["gpu_jobs"]["pose"].as_str().is_none()
+    {
+        if cancel.load(Ordering::Acquire) {
+            return Err("cancelled".into());
+        }
+        let fusion_id = require_id(status, "analysis_id")?;
+        progress(path, status, "GPU · RTMPose-M: позы игроков", 82.0)?;
+        log_native(
+            path,
+            "GPU · RTMPose-M",
+            "pose_inference::process",
+            json!({"fusion_id":fusion_id,"model":"RTMPose-M-Body7","stride":request.gpu.pose_stride,
                     "threads":request.gpu.cpu_threads,"gpu_memory_limit_mb":request.gpu.gpu_memory_limit_mb}),
-            )?;
-            let _permit = app.inference_limit.acquire().await
-                .map_err(|e| format!("RTMPose inference limit: {e}"))?;
-            let pose = tokio::task::block_in_place(|| {
-                crate::pose_inference::process(
-                    app, &request.project_id, &request.video, &fusion_id,
-                    request.gpu.pose_stride, request.gpu.gpu_memory_limit_mb,
-                    request.gpu.cpu_threads, cancel, |p| {
-                        progress(path, status, "GPU · RTMPose-M: позы игроков", 82.0 + p*2.5)
-                    },
-                )
-            })?;
-            status["gpu_jobs"]["pose"] = pose["pose_run_id"].clone();
-            save(path,status)?;
-            log_event(path,"GPU · RTMPose-M","success",
-                &format!("Позы сохранены: samples={}, players={}",
-                    pose["sampled_frames"],pose["player_poses"]))?;
+        )?;
+        let _permit = app
+            .inference_limit
+            .acquire()
+            .await
+            .map_err(|e| format!("RTMPose inference limit: {e}"))?;
+        let pose = tokio::task::block_in_place(|| {
+            crate::pose_inference::process(
+                app,
+                &request.project_id,
+                &request.video,
+                &fusion_id,
+                request.gpu.pose_stride,
+                request.gpu.gpu_memory_limit_mb,
+                request.gpu.cpu_threads,
+                cancel,
+                |p| {
+                    progress(
+                        path,
+                        status,
+                        "GPU · RTMPose-M: позы игроков",
+                        82.0 + p * 2.5,
+                    )
+                },
+            )
+        })?;
+        status["gpu_jobs"]["pose"] = pose["pose_run_id"].clone();
+        save(path, status)?;
+        log_event(
+            path,
+            "GPU · RTMPose-M",
+            "success",
+            &format!(
+                "Позы сохранены: samples={}, players={}",
+                pose["sampled_frames"], pose["player_poses"]
+            ),
+        )?;
     }
     if request.mode == PipelineMode::Gpu {
         progress(path, status, "Первичный GPU-анализ завершён", 99.9)?;

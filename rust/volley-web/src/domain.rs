@@ -54,7 +54,49 @@ fn add(
 ) -> String {
     let value = json!([video, kind, row["id"]]).to_string();
     if !by.contains_key(&value) {
-        choices.push(json!({"value":value,"video":video,"kind":kind,"id":row["id"],"model":row["model"],"created_at":row["created_at"]}));
+        let digest = Sha256::digest(value.as_bytes());
+        let first = [
+            "Быстрый",
+            "Тихий",
+            "Яркий",
+            "Смелый",
+            "Лёгкий",
+            "Лунный",
+            "Вольный",
+            "Верный",
+            "Зоркий",
+            "Горный",
+            "Синий",
+            "Ранний",
+            "Тёплый",
+            "Свежий",
+            "Дальний",
+            "Светлый",
+        ];
+        let second = [
+            "сокол",
+            "ветер",
+            "мяч",
+            "тигр",
+            "луч",
+            "кедр",
+            "орёл",
+            "парус",
+            "берег",
+            "ястреб",
+            "ручей",
+            "маяк",
+            "океан",
+            "гром",
+            "атлас",
+            "космос",
+        ];
+        let display_name = format!(
+            "{} {}",
+            first[digest[0] as usize % first.len()],
+            second[digest[1] as usize % second.len()]
+        );
+        choices.push(json!({"value":value,"video":video,"kind":kind,"id":row["id"],"model":row["model"],"created_at":row["created_at"],"display_name":display_name}));
         by.insert(value.clone(), Vec::new());
     }
     value
@@ -133,6 +175,31 @@ fn chain(input: &Value) -> Value {
         }
     }
     json!({"choices":choices,"byAnalysis":by,"runToAnalysis":run_to})
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn analysis_choice_has_stable_two_word_display_name_and_keeps_full_id() {
+        let input = json!({"videos":["match.mp4"],"overviews":{"match.mp4":{"stages":[
+            {"key":"fusion","items":[{"id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","created_at":1700000000}]}
+        ]}},"runs":[]});
+        let result = chain(&input);
+        let choice = &result["choices"][0];
+        let name = choice["display_name"].as_str().unwrap();
+        assert_eq!(name.split_whitespace().count(), 2);
+        assert_eq!(choice["id"], "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+        assert_eq!(
+            choice["value"],
+            "[\"match.mp4\",\"fusion\",\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"]"
+        );
+        assert_eq!(
+            choice["display_name"],
+            chain(&input)["choices"][0]["display_name"]
+        );
+    }
 }
 fn montage(input: &Value) -> Value {
     let mut rows: Vec<_> = input.as_array().into_iter().flatten().collect();
