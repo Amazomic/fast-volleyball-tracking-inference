@@ -84,3 +84,56 @@ Tests:
 Regression scenarios: valid four-corner calibration, changed calibration,
 missing calibration, off-court spectator, overhead block near net, serve
 preparation and a faster outgoing ball, strict source-lineage validation.
+
+## Stage 2: provisional rally-contact context (2026-11-12)
+
+Implemented as an independent CPU-only substep after saved Touch proposals
+are replayed and SHA-256 verified. Neither VballNet, RAVEL nor RTMPose
+needs to run again.
+
+- rust/volley-core/src/rally_contact_context.rs: deterministic Safe Rust
+  translation of Python player_contacts._merge_serve_toss,
+  _settle_serve and RallyContactStateMachine._advance.
+- rust/volley-app/src/cpu_rallies/court_history.rs: bounded replay history
+  (up to 10 minutes at 30 FPS, maximum 512 contextual Touch candidates).
+- rust/volley-app/src/cpu_rallies.rs: apply the model only within the
+  accepted rally start/end; consume same-frame Track IDs and the selected ball.
+- rust/volley-app/src/native_rally_preview.rs: cards and overall timeline
+  consume the saved rally context; reject references to foreign-frame IDs.
+- rust/volley-app/static/studio.js: display contextual provisional types.
+- rust/volley-app/src/studio_pipeline.rs: existing CPU results without the
+  updated context version are not silently reused as current results.
+
+The original Touch JSONL is never modified. Both the initial toss and
+subsequent strike remain in the forensic source; the context marks the
+toss as a non-gameplay touch and selects the strongest observed impact
+within Python's two-second server-repeat window.
+
+A toss requires an observed ball apex at least four ball radii above both
+contacts, within 2.5 seconds, made by the same observed provisional Track
+ID in the serve zone with outgoing speed gain at least 1.2. To reject a
+one-frame wrong-ball glitch, three flight samples are required and the
+second-highest observed ball position is used, instead of Python's single
+minimum.
+
+For each accepted rally, the model stores provisional serving side,
+reception phase, consecutive touches per side, third/fourth-touch runs
+and side switches. These are diagnostic hypotheses, never proof of a
+rules violation, scored point, confirmed identity or authoritative action.
+
+Output additions:
+- rally_candidates.jsonl: court_contact_context, estimated_gameplay_contacts
+- rally manifest: court_contact_context_version
+- preview cards: raw_motion_event_count, motion_event_count,
+  ignored_serve_toss_count
+- timeline: raw_touch_candidates; touch_frames excludes only the
+  contextual tosses from accepted rallies with court evidence.
+
+Remaining parity work:
+1. Player alternatives ranked by ball-size perspective, reach and
+   source-frame evidence, then disambiguated with receiver/possession context.
+2. Confidence- and radius-weighted stable ball-side voting, avoiding
+   unreliable planar projection of airborne balls.
+3. Rally starts, serving player origins and stable team sides over
+   long occlusions / set-side switches.
+4. Differential checks on human-reviewed matches versus Python outputs.

@@ -1095,7 +1095,7 @@
       overhead_pass:"Передача сверху",dig:"Приём снизу",low_touch:"Нижнее касание"};
     for(const evidence of (Array.isArray(item.motion_events)?item.motion_events:[]).slice(0,14)){
       const prediction=evidence.action_prediction;
-      const kind=prediction&&techniqueNames[prediction.kind];
+      const kind=techniqueNames[evidence.rally_context ? evidence.rally_context.estimated_kind : prediction?.kind];
       const label=kind?"≈ "+kind+" · эвристика":"Тип не определён";
       const pill=make("span","event-pill",clock(evidence.frame_index)+" · "+label);
       pill.title=kind?"Автоматический прогноз, не подтверждён человеком":
@@ -1183,7 +1183,7 @@
       favorite.disabled=!s.writable||s.busy;
       favorite.addEventListener("click",e=>{e.stopPropagation();toggleGold(id);});
       const predictions=(Array.isArray(item.motion_events)?item.motion_events:[])
-        .map(event=>event.action_prediction?.kind).filter(kind=>typeof kind==="string");
+        .map(event=>event.rally_context ? event.rally_context.estimated_kind : event.action_prediction?.kind).filter(kind=>typeof kind==="string");
       if(predictions.length)card.title="Автоклассификация (предварительная): "+
         [...new Set(predictions)].map(kind=>kind.replaceAll("_"," ")).join(", ");
       const foot=make("div","rally-card-foot");

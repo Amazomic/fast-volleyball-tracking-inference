@@ -490,6 +490,7 @@ fn cpu_lineage_valid(project: &Path, request: &StartRequest, saved: &Value) -> b
         && touches["court_revision"] == saved["court_revision"]
         && rallies["schema"] == "volley-native-cpu-rally-proposals/1"
         && rallies["state"] == "provisional_rally_segments"
+        && rallies["court_contact_context_version"] == "python_serve_toss_possession_v1"
         && rallies["rally_run_id"] == rally
         && rallies["source_replay_id"] == replay
         && rallies["source_touch_id"] == touch
@@ -1654,6 +1655,7 @@ mod branching_tests {
             "rally_candidates.jsonl",
             &json!({
                 "schema":"volley-native-cpu-rally-proposals/1","state":"provisional_rally_segments","rally_run_id":rally,
+                "court_contact_context_version":"python_serve_toss_possession_v1",
                 "project_id":request.project_id,"video":request.video,
                 "source_replay_id":replay,"source_touch_id":touch,"sha256":sha
             }),

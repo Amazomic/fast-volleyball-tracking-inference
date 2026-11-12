@@ -1,6 +1,7 @@
 //! Native CPU provisional rally reconstruction over immutable, SHA-256
 //! verified player-track and motion-supported Touch replay snapshots.
 //! This does NOT certify rallies, serve/attack techniques, or player identity.
+mod court_history;
 use crate::{
     cpu_retrack::{opaque_id, safe_file, safe_folder, BoundedReader},
     inference_stream, preparation, project_guard, projects,
@@ -12,6 +13,7 @@ use axum::{
     http::HeaderMap,
     Json,
 };
+use court_history::CourtHistory;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -25,6 +27,7 @@ use uuid::Uuid;
 use volley_core::{
     action_prediction::ActionPrediction,
     fusion::Candidate,
+    rally_contact_context::{BallSample as CourtBallSample, ContactEvidence},
     rally_reconstruction::{
         BallFrame, ContactFrame, RallyProposal, RallySegmenter, RallySettings, RallyTotals,
     },
@@ -170,12 +173,18 @@ fn write_proposal(
     writer: &mut BufWriter<File>,
     out_hash: &mut Sha256,
     proposal: RallyProposal,
+    history: &CourtHistory,
     replay_id: &str,
     touch_id: &str,
     counters: &mut OutputCounters,
 ) -> Result<(), String> {
     let mut value =
         serde_json::to_value(&proposal).map_err(|e| format!("Serialize rally candidate: {e}"))?;
+    if let Some(context) = history.for_rally(&proposal) {
+        value["estimated_gameplay_contacts"] =
+            json!(context.events.len() as u64 - context.ignored_serve_toss_count as u64);
+        value["court_contact_context"] = json!(context);
+    }
     let key = format!(
         "{replay_id}:{touch_id}:{}:{}",
         proposal.detected_start_frame, proposal.detected_end_frame
@@ -228,6 +237,7 @@ fn rebuild_from_snapshots(
     let mut digest = Sha256::new();
     let mut totals = OutputCounters::default();
     let mut segmenter = RallySegmenter::new(settings, width, height)?;
+    let mut history = CourtHistory::default();
     let mut next = next_contact(&mut touches)?;
     let mut previous_contact: Option<u64> = None;
     for frame_index in 0..frames {
@@ -257,6 +267,12 @@ fn rebuild_from_snapshots(
                 ball.detection
                     .validate(frame_index - frame_index % 9, model)?;
                 let [left, top, right, bottom] = ball.detection.bbox_xyxy_norm;
+                history.push_ball(CourtBallSample {
+                    frame: frame_index,
+                    y_px: (top + bottom) * 0.5 * height as f64,
+                    radius_px: ((right - left) * width as f64 + (bottom - top) * height as f64)
+                        * 0.25,
+                });
                 Some(BallFrame {
                     x_px: (left + right) * 0.5 * width as f64,
                     y_px: (top + bottom) * 0.5 * height as f64,
@@ -304,6 +320,20 @@ fn rebuild_from_snapshots(
             }
             previous_contact = Some(item.frame_index);
             totals.ingested_touch_candidates += 1;
+            history.push_touch(ContactEvidence {
+                frame: item.frame_index,
+                track_id: item.provisional_track_id,
+                side: item.court.map(|court| court.side),
+                in_serve_zone: item.court.is_some_and(|court| court.in_serve_zone),
+                kind: item
+                    .action_prediction
+                    .as_ref()
+                    .map(|prediction| prediction.kind),
+                ball_y_px: item.ball_y_px,
+                speed_before_px_frame: item.speed_before_px_frame,
+                speed_after_px_frame: item.speed_after_px_frame,
+                velocity_residual_px_frame: item.velocity_residual_px_frame,
+            });
             events.push(ContactFrame {
                 probability: item.probability,
                 provisional_track_id: item.provisional_track_id,
@@ -318,11 +348,13 @@ fn rebuild_from_snapshots(
                 &mut writer,
                 &mut digest,
                 proposal,
+                &history,
                 replay_id,
                 touch_id,
                 &mut totals,
             )?;
         }
+        history.trim(frame_index);
     }
     if next.is_some() || inputs.line()?.is_some() || touches.line()?.is_some() {
         return Err("Native rally inputs contain undeclared frames or contacts".into());
@@ -338,6 +370,7 @@ fn rebuild_from_snapshots(
             &mut writer,
             &mut digest,
             proposal,
+            &history,
             replay_id,
             touch_id,
             &mut totals,
@@ -516,6 +549,7 @@ pub(crate) fn process(state: &AppState, request: &RallyRequest) -> Result<Value,
             "settings":settings,
             "court_revision":contacts["court_revision"],
             "court_context_enabled":contacts["court_context_enabled"],
+            "court_contact_context_version":"python_serve_toss_possession_v1",
             "touch_candidates_ingested":output.ingested_touch_candidates,
             "physical_touch_player_gate":"same_frame_verified_cpu_track",
             "physical_touch_ball_gate":"same_frame_selected_ball",

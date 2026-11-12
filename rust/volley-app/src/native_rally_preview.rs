@@ -20,7 +20,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use volley_core::action_prediction::ActionPrediction;
+use volley_core::action_prediction::{ActionKind, ActionPrediction};
 use volley_core::event_evidence::{
     bounded_clips, interpret_motion, verify_rally_interval, Interval, MotionInput,
 };
@@ -59,6 +59,17 @@ fn default_limit() -> usize {
 }
 
 #[derive(Debug, Deserialize)]
+struct CourtTimelineContext {
+    events: Vec<CourtTimelineEvent>,
+}
+#[derive(Debug, Deserialize)]
+struct CourtTimelineEvent {
+    frame_index: u64,
+    provisional_track_id: Option<u64>,
+    estimated_kind: Option<ActionKind>,
+    ignored_serve_toss: bool,
+}
+#[derive(Debug, Deserialize)]
 struct NativeRally {
     candidate_id: String,
     detected_start_frame: u64,
@@ -73,6 +84,8 @@ struct NativeRally {
     authoritative_rally: bool,
     athlete_identities_verified: bool,
     serve_verified: bool,
+    #[serde(default)]
+    court_contact_context: Option<CourtTimelineContext>,
     reviewed: bool,
 }
 
@@ -408,6 +421,7 @@ fn generate(run: &ValidatedRun, choice: Choice) -> Result<PreviewContent, String
         ),
     };
     let mut timeline_rallies = Vec::<Value>::new();
+    let mut timeline_contexts = HashMap::<u64, (Option<u64>, bool, Option<ActionKind>)>::new();
     let mut reader = BoundedReader::open(&run.rally_file)?;
     let mut records = Vec::<Value>::with_capacity(limit);
     let mut intervals = Vec::<Interval>::new();
@@ -459,6 +473,24 @@ fn generate(run: &ValidatedRun, choice: Choice) -> Result<PreviewContent, String
         let index = intervals.len();
         intervals.push(Interval { start, end });
         if timeline {
+            if let Some(ref context) = item.court_contact_context {
+                for touch in &context.events {
+                    if !(start..=end).contains(&touch.frame_index)
+                        || timeline_contexts
+                            .insert(
+                                touch.frame_index,
+                                (
+                                    touch.provisional_track_id,
+                                    touch.ignored_serve_toss,
+                                    touch.estimated_kind,
+                                ),
+                            )
+                            .is_some()
+                    {
+                        return Err("Invalid or duplicate saved court rally contact context".into());
+                    }
+                }
+            }
             timeline_rallies.push(json!({
                 "candidate_id":item.candidate_id.clone(),
                 "start_frame":start,
@@ -565,6 +597,7 @@ fn generate(run: &ValidatedRun, choice: Choice) -> Result<PreviewContent, String
         // independent of pagination or visual filters.
         let mut contacts = BoundedReader::open(&run.touch_file)?;
         let mut touch_frames = Vec::<u64>::new();
+        let mut raw_touch_count = 0u64;
         let mut estimated_actions = Vec::<Value>::new();
         let mut prior = None;
         while let Some(bytes) = contacts.line()? {
@@ -576,16 +609,31 @@ fn generate(run: &ValidatedRun, choice: Choice) -> Result<PreviewContent, String
                 return Err("Untrusted, nonphysical or unsorted native Touch row".into());
             }
             prior = Some(event.frame_index);
+            raw_touch_count += 1;
+            let contextual = timeline_contexts.get(&event.frame_index);
+            if let Some((id, ignored, _)) = contextual {
+                if *id != event.provisional_track_id {
+                    return Err("Rally context references a foreign-frame Track ID".into());
+                }
+                if *ignored {
+                    continue;
+                }
+            }
             touch_frames.push(event.frame_index);
-            if let Some(prediction) = event.action_prediction() {
+            let predicted_kind = if let Some((_, _, kind)) = contextual {
+                *kind
+            } else {
+                event.action_prediction().map(|prediction| prediction.kind)
+            };
+            if let Some(kind) = predicted_kind {
                 estimated_actions.push(json!({
                     "frame_index":event.frame_index,
-                    "kind":prediction.kind.as_str(),
+                    "kind":kind.as_str(),
                     "ball_position_px":[event.ball_x_px,event.ball_y_px]
                 }));
             }
         }
-        if touch_frames.len() as u64 != run.expected_touches || contacts.finish() != run.touch_sha {
+        if raw_touch_count != run.expected_touches || contacts.finish() != run.touch_sha {
             return Err("Touch count or SHA-256 mismatch during rally timeline".into());
         }
         return Ok(PreviewContent {
@@ -599,6 +647,7 @@ fn generate(run: &ValidatedRun, choice: Choice) -> Result<PreviewContent, String
                 "video_duration_sec": run.source_duration_sec,
                 "rallies": timeline_rallies,
                 "touch_frames": touch_frames,
+                "raw_touch_candidates": raw_touch_count,
                 "estimated_actions": estimated_actions,
                 "authoritative_game_events": false,
                 "source_rallies_sha256": run.rally_sha,
@@ -680,6 +729,8 @@ fn generate(run: &ValidatedRun, choice: Choice) -> Result<PreviewContent, String
         record["manual_selection_only"] = json!(true);
         record["motion_events"] = json!([]);
         record["motion_event_count"] = json!(0);
+        record["raw_motion_event_count"] = json!(0);
+        record["ignored_serve_toss_count"] = json!(0);
         // All events in the candidate, not merely the bounded 14 shown in the UI.
         // These are automatic hypotheses, never confirmed action statistics.
         record["estimated_action_counts"] = json!({});
@@ -716,10 +767,40 @@ fn generate(run: &ValidatedRun, choice: Choice) -> Result<PreviewContent, String
                 provisional_track_id: event.provisional_track_id,
             })?;
             let row = &mut cards[idx];
+            let raw = row["raw_motion_event_count"].as_u64().unwrap_or(0);
+            row["raw_motion_event_count"] = json!(raw + 1);
+            let context = row["court_contact_context"]["events"]
+                .as_array()
+                .and_then(|entries| {
+                    entries
+                        .iter()
+                        .find(|entry| entry["frame_index"] == event.frame_index)
+                })
+                .cloned();
+            if context.as_ref().is_some_and(|entry| {
+                entry["provisional_track_id"].as_u64() != event.provisional_track_id
+            }) {
+                return Err("Rally context references a foreign-frame Track ID".into());
+            }
+            if context
+                .as_ref()
+                .is_some_and(|entry| entry["ignored_serve_toss"] == true)
+            {
+                let suppressed = row["ignored_serve_toss_count"].as_u64().unwrap_or(0);
+                row["ignored_serve_toss_count"] = json!(suppressed + 1);
+                continue;
+            }
             let prev = row["motion_event_count"].as_u64().unwrap_or(0);
             row["motion_event_count"] = json!(prev + 1);
-            if let Some(prediction) = event.action_prediction.as_ref() {
-                let kind = prediction.kind.as_str();
+            let resolved_kind = if let Some(ref resolved) = context {
+                resolved["estimated_kind"].as_str()
+            } else {
+                event
+                    .action_prediction
+                    .as_ref()
+                    .map(|prediction| prediction.kind.as_str())
+            };
+            if let Some(kind) = resolved_kind {
                 let counts = row["estimated_action_counts"]
                     .as_object_mut()
                     .ok_or("Invalid action estimate counts")?;
@@ -738,6 +819,9 @@ fn generate(run: &ValidatedRun, choice: Choice) -> Result<PreviewContent, String
                 detail["frame_index"] = json!(event.frame_index);
                 detail["ball_position_px"] = json!([event.ball_x_px, event.ball_y_px]);
                 detail["action_prediction"] = json!(event.action_prediction);
+                if let Some(ref rally_context) = context {
+                    detail["rally_context"] = rally_context.clone();
+                }
                 if event.court.is_some() {
                     detail["court"] = json!(event.court);
                 }
@@ -1281,6 +1365,80 @@ mod tests {
         assert_eq!(page.value["automatic_montage_eligible"], false);
         fs::remove_dir_all(root).unwrap();
     }
+    #[test]
+    fn saved_rally_context_hides_toss_without_changing_immutable_touch_source() {
+        let (mut run, root) = fixture();
+        let records = fs::read_to_string(&run.rally_file).unwrap();
+        let mut rows = records
+            .lines()
+            .map(|line| serde_json::from_str::<Value>(line).unwrap())
+            .collect::<Vec<_>>();
+        rows[0]["court_contact_context"] = json!({
+            "method":"python_serve_toss_possession_v1",
+            "serve_frame":70,"serve_track_id":3,"serving_side":"near",
+            "side_switches":0,"three_touch_possessions":0,
+            "over_three_touch_possessions":0,"max_same_side_touches":1,
+            "ignored_serve_toss_count":1,"authoritative":false,
+            "events":[
+                {"frame_index":40,"provisional_track_id":3,"side":"near",
+                 "estimated_kind":null,"ignored_serve_toss":true,
+                 "possession_touches":0,"phase":"serve_preparation"},
+                {"frame_index":70,"provisional_track_id":3,"side":"near",
+                 "estimated_kind":"serve","ignored_serve_toss":false,
+                 "possession_touches":1,"phase":"serve_flight"}
+            ]
+        });
+        let mut bytes = Vec::new();
+        for record in &rows {
+            bytes.extend(serde_json::to_vec(record).unwrap());
+            bytes.push(b'\n');
+        }
+        fs::write(&run.rally_file, &bytes).unwrap();
+        run.rally_sha = format!("{:x}", Sha256::digest(&bytes));
+        let original_touch_sha = run.touch_sha.clone();
+        let preview = generate(
+            &run,
+            Choice::Page {
+                offset: 0,
+                limit: 1,
+                filter: "all".into(),
+                sort_by: "time".into(),
+                marked: BTreeSet::new(),
+            },
+        )
+        .unwrap();
+        let card = &preview.value["items"][0];
+        assert_eq!(card["raw_motion_event_count"], 2);
+        assert_eq!(card["motion_event_count"], 1);
+        assert_eq!(card["ignored_serve_toss_count"], 1);
+        assert_eq!(card["estimated_action_counts"]["serve"], 1);
+        assert_eq!(card["motion_events"][0]["frame_index"], 70);
+        assert_eq!(
+            card["motion_events"][0]["rally_context"]["estimated_kind"],
+            "serve"
+        );
+        assert_eq!(run.touch_sha, original_touch_sha);
+        let timeline = generate(&run, Choice::Timeline).unwrap();
+        assert_eq!(timeline.value["raw_touch_candidates"], 6);
+        assert_eq!(
+            timeline.value["touch_frames"],
+            json!([70, 115, 145, 330, 370])
+        );
+        assert_eq!(timeline.value["estimated_actions"][0]["kind"], "serve");
+        // Tampering with a Track ID in the rally context is rejected even
+        // when the rally source SHA-256 is recomputed.
+        rows[0]["court_contact_context"]["events"][1]["provisional_track_id"] = json!(99);
+        let mut tampered_bytes = Vec::new();
+        for record in &rows {
+            tampered_bytes.extend(serde_json::to_vec(record).unwrap());
+            tampered_bytes.push(b'\n');
+        }
+        fs::write(&run.rally_file, &tampered_bytes).unwrap();
+        run.rally_sha = format!("{:x}", Sha256::digest(&tampered_bytes));
+        assert!(generate(&run, Choice::Timeline).is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn global_gold_filter_pages_over_the_full_saved_run() {
         let (run, root) = fixture();
