@@ -342,6 +342,10 @@ pub fn evaluate_block(
         });
     }
     for candidate in geometry {
+        let frame = first + candidate.frame as u64;
+        if frame < emit_start || frame >= emit_end {
+            continue;
+        }
         let source = &frames[candidate.frame];
         let player = source
             .players
@@ -368,7 +372,7 @@ pub fn evaluate_block(
                 })
             });
         result.push(PhysicalTouchCandidate {
-            frame_index: first + candidate.frame as u64,
+            frame_index: frame,
             provisional_track_id: Some(candidate.track_id),
             probability: candidate.probability,
             ball_x_px: candidate.ball_x,
@@ -644,6 +648,28 @@ mod tests {
         assert!(events
             .iter()
             .all(|event| frames[event.frame_index as usize].selected_ball.is_some()));
+    }
+
+    #[test]
+    fn geometry_events_remain_inside_emission_bounds() {
+        let mut frames = scenario(true, true, false);
+        for (i, row) in frames.iter_mut().enumerate() {
+            row.players[0].touch_probability = None;
+            let x = if i <= 32 {
+                0.20 + i as f64 * 0.008
+            } else {
+                0.20 + 32.0 * 0.008 - (i - 32) as f64 * 0.008
+            };
+            row.selected_ball.as_mut().unwrap().bbox_xyxy_norm[0] = x;
+            row.selected_ball.as_mut().unwrap().bbox_xyxy_norm[2] = x + 0.02;
+        }
+        let before = evaluate_block(&frames, 640, 360, 0, 20, TouchSettings::default()).unwrap();
+        let after = evaluate_block(&frames, 640, 360, 20, 80, TouchSettings::default()).unwrap();
+        assert!(
+            before.is_empty(),
+            "A lookahead contact must not be emitted early"
+        );
+        assert_eq!(after.len(), 1);
     }
 
     #[test]
