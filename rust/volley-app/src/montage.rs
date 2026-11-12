@@ -2,7 +2,7 @@
 //! selection. FFmpeg export is owned by volley-media; pixels are always read
 //! from the original project recording, never from analysis proxies.
 use crate::{
-    preparation, projects,
+    preparation, project_guard, projects,
     storage::{self, ApiError, ApiResult},
     AppState,
 };
@@ -667,6 +667,7 @@ pub async fn start_native_montage(
     Json(request): Json<MontageRequest>,
 ) -> ApiResult<Value> {
     storage::validate_origin(&headers)?;
+    let _guard = project_guard::write_guard(&state, &request.project_id)?;
     // Check active jobs first; do not block status/cancel while FFprobe
     // reads source metadata. Recheck the slot before publishing the job.
     let current = state.montage.current.lock().await;

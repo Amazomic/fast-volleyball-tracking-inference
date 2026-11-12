@@ -258,6 +258,16 @@ fn list_runs(state: &AppState, project_id: &str) -> Result<Value, crate::storage
         .unwrap_or_default();
     let project_root = projects::project_root(state).join(project_id);
     safe_folder(&project_root).map_err(storage::bad_request)?;
+    let _guard = if state.writes_enabled {
+        Some(crate::analysis_management::catalog_guard(
+            state, project_id,
+        )?)
+    } else {
+        None
+    };
+    if state.writes_enabled {
+        crate::analysis_management::recover(&project_root)?;
+    }
     let root = project_root.join("native_cpu_rallies");
     if !root.exists() {
         return Ok(json!({"project_id":project_id,"runs":[],"total_seen":0,
@@ -304,6 +314,8 @@ fn list_runs(state: &AppState, project_id: &str) -> Result<Value, crate::storage
             modified,
             json!({
                 "rally_run_id":id,
+                "display_name":crate::analysis_management::display_name(&project_root, "rallies", &id)?,
+                "unlinked_display_name":crate::analysis_management::display_name(&project_root, "unlinked", manifest["source_replay_id"].as_str().filter(|id| !id.is_empty()).unwrap_or(&id))?,
                 "created_at":modified,
                 "video":manifest["video"],
                 "candidate_count":manifest["rally_candidates"],

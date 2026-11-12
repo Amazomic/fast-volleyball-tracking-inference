@@ -20,6 +20,10 @@
   const build=(videos,overviews,runs)=>{
     const result=call(1,{videos,overviews:Object.fromEntries(overviews||[]),runs});
     for(const choice of result.choices){
+      const stage=(overviews?.get(choice.video)?.stages||[]).find(row=>row.key===(choice.kind==="unlinked"?"tracking":choice.kind));
+      const saved=stage?.items?.find(row=>row.id===choice.id)?.display_name||
+        (choice.kind==="unlinked"?(result.byAnalysis[choice.value]||[])[0]?.unlinked_display_name:null);
+      if(saved)choice.display_name=saved;
       const date=stamp(choice.created_at)||"Без даты";
       choice.label=date+" · "+choice.display_name+
         (choice.kind==="unlinked"?" · GPU-источник не установлен":

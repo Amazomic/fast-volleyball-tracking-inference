@@ -60,7 +60,10 @@ pub(crate) fn write_guard(state: &AppState, id: &str) -> Result<File, ApiError> 
         .map_err(|e| storage::internal(format!("Open project lock: {e}")))?;
     match lock.try_lock_exclusive() {
         Ok(()) => Ok(lock),
-        Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
+        Err(e)
+            if e.kind() == io::ErrorKind::WouldBlock
+                || e.raw_os_error() == fs2::lock_contended_error().raw_os_error() =>
+        {
             Err(storage::conflict("Проект занят другой операцией студии"))
         }
         Err(e) => Err(storage::internal(format!("Lock project: {e}"))),

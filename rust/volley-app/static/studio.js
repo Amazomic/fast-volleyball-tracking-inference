@@ -193,6 +193,63 @@
     if(text!==undefined)node.textContent=String(text);
     return node;
   };
+  const pickers=new Map();
+  const refreshPicker=select=>pickers.get(select)?.refresh();
+  const makeAnalysisPicker=(select,primary)=>{
+    const host=make("div","analysis-picker");
+    const trigger=make("button","analysis-picker-trigger");
+    const list=make("div","analysis-picker-list hidden");
+    trigger.type="button";trigger.setAttribute("aria-expanded","false");
+    trigger.setAttribute("aria-label",select.getAttribute("aria-label"));
+    select.classList.add("analysis-picker-native");
+    select.parentNode.insertBefore(host,select.nextSibling);
+    host.append(trigger,list);
+    const close=()=>{list.classList.add("hidden");trigger.setAttribute("aria-expanded","false");};
+    const refresh=()=>{
+      trigger.disabled=select.disabled;
+      trigger.textContent=select.selectedOptions[0]?.textContent||"Выберите результат";
+      wipe(list);
+      for(const option of select.options){
+        if(!option.value)continue;
+        const row=make("div","analysis-picker-row");
+        const choose=make("button","analysis-picker-choice",option.textContent);
+        choose.type="button";choose.setAttribute("aria-pressed",String(option.value===select.value));
+        choose.addEventListener("click",()=>{select.value=option.value;select.dispatchEvent(new Event("change",{bubbles:true}));close();refresh();});
+        const menu=make("details","analysis-picker-actions");
+        const summary=make("summary","analysis-picker-more","⋮");
+        summary.setAttribute("aria-label","Действия: "+option.textContent);
+        const actions=make("div","analysis-picker-menu");
+        for(const [action,label] of [["rename","Переименовать"],["delete","Удалить"]]){
+          const button=make("button","",label);button.type="button";
+          button.addEventListener("click",async()=>{
+            const source=primary?s.chain?.choices.find(item=>item.value===option.value):s.chain?.choices.find(item=>item.value===s.analysis);
+            if(!source)return;
+            const id=primary?source.id:option.value,kind=primary?source.kind:"rallies";
+            let name=null;
+            if(action==="rename"){
+              name=window.prompt("Новое название результата",primary?source.display_name:(s.chain?.byAnalysis.get(s.analysis)||[]).find(item=>item.rally_run_id===id)?.display_name||"");
+              if(name===null)return;
+            }else if(!window.confirm(primary?"Удалить первичный анализ и все связанные результаты постобработки?":"Удалить результат постобработки?"))return;
+            try{
+              await post(action==="rename"?"/api/studio/analysis-rename":"/api/studio/analysis-edit",{project_id:s.project,video:source.video,kind,id,action,name});
+              invalidateCatalog();
+              const analysis=action==="delete"&&primary?"":s.analysis;
+              const run=action==="delete"&&!primary&&s.run===id?"":s.run;
+              close();await loadChain(analysis,run);
+              message(action==="rename"?"Название сохранено.":"Результат удалён.","ok");
+            }catch(error){failed(error);}
+          });
+          actions.append(button);
+        }
+        menu.append(summary,actions);row.append(choose,menu);list.append(row);
+      }
+    };
+    trigger.addEventListener("click",()=>{const opening=list.classList.contains("hidden");refresh();list.classList.toggle("hidden",!opening);trigger.setAttribute("aria-expanded",String(opening));});
+    select.addEventListener("change",refresh);
+    document.addEventListener("click",event=>{if(!host.contains(event.target))close();});
+    document.addEventListener("keydown",event=>{if(event.key==="Escape")close();});
+    pickers.set(select,{refresh});refresh();
+  };
   // Shared by the analysis tab and header: one fetch, cached across page refreshes.
   window.VolleyballStudioProjectCatalog=()=>previewCache.load("/api/projects",300000,true);
   // Canvas uses saved CPU frame evidence; toggles are local viewing preferences.
@@ -832,12 +889,13 @@
     const rows=s.chain?.byAnalysis.get(s.analysis)||[];
     options(ui.run,rows,"rally_run_id",row=>
       (window.VolleyStudioChain.stamp(row.created_at)||"CPU "+row.rally_run_id.slice(0,8))+
-      " · "+(row.candidate_count||0)+" розыгрышей",
+      " · "+(row.display_name||((row.candidate_count||0)+" розыгрышей")),
       !s.analysis?"Сначала выберите анализ":
         rows.length?"Выберите постобработку":"Нет CPU-версий для анализа");
     ui.run.disabled=!s.analysis||!rows.length;
     ui.run.value=rows.some(row=>row.rally_run_id===preferred)?preferred:
       rows.length===1?rows[0].rally_run_id:"";
+    refreshPicker(ui.run);
     s.run=ui.run.value;
     if(s.analysis)sourceSelection.save(s.project,s.analysis,s.run);
     window.dispatchEvent(new CustomEvent("volley:postprocessing-change",{
@@ -871,6 +929,7 @@
     ui.analysis.disabled=!chain.choices.length;
     ui.analysis.value=chain.choices.some(row=>row.value===preferredAnalysis)?
       preferredAnalysis:chain.choices.length===1?chain.choices[0].value:"";
+    refreshPicker(ui.analysis);
     // setAnalysis may start the CPU preview, but does not await its heavy I/O.
     await setAnalysis(preferredRun);
   };
@@ -1745,6 +1804,9 @@
       }
     }catch(e){failed(e);}
   });
+  request("/api/studio/analysis-capabilities").then(value=>{
+    if(value.analysis_edit){makeAnalysisPicker(ui.analysis,true);makeAnalysisPicker(ui.run,false);}
+  }).catch(()=>{});
   loadRustSelection().catch(e=>{
     wasmReady=false;
     failed(new Error("Модуль выбора фрагментов недоступен: "+String(e.message||e)));

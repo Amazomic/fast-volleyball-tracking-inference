@@ -186,6 +186,7 @@ fn stage_summary(
             created(&folder),
             json!({
                 "id":id,"kind":stage,"state":state,"model":record["model"],
+                "display_name":crate::analysis_management::display_name(root.parent().ok_or_else(|| storage::internal("Missing project root"))?, if stage == "tracking" { "unlinked" } else { stage }, &id)?,
                 "created_at":created(&folder),
                 "ravel_job_id":record["sources"]["ravel"]["job_id"],
                 "vball_job_id":record["sources"]["vballnet"]["job_id"],
@@ -225,6 +226,16 @@ fn overview(state: &AppState, project_id: &str, video: &str) -> Result<Value, Ap
     }
     let project_root = projects::project_root(state).join(project_id);
     safe_folder(&project_root).map_err(storage::bad_request)?;
+    let _guard = if state.writes_enabled {
+        Some(crate::analysis_management::catalog_guard(
+            state, project_id,
+        )?)
+    } else {
+        None
+    };
+    if state.writes_enabled {
+        crate::analysis_management::recover(&project_root)?;
+    }
     let mut stages = Vec::new();
     for (stage, folder, _, _) in STAGES {
         stages.push(stage_summary(

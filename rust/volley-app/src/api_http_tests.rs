@@ -95,6 +95,94 @@ async fn projects_api_returns_empty_list_on_fresh_root() {
 }
 
 #[tokio::test]
+async fn montage_cannot_start_while_project_deletion_holds_lock() {
+    use fs2::FileExt;
+    let server = TestServer::spawn(true).await;
+    let id = "123456abcdef";
+    server.seed_project(id);
+    let locks = server.root.join("sandbox/projects/.project-locks");
+    fs::create_dir_all(&locks).unwrap();
+    let lock = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(locks.join(format!("{id}.lock")))
+        .unwrap();
+    lock.lock_exclusive().unwrap();
+    let body = format!(r#"{{"project_id":"{id}","clips":[]}}"#);
+    let (code, _) = server
+        .request("POST", "/api/montage/native/start", Some(&body))
+        .await;
+    assert_eq!(code, 409);
+    FileExt::unlock(&lock).unwrap();
+    drop(lock);
+    server.close().await;
+}
+
+#[tokio::test]
+async fn analysis_api_renames_and_deletes_linked_results() {
+    let server = TestServer::spawn(true).await;
+    let project = "123456abcdef";
+    let fusion = "11111111111111111111111111111111";
+    let replay = "22222222222222222222222222222222";
+    let rally = "33333333333333333333333333333333";
+    server.seed_project(project);
+    let root = server.root.join("sandbox/projects").join(project);
+    for (folder, id, value) in [
+        (
+            "native_gpu_fusions",
+            fusion,
+            serde_json::json!({"schema":"volley-native-gpu-fusion/1","fusion_id":fusion}),
+        ),
+        (
+            "native_cpu_replays",
+            replay,
+            serde_json::json!({"schema":"volley-native-cpu-tracking/1","replay_id":replay,"source_fusion_id":fusion}),
+        ),
+        (
+            "native_cpu_rallies",
+            rally,
+            serde_json::json!({"schema":"volley-native-cpu-rally-proposals/1","rally_run_id":rally,"source_replay_id":replay}),
+        ),
+    ] {
+        let dir = root.join(folder).join(id);
+        fs::create_dir_all(&dir).unwrap();
+        let mut value = value;
+        value["project_id"] = serde_json::json!(project);
+        value["video"] = serde_json::json!("match.mp4");
+        storage::write_json_atomic(&dir.join("manifest.json"), &value).unwrap();
+    }
+    let rename = serde_json::json!({"project_id":project,"video":"match.mp4","kind":"fusion","id":fusion,"action":"rename","name":"Мой анализ"}).to_string();
+    let (code, _) = server
+        .request("POST", "/api/studio/analysis-rename", Some(&rename))
+        .await;
+    assert_eq!(code, 200);
+    assert_eq!(
+        analysis_management::display_name(&root, "fusion", fusion)
+            .unwrap()
+            .as_deref(),
+        Some("Мой анализ")
+    );
+    let delete = serde_json::json!({"project_id":project,"video":"match.mp4","kind":"fusion","id":fusion,"action":"delete"}).to_string();
+    let (code, _) = server
+        .request("POST", "/api/studio/analysis-rename", Some(&delete))
+        .await;
+    assert_eq!(code, 400);
+    assert!(root.join("native_gpu_fusions").join(fusion).exists());
+    assert!(root.join("native_cpu_replays").join(replay).exists());
+    assert!(root.join("native_cpu_rallies").join(rally).exists());
+    let (code, _) = server
+        .request("POST", "/api/studio/analysis-edit", Some(&delete))
+        .await;
+    assert_eq!(code, 200);
+    assert!(!root.join("native_gpu_fusions").join(fusion).exists());
+    assert!(!root.join("native_cpu_replays").join(replay).exists());
+    assert!(!root.join("native_cpu_rallies").join(rally).exists());
+    server.close().await;
+}
+
+#[tokio::test]
 async fn preview_serves_compatible_original_instead_of_downscaled_analysis_copy() {
     check_preview_source(30, true).await;
 }

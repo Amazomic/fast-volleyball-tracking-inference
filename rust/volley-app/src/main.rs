@@ -1,4 +1,5 @@
 //! Rust-native Studio HTTP application. The replacement is still incomplete.
+mod analysis_management;
 mod analysis_runs;
 #[cfg(test)]
 mod api_http_tests;
@@ -118,6 +119,18 @@ fn app_with_gate(state: Arc<AppState>, gate: Arc<runtime::ShutdownGate>) -> Rout
             get(native_preview_overlay::get),
         )
         .route("/api/studio/analysis-overview", get(studio_analysis::get))
+        .route(
+            "/api/studio/analysis-capabilities",
+            get(analysis_management::capabilities),
+        )
+        .route(
+            "/api/studio/analysis-rename",
+            post(analysis_management::rename),
+        )
+        .route(
+            "/api/studio/analysis-edit",
+            post(analysis_management::change),
+        )
         .route("/api/studio/pipeline/start", post(studio_pipeline::start))
         .route("/api/studio/pipeline/status", get(studio_pipeline::status))
         .route("/api/studio/pipeline/log", get(studio_pipeline::log))
@@ -418,6 +431,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
         inference_limit: tokio::sync::Semaphore::new(1),
         full_inference: inference_full::FullInferenceManager::new(),
     });
+    analysis_management::recover_projects(&state).map_err(|(_, message)| {
+        io::Error::other(format!("Analysis recovery failed: {}", message.0))
+    })?;
     println!(
         "Volleyball Studio (development, INCOMPLETE): http://{addr}/internal/rewrite-status (isolated writes={writes_enabled})"
     );
