@@ -17,7 +17,7 @@
   const working=()=>pending>0||activeTasks.size>0;
 
   function paintFavicon(time,force=false){
-    if(!favicon||!ctx||!iconImage||(!force&&time-lastIconTime<110))return;
+    if(!favicon||!ctx||!iconImage||(!force&&time-lastIconTime<32))return;
     try{
       ctx.clearRect(0,0,64,64);
       ctx.save();
@@ -58,7 +58,7 @@
           if(!working()&&speed<=0.2){
             clearInterval(hiddenTimer);hiddenTimer=null;
           }
-        },450);
+        },50);
       }
     }else if(!frame&&(working()||speed>0.2)){
       frame=requestAnimationFrame(tick);
