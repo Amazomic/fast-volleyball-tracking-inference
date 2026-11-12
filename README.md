@@ -44,7 +44,19 @@ From the repository root:
 start-volley-ui.cmd
 start-volley-ui.cmd /doctor
 start-volley-ui.cmd /status
+start-volley-ui.cmd /check
+start-volley-ui.cmd /stop
+start-volley-ui.cmd /restart
 ```
+
+| Command | What it does |
+| --- | --- |
+| `start-volley-ui.cmd` | Builds (if needed) and starts the local studio on `127.0.0.1:8875`; reuses an already running instance. |
+| `start-volley-ui.cmd /doctor` | Diagnoses dependencies, model files, system resources, GPU, ONNX Runtime and CUDA libraries. **Does not start** the studio. An unavailable CUDA runtime is reported as not ready (exit code `3`); this is not a live GPU inference test. |
+| `start-volley-ui.cmd /status` | Reports whether the studio is running, its address and PID, and whether it is idle or executing jobs. **Does not start** the studio. |
+| `start-volley-ui.cmd /check` | Runs Rust ownership/roadmap checks and offline `cargo check`; requires the development toolchain. |
+| `start-volley-ui.cmd /stop` | Requests a graceful stop only when no active jobs would be interrupted. |
+| `start-volley-ui.cmd /restart` | Safely stops and starts the studio; refuses to interrupt running GPU/CPU/video jobs. |
 
 Or use PowerShell:
 
