@@ -215,12 +215,12 @@
         const choose=make("button","analysis-picker-choice",option.textContent);
         choose.type="button";choose.setAttribute("aria-pressed",String(option.value===select.value));
         choose.addEventListener("click",()=>{select.value=option.value;select.dispatchEvent(new Event("change",{bubbles:true}));close();refresh();});
-        const menu=make("details","analysis-picker-actions");
-        const summary=make("summary","analysis-picker-more","⋮");
-        summary.setAttribute("aria-label","Действия: "+option.textContent);
-        const actions=make("div","analysis-picker-menu");
-        for(const [action,label] of [["rename","Переименовать"],["delete","Удалить"]]){
-          const button=make("button","",label);button.type="button";
+        row.append(choose);
+        for(const [action,label,symbol] of [["rename","Переименовать","✎"],["delete","Удалить","×"]]){
+          const button=make("button","analysis-picker-action analysis-picker-"+action,symbol);
+          button.type="button";
+          button.title=label+": "+option.textContent;
+          button.setAttribute("aria-label",button.title);
           button.addEventListener("click",async()=>{
             const source=primary?s.chain?.choices.find(item=>item.value===option.value):s.chain?.choices.find(item=>item.value===s.analysis);
             if(!source)return;
@@ -239,9 +239,9 @@
               message(action==="rename"?"Название сохранено.":"Результат удалён.","ok");
             }catch(error){failed(error);}
           });
-          actions.append(button);
+          row.append(button);
         }
-        menu.append(summary,actions);row.append(choose,menu);list.append(row);
+        list.append(row);
       }
     };
     trigger.addEventListener("click",()=>{const opening=list.classList.contains("hidden");refresh();list.classList.toggle("hidden",!opening);trigger.setAttribute("aria-expanded",String(opening));});
