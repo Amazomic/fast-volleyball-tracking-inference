@@ -194,8 +194,8 @@ pub fn build_groups(
     mode: FeatureMode,
     threshold_percent: u8,
 ) -> Result<ReidReport, &'static str> {
-    if !(55..=99).contains(&threshold_percent) {
-        return Err("ReID cosine threshold must be 55..99");
+    if !(1..=99).contains(&threshold_percent) {
+        return Err("ReID cosine threshold must be 1..99");
     }
     // The native CPU replay accepts up to 20,000 provisional IDs. Only the
     // bounded feature subset participates in the quadratic similarity matrix.
@@ -299,7 +299,7 @@ pub fn build_groups(
     for i in 0..n {
         for j in i + 1..n {
             let sim = matrix[i * n + j];
-            if sim >= threshold {
+            if sim > threshold {
                 candidates.push(Candidate { i, j, sim });
             }
         }
@@ -367,7 +367,7 @@ pub fn build_groups(
             members[&rb].iter().all(|b| {
                 compatible(tracks[*a], tracks[*b], owners)
                     && matrix[*a * n + *b]
-                        >= if mode == FeatureMode::ColorFallback {
+                        > if mode == FeatureMode::ColorFallback {
                             threshold.max(0.985)
                         } else {
                             threshold
@@ -496,6 +496,27 @@ mod tests {
             id,
             vector: v.to_vec(),
         }
+    }
+    #[test]
+    fn groups_only_tracks_above_the_thirty_percent_threshold() {
+        let tracks = vec![track(1, 0, 10), track(2, 20, 30), track(3, 40, 50)];
+        let features = vec![
+            feat(1, &[1.0, 0.0, 0.0]),
+            feat(2, &[0.4, 0.9165151, 0.0]),
+            feat(3, &[0.1, 0.0, 0.9949874]),
+        ];
+        let result = build_groups(
+            &features,
+            &tracks,
+            &HashMap::new(),
+            &HashSet::new(),
+            FeatureMode::OpenVino,
+            30,
+        )
+        .unwrap();
+        assert_eq!(result.groups.len(), 1);
+        assert_eq!(result.groups[0].track_ids, vec!["1", "2"]);
+        assert!(result.unmatched_ids.contains(&"3".to_string()));
     }
     #[test]
     fn manually_saved_groups_must_obey_physical_and_confirmed_identity_constraints() {

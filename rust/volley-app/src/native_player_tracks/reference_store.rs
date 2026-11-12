@@ -12,6 +12,10 @@ pub struct ReferenceRequest {
     #[serde(default)]
     pub(super) replay_id: Option<String>,
     #[serde(default)]
+    pub(super) rally_run_id: Option<String>,
+    #[serde(default)]
+    pub(super) photo_index: usize,
+    #[serde(default)]
     pub(super) track_id: Option<u64>,
     #[serde(default)]
     pub(super) expected_source_sha256: Option<String>,
@@ -152,6 +156,9 @@ pub(super) fn verified_reference_source(
     state: &AppState,
     req: &ReferenceRequest,
 ) -> Result<(), ApiError> {
+    if req.photo_index > 12 {
+        return Err(storage::bad_request("Invalid Track ID photo index"));
+    }
     let video = req
         .video
         .as_deref()
@@ -168,8 +175,14 @@ pub(super) fn verified_reference_source(
         .as_deref()
         .filter(|s| valid_sha(s))
         .ok_or_else(|| storage::bad_request("Supply verified CPU replay SHA-256"))?;
-    let ctx = source(state, &req.project_id, video, replay_id)?;
-    if ctx.source_sha != sha || !ctx.known.contains_number(id) {
+    let ctx = source_for_rallies(
+        state,
+        &req.project_id,
+        video,
+        replay_id,
+        req.rally_run_id.as_deref(),
+    )?;
+    if ctx.source_sha != sha || !ctx.known.contains_number(id) || !ctx.tracks.contains_key(&id) {
         return Err(storage::conflict(
             "Source replay changed; repeat manual photo enrollment",
         ));
@@ -313,6 +326,8 @@ pub(super) fn edit_references(
             items.push(json!({
                 "id":id,"filename":filename,"image_sha256":sha,
                 "project_id":req.project_id,"video":req.video,"replay_id":req.replay_id,
+                "rally_run_id":req.rally_run_id,
+                "photo_index":req.photo_index,
                 "track_id":tid,"source_replay_sha256":source,
                 "manually_enrolled":true,"saved_utc":chrono::Utc::now().to_rfc3339(),
             }));
@@ -404,8 +419,8 @@ pub async fn references(
                 video: req.video.clone().expect("verified photo video"),
                 replay_id: req.replay_id.clone().expect("verified photo replay"),
                 track_id: req.track_id.expect("verified photo ID"),
-                rally_run_id: None,
-                photo_index: 0,
+                rally_run_id: req.rally_run_id.clone(),
+                photo_index: req.photo_index,
             }),
         )
         .await?;

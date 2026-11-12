@@ -28,7 +28,7 @@ const ids=[
   "studio-project","studio-stats-refresh","studio-stats-preview","studio-stats-save",
   "studio-stats-status","studio-stats-sources","studio-stats-summary",
   "studio-stats-total","studio-stats-assigned","studio-stats-unknown",
-  "studio-stats-rallies","studio-stats-attacks","studio-stats-mean",
+  "studio-stats-rallies","studio-stats-attacks","studio-stats-blocks","studio-stats-mean",
   "studio-stats-players","studio-stats-diagnostics","studio-stats-source-details"
 ];
 const nodes=new Map(ids.map(id=>[id,new Element()]));
@@ -55,12 +55,13 @@ const stats=()=>({
     identity_source:"manually_reviewed_native_track_ids"
   }],
   raw_tracks:[],auto_player_identity_enabled:false,
-  automatic_action_classification:false,
+  automatic_action_classification:true,
   automatic_action_classification_verified:false,
-  estimated_actions:{},all_contacts_physically_verified:true,
+  estimated_actions:{attack:1,block:2,serve:1},all_contacts_physically_verified:true,
   snapshot_persisted:false,saved_revision:"absent"
 });
 let invalidCounts=false;
+let statsWithoutPredictions=false;
 let calls=[];
 const fetch=async(url,options={})=>{
   calls.push({url,options});
@@ -86,6 +87,7 @@ const fetch=async(url,options={})=>{
     assert.equal(payload.expected_revision,undefined);
   }
   if(invalidCounts)result.players[0].touches=4;
+  if(statsWithoutPredictions){result.automatic_action_classification=false;result.estimated_actions={};}
   return {ok:true,json:async()=>result};
 };
 const callbacks=new Map();
@@ -102,36 +104,24 @@ vm.runInNewContext(source,context,{filename:"studio_stats.js"});
 const flush=()=>new Promise(resolve=>setTimeout(resolve,0));
 for(let i=0;i<5;i++)await flush();
 const $=id=>nodes.get("studio-stats-"+id);
-assert.equal($("preview").disabled,false,"Preview enabled when CPU source exists");
-assert.equal($("save").disabled,true,"Cannot save without preview");
-await $("preview").dispatch("click");
-for(let i=0;i<3;i++)await flush();
 assert.equal($("total").textContent,"5");
 assert.equal($("rallies").textContent,"2");
-assert.equal($("attacks").textContent,"2");
-assert.equal($("mean").textContent,"3");
-assert.match($("players").children[1].children[1].textContent,/1×/);
-assert.equal($("assigned").textContent,"3");
-assert.equal($("unknown").textContent,"2");
-assert.equal($("save").disabled,false);
-assert.equal($("players").children.length,3);
-assert.equal(nodes.get("studio-stats-source-details").children.length,3,
-  "Source diagnostics now include the separate unverified action summary");
-await $("save").dispatch("click");
-for(let i=0;i<3;i++)await flush();
-assert.equal($("save").disabled,false);
-assert.match($("status").textContent,/Сохранено/);
-const select=$("sources").children[0].children[1];
-select.value="";
-select.dispatch("change");
-assert.equal($("save").disabled,true,"Source change invalidates CAS preview");
-assert.equal($("preview").disabled,true,"No source may be counted");
-select.value=run;
-select.dispatch("change");
+assert.equal($("attacks").textContent,"1");
+assert.equal($("blocks").textContent,"2");
+assert.equal($("players").children.length,1);
+assert.equal($("players").children[0].children[0].textContent,"Player One");
+assert.match($("players").children[0].children[1].textContent,/3/);
+assert.match($("players").children[0].children[2].textContent,/3/);
+assert.equal(calls.filter(call=>call.url==="/api/players/native/statistics").length,1);
+assert.equal(JSON.parse(calls.at(-1).options.body).mode,"preview");
+statsWithoutPredictions=true;
+await callbacks.get("volley:tab-change")({detail:{tab:"report"}});
+for(let i=0;i<5;i++)await flush();
+assert.equal($("attacks").textContent,"—");
+assert.equal($("blocks").textContent,"—");
 invalidCounts=true;
-await $("preview").dispatch("click");
-for(let i=0;i<3;i++)await flush();
-assert.equal($("save").disabled,true,"Inconsistent source totals cannot be saved");
+await callbacks.get("volley:tab-change")({detail:{tab:"report"}});
+for(let i=0;i<5;i++)await flush();
 assert.match($("status").textContent,/Количество касаний/);
-assert(calls.filter(call=>call.url==="/api/players/native/statistics").length>=3);
-console.log("Native Rust player-statistics UI: source selection, CAS, verified totals, missing identity revision and invalidation passed");
+assert.equal($("players").children.length,0);
+console.log("Native report: automatic totals, player cards and invalid data passed");

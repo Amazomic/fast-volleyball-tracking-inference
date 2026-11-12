@@ -23,7 +23,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && chown volley:volley /data
 WORKDIR /app
 COPY models/ /app/models/
-COPY ov/ /app/ov/
 USER volley
 ENV VOLLEY_REPOSITORY_ROOT=/app \
     VOLLEY_RUST_DATA_ROOT=/data \

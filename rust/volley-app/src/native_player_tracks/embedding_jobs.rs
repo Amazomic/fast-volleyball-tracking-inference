@@ -9,6 +9,8 @@ pub struct EmbeddingRequest {
     pub(super) rally_run_id: Option<String>,
     pub(super) expected_source_sha256: String,
     pub(super) track_ids: Vec<u64>,
+    #[serde(default)]
+    pub(super) transient: bool,
 }
 
 pub async fn embeddings(
@@ -49,7 +51,8 @@ pub async fn embeddings(
     let expected_sha = req.expected_source_sha256.clone();
     // Legacy full-replay vectors may come from intermissions. Scoped requests
     // must decode a real frame within play, even if a legacy vector is cached.
-    let scope_requires_new_embedding = req.rally_run_id.is_some();
+    let transient = req.transient;
+    let scope_requires_new_embedding = req.rally_run_id.is_some() || transient;
     let planned_state = state.clone();
     let (source_file, source_stamp, replay_file, replay_stamp, crops, evidence) =
         tokio::task::spawn_blocking(move || -> Result<_, ApiError> {
@@ -224,7 +227,7 @@ pub async fn embeddings(
     .await
     .map_err(|e| storage::internal(format!("ReID recheck task: {e}")))??;
     let computed_count = computed.len();
-    let persisted = if state.writes_enabled && !computed.is_empty() {
+    let persisted = if state.writes_enabled && !transient && !computed.is_empty() {
         let writer = state.clone();
         let scope = cache_scope.clone();
         let vectors = computed.clone();

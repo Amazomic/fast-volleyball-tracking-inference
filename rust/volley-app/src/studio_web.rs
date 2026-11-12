@@ -10,7 +10,7 @@ use crate::{
 };
 use axum::{
     extract::{Query, State},
-    http::{header, HeaderValue},
+    http::{header, HeaderValue, StatusCode},
     response::{IntoResponse, Response},
     Json,
 };
@@ -18,6 +18,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use std::{fs, sync::Arc, time::SystemTime};
 
+const UI_CONTRACT: &str = include_str!("../static/ui-contract.txt");
 const CSS: &str = include_str!("../static/studio.css");
 const VOLLEYBALL_SVG: &str = include_str!("../static/volleyball.svg");
 const VOLLEYBALL_PHOTO_PNG: &[u8] = include_bytes!("../static/volleyball-photo.png");
@@ -37,8 +38,8 @@ const QUICK_REEL_SCRIPT: &str = include_str!("../static/studio_quick_reel.js");
 const SELECTION_WASM: &[u8] = include_bytes!("../static/volley_web.wasm");
 const HTML: &str = include_str!("../static/studio.html");
 
-fn web_asset(mime: &'static str, contents: &'static str) -> Response {
-    let mut response = contents.into_response();
+fn web_asset(mime: &'static str, contents: &str) -> Response {
+    let mut response = contents.to_owned().into_response();
     response
         .headers_mut()
         .insert(header::CONTENT_TYPE, HeaderValue::from_static(mime));
@@ -57,11 +58,53 @@ fn web_asset(mime: &'static str, contents: &'static str) -> Response {
     );
     response
 }
+fn development_asset(root: &std::path::Path, filename: &str) -> Result<String, ()> {
+    let contract = fs::read_to_string(root.join("ui-contract.txt")).map_err(|_| ())?;
+    if contract != UI_CONTRACT {
+        return Err(());
+    }
+    fs::read_to_string(root.join(filename)).map_err(|_| ())
+}
+fn studio_asset_from(
+    root: Option<&std::path::Path>,
+    mime: &'static str,
+    filename: &'static str,
+    embedded: &'static str,
+) -> Response {
+    match root {
+        Some(root) => match development_asset(root, filename) {
+            Ok(contents) => web_asset(mime, &contents),
+            Err(()) => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Development UI unavailable or incompatible; rebuild and restart Studio",
+            )
+                .into_response(),
+        },
+        None => web_asset(mime, embedded),
+    }
+}
+fn studio_asset(mime: &'static str, filename: &'static str, embedded: &'static str) -> Response {
+    let root = if cfg!(debug_assertions) {
+        std::env::var_os("VOLLEY_DEV_UI_ROOT")
+    } else {
+        None
+    };
+    studio_asset_from(
+        root.as_deref().map(std::path::Path::new),
+        mime,
+        filename,
+        embedded,
+    )
+}
 pub async fn index() -> Response {
-    web_asset("text/html; charset=utf-8", HTML)
+    studio_asset("text/html; charset=utf-8", "studio.html", HTML)
 }
 pub async fn volleyball_svg() -> Response {
-    web_asset("image/svg+xml; charset=utf-8", VOLLEYBALL_SVG)
+    studio_asset(
+        "image/svg+xml; charset=utf-8",
+        "volleyball.svg",
+        VOLLEYBALL_SVG,
+    )
 }
 
 pub async fn volleyball_photo_png() -> Response {
@@ -79,46 +122,90 @@ pub async fn volleyball_photo_png() -> Response {
     response
 }
 pub async fn css() -> Response {
-    web_asset("text/css; charset=utf-8", CSS)
+    studio_asset("text/css; charset=utf-8", "studio.css", CSS)
 }
 pub async fn hash_js() -> Response {
-    web_asset("text/javascript; charset=utf-8", HASH_SCRIPT)
+    studio_asset(
+        "text/javascript; charset=utf-8",
+        "studio_hash.js",
+        HASH_SCRIPT,
+    )
 }
 pub async fn upload_js() -> Response {
-    web_asset("text/javascript; charset=utf-8", UPLOAD_SCRIPT)
+    studio_asset(
+        "text/javascript; charset=utf-8",
+        "studio_upload.js",
+        UPLOAD_SCRIPT,
+    )
 }
 pub async fn editor_js() -> Response {
-    web_asset("text/javascript; charset=utf-8", EDITOR_SCRIPT)
+    studio_asset(
+        "text/javascript; charset=utf-8",
+        "studio_editor.js",
+        EDITOR_SCRIPT,
+    )
 }
 pub async fn tasks_js() -> Response {
-    web_asset("text/javascript; charset=utf-8", TASKS_SCRIPT)
+    studio_asset(
+        "text/javascript; charset=utf-8",
+        "studio_tasks.js",
+        TASKS_SCRIPT,
+    )
 }
 pub async fn overview_js() -> Response {
-    web_asset("text/javascript; charset=utf-8", OVERVIEW_SCRIPT)
+    studio_asset(
+        "text/javascript; charset=utf-8",
+        "studio_overview.js",
+        OVERVIEW_SCRIPT,
+    )
 }
 pub async fn js() -> Response {
-    web_asset("text/javascript; charset=utf-8", SCRIPT)
+    studio_asset("text/javascript; charset=utf-8", "studio.js", SCRIPT)
 }
 pub async fn chain_js() -> Response {
-    web_asset("text/javascript; charset=utf-8", CHAIN_SCRIPT)
+    studio_asset(
+        "text/javascript; charset=utf-8",
+        "studio_chain.js",
+        CHAIN_SCRIPT,
+    )
 }
 pub async fn ui_js() -> Response {
-    web_asset("text/javascript; charset=utf-8", UI_SCRIPT)
+    studio_asset("text/javascript; charset=utf-8", "studio_ui.js", UI_SCRIPT)
 }
 pub async fn tabs_js() -> Response {
-    web_asset("text/javascript; charset=utf-8", TABS_SCRIPT)
+    studio_asset(
+        "text/javascript; charset=utf-8",
+        "studio_tabs.js",
+        TABS_SCRIPT,
+    )
 }
 pub async fn highlights_js() -> Response {
-    web_asset("text/javascript; charset=utf-8", HIGHLIGHTS_SCRIPT)
+    studio_asset(
+        "text/javascript; charset=utf-8",
+        "studio_highlights.js",
+        HIGHLIGHTS_SCRIPT,
+    )
 }
 pub async fn quick_reel_js() -> Response {
-    web_asset("text/javascript; charset=utf-8", QUICK_REEL_SCRIPT)
+    studio_asset(
+        "text/javascript; charset=utf-8",
+        "studio_quick_reel.js",
+        QUICK_REEL_SCRIPT,
+    )
 }
 pub async fn stats_js() -> Response {
-    web_asset("text/javascript; charset=utf-8", STATS_SCRIPT)
+    studio_asset(
+        "text/javascript; charset=utf-8",
+        "studio_stats.js",
+        STATS_SCRIPT,
+    )
 }
 pub async fn tracks_js() -> Response {
-    web_asset("text/javascript; charset=utf-8", TRACKS_SCRIPT)
+    studio_asset(
+        "text/javascript; charset=utf-8",
+        "studio_tracks.js",
+        TRACKS_SCRIPT,
+    )
 }
 pub async fn selection_wasm() -> Response {
     let mut response = SELECTION_WASM.to_vec().into_response();
@@ -298,6 +385,57 @@ mod tests {
             &["volley.mp4"]
         ));
     }
+    #[test]
+    fn development_assets_reload_and_reject_incompatible_contracts() {
+        let dir = std::env::temp_dir().join(format!("volley-ui-assets-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("ui-contract.txt"), UI_CONTRACT).unwrap();
+        fs::write(dir.join("studio.css"), "first").unwrap();
+        assert_eq!(development_asset(&dir, "studio.css").unwrap(), "first");
+        fs::write(dir.join("studio.css"), "second").unwrap();
+        assert_eq!(development_asset(&dir, "studio.css").unwrap(), "second");
+        fs::write(dir.join("ui-contract.txt"), "incompatible").unwrap();
+        assert!(development_asset(&dir, "studio.css").is_err());
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn development_responses_refresh_and_fail_closed() {
+        let dir = std::env::temp_dir().join(format!("volley-ui-http-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("ui-contract.txt"), UI_CONTRACT).unwrap();
+        fs::write(dir.join("studio.js"), "first").unwrap();
+        let response = studio_asset_from(Some(&dir), "text/javascript", "studio.js", "embedded");
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            axum::body::to_bytes(response.into_body(), 100)
+                .await
+                .unwrap(),
+            "first"
+        );
+        fs::write(dir.join("studio.js"), "second").unwrap();
+        let response = studio_asset_from(Some(&dir), "text/javascript", "studio.js", "embedded");
+        assert_eq!(
+            axum::body::to_bytes(response.into_body(), 100)
+                .await
+                .unwrap(),
+            "second"
+        );
+        fs::write(dir.join("ui-contract.txt"), "2").unwrap();
+        assert_eq!(
+            studio_asset_from(Some(&dir), "text/javascript", "studio.js", "embedded").status(),
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+        let response = studio_asset_from(None, "text/javascript", "studio.js", "embedded");
+        assert_eq!(
+            axum::body::to_bytes(response.into_body(), 100)
+                .await
+                .unwrap(),
+            "embedded"
+        );
+        fs::remove_dir_all(dir).unwrap();
+    }
+
     #[tokio::test]
     async fn axum_serves_standalone_rust_ui_assets_over_http() {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -418,10 +556,7 @@ mod tests {
         assert!(highlights.contains("expected_source_fingerprint"));
         let quick = get(addr, "/studio/quick-reel.js").await;
         assert!(quick.starts_with("HTTP/1.1 200 OK"));
-        // Browser owns the local cross-platform chooser, not PowerShell.
-        assert!(quick.contains("ui.files.showPicker()"));
-        assert!(quick.contains("ui.files.click()"));
-        assert!(!quick.contains("/api/quick-reel/native/pick"));
+        assert!(quick.contains("/api/quick-reel/native/pick"));
         for action in [
             "native/upload",
             "native/release",

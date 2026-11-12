@@ -133,7 +133,7 @@ fn observe_track(
     });
     record.last = frame_idx;
     record.observed += 1;
-    if record.photo_samples.is_empty() || frame_idx % 6 == 0 {
+    if record.photo_samples.is_empty() || frame_idx.is_multiple_of(6) {
         let sample = PhotoSample {
             frame: frame_idx,
             bbox: tracked.detection.bbox_xyxy_norm,

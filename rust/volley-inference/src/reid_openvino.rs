@@ -21,7 +21,7 @@ const INPUT_LEN: usize = PIXELS * 3;
 const MAX_MODEL: u64 = 32 * 1024 * 1024;
 
 fn model_paths(repository: &Path) -> (PathBuf, PathBuf) {
-    let folder = repository.join("ov");
+    let folder = repository.join("models/openvino");
     (
         folder.join(format!("{MODEL_NAME}.xml")),
         folder.join(format!("{MODEL_NAME}.bin")),
@@ -335,7 +335,11 @@ mod tests {
     #[test]
     fn model_fingerprint_changes_if_either_weight_changes() {
         let root = std::env::temp_dir().join(format!("reid-model-test-{}", std::process::id()));
-        let dir = root.join("ov");
+        assert_eq!(
+            model_paths(&root).0.parent().unwrap(),
+            root.join("models/openvino")
+        );
+        let dir = root.join("models/openvino");
         std::fs::create_dir_all(&dir).unwrap();
         let (xml, bin) = model_paths(&root);
         std::fs::write(&xml, b"<net/>").unwrap();

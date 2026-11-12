@@ -53,6 +53,10 @@ pub struct TrackQuery {
     offset: usize,
     #[serde(default = "default_limit")]
     limit: usize,
+    #[serde(default)]
+    view: Option<String>,
+    #[serde(default)]
+    view_player_id: Option<String>,
 }
 fn default_limit() -> usize {
     40
@@ -135,6 +139,7 @@ mod continuity;
 pub(crate) use continuity::*;
 mod reid_handlers;
 pub(crate) use reid_handlers::*;
+mod photo_comparison;
 mod photos;
 pub(crate) use photos::*;
 mod embedding_jobs;

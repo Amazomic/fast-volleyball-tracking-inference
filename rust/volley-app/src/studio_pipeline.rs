@@ -155,6 +155,143 @@ pub async fn log(
     })))
 }
 
+#[derive(Deserialize)]
+pub struct HistoryQuery {
+    project_id: String,
+    #[serde(default)]
+    offset: usize,
+}
+
+fn history_rows(state: &AppState, project_id: &str, offset: usize) -> Result<Value, ApiError> {
+    if offset > 1500 {
+        return Err(storage::bad_request("Недопустимая страница истории"));
+    }
+    let root = folder(state, project_id, false)?;
+    if !root.exists() {
+        return Ok(
+            json!({"schema":"volley-studio-pipeline-history/1","project_id":project_id,"runs":[],"next_offset":0,"has_more":false}),
+        );
+    }
+    let mut rows = Vec::new();
+    let mut candidates = Vec::new();
+    for entry in
+        fs::read_dir(&root).map_err(|e| storage::internal(format!("List pipeline history: {e}")))?
+    {
+        let entry = entry.map_err(|e| storage::internal(format!("Read pipeline history: {e}")))?;
+        let id = entry.file_name().to_string_lossy().into_owned();
+        if !valid_id(&id) {
+            continue;
+        }
+        let Ok(meta) = fs::symlink_metadata(entry.path()) else {
+            continue;
+        };
+        if meta.file_type().is_symlink() || !meta.is_dir() {
+            continue;
+        }
+        let created = meta.created().or_else(|_| meta.modified()).ok();
+        candidates.push((created, id));
+        if candidates.len() > 1500 {
+            return Err(storage::bad_request("Слишком много запусков анализа"));
+        }
+    }
+    candidates.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| b.1.cmp(&a.1)));
+    let total = candidates.len();
+    let next_offset = (offset + 25).min(total);
+    for (_, id) in candidates.into_iter().skip(offset).take(25) {
+        let Ok(path) = status_path(&root, &id) else {
+            continue;
+        };
+        let Ok(status) = read(&path) else { continue };
+        if status["schema"] != SCHEMA || status["project_id"] != project_id || status["id"] != id {
+            continue;
+        }
+        let log_path = path.with_file_name("events.jsonl");
+        let records: Vec<Value> = match fs::symlink_metadata(&log_path) {
+            Ok(meta)
+                if meta.is_file()
+                    && !meta.file_type().is_symlink()
+                    && meta.len() <= MAX_LOG_BYTES =>
+            {
+                fs::read(&log_path)
+                    .ok()
+                    .map(|bytes| {
+                        let end = bytes.iter().rposition(|b| *b == b'\n').map_or(0, |i| i + 1);
+                        bytes[..end]
+                            .split(|b| *b == b'\n')
+                            .take(MAX_LOG_ENTRIES)
+                            .filter_map(|line| serde_json::from_slice(line).ok())
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            }
+            _ => Vec::new(),
+        };
+        let started = records.first().and_then(|row| row["timestamp_ms"].as_u64());
+        let finished = if ["complete", "failed", "cancelled"]
+            .contains(&status["status"].as_str().unwrap_or(""))
+        {
+            records.last().and_then(|row| row["timestamp_ms"].as_u64())
+        } else {
+            None
+        };
+        let starts: Vec<_> = records
+            .iter()
+            .filter(|row| row["kind"] == "stage_start")
+            .filter_map(|row| Some((row["stage"].as_str()?, row["timestamp_ms"].as_u64()?)))
+            .collect();
+        let stages: Vec<Value> = starts
+            .iter()
+            .enumerate()
+            .map(|(index, (name, start))| {
+                let end = starts.get(index + 1).map(|(_, time)| *time).or(finished);
+                json!({"name":name,"duration_ms":end.and_then(|time| time.checked_sub(*start))})
+            })
+            .collect();
+        rows.push(json!({"id":id,"video":status["video"],"mode":status["mode"],
+            "status":status["status"],"stage":status["stage"],"error":status["error"],
+            "started_ms":started,"duration_ms":started.zip(finished).and_then(|(a,b)| b.checked_sub(a)),
+            "gpu_reused":status["gpu_reused"],"result_reused":status["result_reused"],
+            "stages":stages}));
+    }
+    rows.sort_by(|a, b| {
+        b["started_ms"]
+            .as_u64()
+            .cmp(&a["started_ms"].as_u64())
+            .then_with(|| b["id"].as_str().cmp(&a["id"].as_str()))
+    });
+    let has_more = next_offset < total;
+    Ok(
+        json!({"schema":"volley-studio-pipeline-history/1","project_id":project_id,"runs":rows,
+        "next_offset":next_offset,"has_more":has_more}),
+    )
+}
+
+pub async fn history(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<HistoryQuery>,
+) -> ApiResult<Value> {
+    let result =
+        tokio::task::spawn_blocking(move || history_rows(&state, &query.project_id, query.offset))
+            .await
+            .map_err(|e| storage::internal(format!("Pipeline history worker: {e}")))??;
+    let mut result = result;
+    let project_id = result["project_id"].as_str().unwrap_or("").to_owned();
+    let slot = manager().lock().await;
+    if let Some(runs) = result["runs"].as_array_mut() {
+        for run in runs {
+            if ["queued", "running", "cancelling"].contains(&run["status"].as_str().unwrap_or(""))
+                && !slot.as_ref().is_some_and(|active| {
+                    Some(active.id.as_str()) == run["id"].as_str()
+                        && active.project_id == project_id
+                })
+            {
+                run["status"] = json!("interrupted");
+            }
+        }
+    }
+    Ok(Json(result))
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct GpuProfile {
@@ -312,6 +449,19 @@ fn status_path(root: &Path, id: &str) -> Result<PathBuf, ApiError> {
     Ok(run.join("status.json"))
 }
 fn progress(path: &Path, status: &mut Value, stage: &str, percent: f64) -> Result<(), String> {
+    let stage_name = stage.split_once(": ").map_or(stage, |(name, _)| name);
+    let previous = status["stage"].as_str().unwrap_or("");
+    let previous_name = previous.split_once(": ").map_or(previous, |(name, _)| name);
+    if stage_name != previous_name {
+        log_entry(
+            path,
+            "info",
+            "stage_start",
+            stage_name,
+            "Начало этапа",
+            None,
+        )?;
+    }
     status["status"] = json!("running");
     status["stage"] = json!(stage);
     status["progress_percent"] = json!(percent.clamp(0.0, 99.9));
@@ -1503,6 +1653,24 @@ pub async fn cancel(
 mod tests {
     use super::*;
     #[test]
+    fn progress_records_stage_transitions_for_history() {
+        let dir = std::env::temp_dir().join(format!("studio-history-{}", Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("status.json");
+        let mut status = json!({"stage":"В очереди"});
+        progress(&path, &mut status, "GPU", 1.0).unwrap();
+        let log = fs::read_to_string(dir.join("events.jsonl")).unwrap_or_default();
+        let records: Vec<Value> = log
+            .lines()
+            .map(|row| serde_json::from_str(row).unwrap())
+            .collect();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0]["kind"], "stage_start");
+        assert_eq!(records[0]["stage"], "GPU");
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn stage_modes_reject_unknown_values_and_default_to_full() {
         let request: StartRequest = serde_json::from_value(json!({
             "project_id":"abc123def456","video":"match.mp4"
@@ -1813,6 +1981,20 @@ mod branching_tests {
         )
         .await
         .is_err());
+        fs::write(
+            directory.join("events.jsonl"),
+            concat!(
+                "{\"timestamp_ms\":1000,\"kind\":\"stage_start\",\"stage\":\"GPU\"}\n",
+                "{\"timestamp_ms\":3000,\"kind\":\"stage_start\",\"stage\":\"CPU\"}\n",
+                "{\"timestamp_ms\":4500,\"kind\":\"event\",\"stage\":\"Анализ\"}\n"
+            ),
+        )
+        .unwrap();
+        let history = history_rows(&handler_state, "abc123def456", 0).unwrap();
+        assert_eq!(history["runs"][0]["id"], run_id);
+        assert_eq!(history["runs"][0]["duration_ms"], 3500);
+        assert_eq!(history["runs"][0]["stages"][0]["duration_ms"], 2000);
+        assert_eq!(history["runs"][0]["stages"][1]["duration_ms"], 1500);
         // CPU can use a standalone GPU fusion with no Studio pipeline record.
         fs::remove_file(directory.join("status.json")).unwrap();
         let source = selected_gpu(&handler_state, &request, &identity, &analysis).unwrap();
@@ -1854,6 +2036,26 @@ mod branching_tests {
         assert!(refusal.contains("не имеет права запускать GPU"));
         assert!(!untouched.exists());
         assert_eq!(post_status["stage"], "CPU-only");
+        for index in 0..26 {
+            let id = format!("{index:032x}");
+            let run = project_dir.join("native_studio_pipelines").join(&id);
+            fs::create_dir_all(&run).unwrap();
+            fs::write(
+                run.join("status.json"),
+                serde_json::to_vec(&json!({
+                    "schema":SCHEMA,"id":id,"project_id":"abc123def456","status":"complete"
+                }))
+                .unwrap(),
+            )
+            .unwrap();
+        }
+        let page = history_rows(&handler_state, "abc123def456", 0).unwrap();
+        assert_eq!(page["runs"].as_array().unwrap().len(), 25);
+        assert_eq!(page["next_offset"], 25);
+        assert_eq!(page["has_more"], true);
+        let page2 = history_rows(&handler_state, "abc123def456", 25).unwrap();
+        assert_eq!(page2["runs"].as_array().unwrap().len(), 1);
+        assert_eq!(page2["has_more"], false);
         fs::remove_dir_all(base).unwrap();
     }
 }

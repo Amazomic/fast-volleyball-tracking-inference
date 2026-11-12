@@ -86,7 +86,7 @@ assert.match(docker,/FROM debian:trixie-slim AS runtime-base/,
 for(const fragment of ["FROM rust:1-bookworm AS build","FROM runtime-base AS prebuilt",
   "FROM runtime-base AS final","--locked --release -p volley-app",
   "USER volley","STOPSIGNAL SIGTERM","127.0.0.1:8875",
-  "COPY models/ /app/models/","COPY ov/ /app/ov/",
+  "COPY models/ /app/models/",
   "COPY prebuilt/volley-app /usr/local/bin/volley-app"]){
   assert.ok(docker.includes(fragment),"Missing secure Docker contract "+fragment);
 }

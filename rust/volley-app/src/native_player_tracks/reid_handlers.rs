@@ -10,7 +10,7 @@ pub struct NativeReidQuery {
     pub(super) threshold_percent: u8,
 }
 pub(super) fn default_reid_threshold() -> u8 {
-    85
+    30
 }
 
 pub(super) fn native_reid_report(
@@ -109,8 +109,8 @@ pub async fn reid_preview(
     Json(req): Json<NativeReidQuery>,
 ) -> ApiResult<Value> {
     storage::validate_origin(&headers)?;
-    if !(55..=99).contains(&req.threshold_percent) {
-        return Err(storage::bad_request("ReID threshold must be 55..99"));
+    if !(1..=99).contains(&req.threshold_percent) {
+        return Err(storage::bad_request("ReID threshold must be 1..99"));
     }
     let _permit = state
         .reid_limit
@@ -175,6 +175,8 @@ pub struct ReidReviewRequest {
     pub(super) video: String,
     pub(super) replay_id: String,
     pub(super) expected_source_sha256: String,
+    #[serde(default)]
+    pub(super) rally_run_id: Option<String>,
     pub(super) action: String,
     #[serde(default)]
     pub(super) track_ids: Vec<u64>,
@@ -329,6 +331,80 @@ pub(super) fn review_path(state: &AppState, ctx: &Inputs) -> Result<PathBuf, Api
         }
     }
     Ok(folder.join(format!("{}.json", ctx.replay_id)))
+}
+pub(super) struct PhotoReference {
+    pub(super) player_id: String,
+    pub(super) vector: Vec<f32>,
+    pub(super) project_id: String,
+    pub(super) video: String,
+    pub(super) replay_id: String,
+    pub(super) track_id: u64,
+}
+
+pub(super) fn photo_match_candidates(
+    ctx: &Inputs,
+    identity: &Value,
+    vectors: &BTreeMap<u64, Vec<f32>>,
+    references: &[PhotoReference],
+) -> Result<Value, String> {
+    let assignments = identity["assignments"]
+        .as_object()
+        .ok_or("Invalid assignments")?;
+    let excluded = identity["excluded_ids"]
+        .as_array()
+        .ok_or("Invalid excluded IDs")?
+        .iter()
+        .filter_map(Value::as_u64)
+        .collect::<BTreeSet<_>>();
+    let mut matches = serde_json::Map::new();
+    for (&id, vector) in vectors {
+        if assignments.contains_key(&id.to_string()) || excluded.contains(&id) {
+            continue;
+        }
+        let Some(track) = ctx.tracks.get(&id) else {
+            continue;
+        };
+        let mut ranked = BTreeMap::<String, (f64, u64)>::new();
+        for reference in references {
+            if !ctx.roster.contains_key(&reference.player_id)
+                || reference.vector.len() != vector.len()
+            {
+                continue;
+            }
+            if reference.project_id == ctx.project_id
+                && reference.video == ctx.video
+                && reference.replay_id == ctx.replay_id
+            {
+                if let Some(other) = ctx.tracks.get(&reference.track_id) {
+                    if track.first <= other.last && other.first <= track.last {
+                        continue;
+                    }
+                }
+            }
+            let score = vector
+                .iter()
+                .zip(&reference.vector)
+                .map(|(a, b)| f64::from(*a) * f64::from(*b))
+                .sum::<f64>();
+            if !score.is_finite() || score <= 0.0 {
+                continue;
+            }
+            let entry = ranked
+                .entry(reference.player_id.clone())
+                .or_insert((score, reference.track_id));
+            if score > entry.0 {
+                *entry = (score, reference.track_id);
+            }
+        }
+        let mut rows = ranked.into_iter().collect::<Vec<_>>();
+        rows.sort_by(|a, b| b.1 .0.total_cmp(&a.1 .0).then_with(|| a.0.cmp(&b.0)));
+        if !rows.is_empty() {
+            matches.insert(id.to_string(), json!(rows.into_iter().take(3).map(|(player,(score,track_id))|
+                json!({"player_id":player,"name":ctx.roster[&player],"cosine_similarity":(score.min(1.0)*10000.0).round()/10000.0,
+                    "reference_track_id":track_id,"reference_kind":"saved_photo"})).collect::<Vec<_>>()));
+        }
+    }
+    Ok(Value::Object(matches))
 }
 /// Rank only against explicitly reviewed athlete Track IDs from the same
 /// SHA-bound CPU replay. Cosine is a visual similarity, NOT a probability of
@@ -506,8 +582,13 @@ pub async fn reid_review(
     Json(req): Json<ReidReviewRequest>,
 ) -> ApiResult<Value> {
     storage::validate_origin(&headers)?;
+    if req.action == "compare_photos" {
+        return Ok(Json(
+            super::photo_comparison::compare(state, headers, req).await?,
+        ));
+    }
     if !matches!(req.action.as_str(), "read" | "merge" | "split")
-        || !(55..=99).contains(&req.threshold_percent)
+        || !(1..=99).contains(&req.threshold_percent)
     {
         return Err(storage::bad_request(
             "Invalid manual ReID review action or threshold",

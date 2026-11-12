@@ -121,6 +121,10 @@ fn app_with_gate(state: Arc<AppState>, gate: Arc<runtime::ShutdownGate>) -> Rout
         .route("/api/studio/pipeline/start", post(studio_pipeline::start))
         .route("/api/studio/pipeline/status", get(studio_pipeline::status))
         .route("/api/studio/pipeline/log", get(studio_pipeline::log))
+        .route(
+            "/api/studio/pipeline/history",
+            get(studio_pipeline::history),
+        )
         .route("/api/studio/pipeline/cancel", post(studio_pipeline::cancel))
         .route("/api/studio/restart", post(studio_restart::restart))
         .route(

@@ -517,11 +517,11 @@ pub(crate) fn calculate(state: &AppState, request: ReidRequest) -> Result<Value,
     let models = [
         state
             .repository_root
-            .join("ov")
+            .join("models/openvino")
             .join(format!("{MODEL}.xml")),
         state
             .repository_root
-            .join("ov")
+            .join("models/openvino")
             .join(format!("{MODEL}.bin")),
     ];
     let key = path_key(&request.video, base_id);

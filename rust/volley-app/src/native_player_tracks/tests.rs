@@ -29,6 +29,14 @@ fn fixture() -> (PathBuf, Vec<u8>, String) {
     fs::write(&path, &data).unwrap();
     (root, data, digest)
 }
+#[test]
+fn reference_request_accepts_selected_rally_scope() {
+    let request = json!({
+        "project_id":"123456abcdef", "player_id":"abcdef012345", "action":"enroll",
+        "rally_run_id":"0123456789abcdef0123456789abcdef"
+    });
+    assert!(serde_json::from_value::<ReferenceRequest>(request).is_ok());
+}
 fn context(root: &Path, sha: String, tracks: BTreeMap<u64, Aggregate>) -> Inputs {
     let evidence = EvidenceSource::native(
         "123456abcdef",
@@ -111,6 +119,48 @@ fn review_preview_displays_manual_groups_without_claiming_athlete_identity() {
     assert_eq!(split["unmatched_ids"], json!(["7", "8"]));
     fs::remove_dir_all(root).unwrap();
 }
+#[test]
+fn photo_reference_matches_skip_assigned_excluded_and_overlapping_tracks() {
+    let (root, _, sha) = fixture();
+    let tracks = index_replay(&root.join("tracked_frames.jsonl"), &sha, 18).unwrap();
+    let mut ctx = context(&root, sha, tracks);
+    let mut second = ctx.tracks[&7].clone();
+    second.first = 20;
+    second.last = 30;
+    ctx.tracks.insert(8, second.clone());
+    ctx.tracks.insert(9, second);
+    ctx.known = VerifiedTrackSet::new(ctx.evidence.clone(), [7, 8, 9]).unwrap();
+    let mut identity = base_document(&ctx);
+    identity["assignments"] = json!({"7":"abcdef012345"});
+    identity["excluded_ids"] = json!([9]);
+    let mut vector = vec![0.0; 256];
+    vector[0] = 1.0;
+    let vectors = [
+        (7, vector.clone()),
+        (8, vector.clone()),
+        (9, vector.clone()),
+    ]
+    .into();
+    let references = vec![PhotoReference {
+        player_id: "abcdef012345".into(),
+        vector,
+        project_id: ctx.project_id.clone(),
+        video: ctx.video.clone(),
+        replay_id: ctx.replay_id.clone(),
+        track_id: 7,
+    }];
+    let result = photo_match_candidates(&ctx, &identity, &vectors, &references).unwrap();
+    assert_eq!(result["8"][0]["cosine_similarity"], 1.0);
+    assert!(result.get("7").is_none());
+    assert!(result.get("9").is_none());
+    ctx.tracks.get_mut(&8).unwrap().first = 10;
+    assert_eq!(
+        photo_match_candidates(&ctx, &identity, &vectors, &references).unwrap(),
+        json!({})
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
 #[test]
 fn reid_player_matches_require_reviewed_nonoverlapping_photo_evidence() {
     let (root, _, sha) = fixture();
@@ -480,6 +530,8 @@ fn isolated_project_edits_reject_stale_revision_reassignment_and_excluded_track(
         rally_run_id: None,
         offset: 0,
         limit: 10,
+        view: None,
+        view_player_id: None,
     };
     let original = read_internal(&state, &query).unwrap();
     assert_eq!(original["total_tracks"], 1);
@@ -572,6 +624,8 @@ fn isolated_project_edits_reject_stale_revision_reassignment_and_excluded_track(
             expected_revision: Some("absent".into()),
             video: Some(video.into()),
             replay_id: Some(replay.into()),
+            rally_run_id: None,
+            photo_index: 0,
             track_id: Some(7),
             expected_source_sha256: Some(source_sha.clone()),
             reference_id: None
@@ -602,7 +656,7 @@ fn isolated_project_edits_reject_stale_revision_reassignment_and_excluded_track(
                 replay_id: replay.into(),
                 track_id: 7,
                 rally_run_id: None,
-                photo_index: 0,
+                photo_index: 1,
             }),
         )
         .await
@@ -623,6 +677,8 @@ fn isolated_project_edits_reject_stale_revision_reassignment_and_excluded_track(
             expected_revision: None,
             video: None,
             replay_id: None,
+            rally_run_id: None,
+            photo_index: 0,
             track_id: None,
             expected_source_sha256: None,
             reference_id: None,
@@ -643,9 +699,20 @@ fn isolated_project_edits_reject_stale_revision_reassignment_and_excluded_track(
             video: Some(video.into()),
             replay_id: Some(replay.into()),
             track_id: Some(7),
+            photo_index: 1,
             expected_source_sha256: Some(source_sha.clone()),
             ..read_album.clone()
         };
+        assert!(references(
+            State(shared.clone()),
+            HeaderMap::new(),
+            Json(ReferenceRequest {
+                rally_run_id: Some("11111111111111111111111111111111".into()),
+                ..enroll.clone()
+            }),
+        )
+        .await
+        .is_err());
         let album = references(
             State(shared.clone()),
             HeaderMap::new(),
@@ -674,12 +741,74 @@ fn isolated_project_edits_reject_stale_revision_reassignment_and_excluded_track(
             .unwrap();
         assert!(copied.starts_with(&[0xff, 0xd8]));
         assert!(copied.ends_with(&[0xff, 0xd9]));
+        assert_eq!(copied, bytes);
         assert_eq!(
             format!("{:x}", Sha256::digest(&copied)),
             album["photos"][0]["image_sha256"].as_str().unwrap()
         );
         let album_path = data.join("players/native_reference_photos/abcdef012345");
         assert!(album_path.join(format!("ref-{photo_id}.jpg")).is_file());
+        if std::env::var("VOLLEY_OPENVINO_C_LIB").is_ok() {
+            let fixture_models = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..").join("models/openvino");
+            fs::create_dir_all(repo.join("models/openvino")).unwrap();
+            for suffix in ["xml", "bin"] {
+                let filename = format!("person-reidentification-retail-0287.{suffix}");
+                fs::copy(fixture_models.join(&filename), repo.join("models/openvino").join(&filename)).unwrap();
+            }
+            let run_id = "11111111111111111111111111111111";
+            let touch_id = "22222222222222222222222222222222";
+            let rally_dir = data.join("projects").join(id).join("native_cpu_rallies").join(run_id);
+            let touch_dir = data.join("projects").join(id).join("native_cpu_touch_runs").join(touch_id);
+            fs::create_dir_all(&rally_dir).unwrap();
+            fs::create_dir_all(&touch_dir).unwrap();
+            let candidate_id = format!("{:x}", Sha256::digest(format!("{replay}:{touch_id}:0:17").as_bytes()))[..24].to_string();
+            let rally_row = json!({"candidate_id":candidate_id,"detected_start_frame":0,"detected_end_frame":17,
+                "ball_observations":18,"ball_coverage":1.0,"motion_supported_touch_proposals":1,
+                "first_touch_frame":3,"last_touch_frame":3,"max_touch_probability":0.9,
+                "classification":"provisional_rally","authoritative_rally":false,
+                "athlete_identities_verified":false,"serve_verified":false,"reviewed":false});
+            let rally_bytes = format!("{}\n", rally_row).into_bytes();
+            let rally_sha = format!("{:x}", Sha256::digest(&rally_bytes));
+            let touch_sha = format!("{:x}", Sha256::digest([]));
+            fs::write(rally_dir.join("rally_candidates.jsonl"), rally_bytes).unwrap();
+            fs::write(touch_dir.join("touch_candidates.jsonl"), []).unwrap();
+            let identity = json!({"bytes":size,"mtime_ns":mtime});
+            let touch = json!({"schema":"volley-native-cpu-touch-proposals/1","state":"motion_gated_touch_proposals",
+                "touch_id":touch_id,"project_id":id,"video":video,"source_replay_id":replay,
+                "source_replay_sha256":source_sha,"source_identity":identity,"frames":18,"width":64,"height":64,
+                "file":"touch_candidates.jsonl","touch_candidates":0,"contacts_authoritatively_confirmed":false,
+                "athlete_identities_verified":false,"cpu_processing_complete":false,"sha256":touch_sha});
+            let rally = json!({"schema":"volley-native-cpu-rally-proposals/1","state":"provisional_rally_segments",
+                "project_id":id,"video":video,"rally_run_id":run_id,"source_replay_id":replay,
+                "source_replay_sha256":source_sha,"source_touch_id":touch_id,"source_touch_sha256":touch_sha,
+                "source_identity":identity,"width":64,"height":64,"fps":30,"frames":18,
+                "settings":{"suggested_context_frames":0},"touch_candidates_ingested":0,"rally_candidates":1,
+                "file":"rally_candidates.jsonl","sha256":rally_sha,"rallies_authoritatively_confirmed":false,
+                "athlete_identities_verified":false,"action_classification_complete":false,"montage_ready":false,
+                "cpu_processing_complete":false});
+            fs::write(touch_dir.join("manifest.json"), serde_json::to_vec(&touch).unwrap()).unwrap();
+            fs::write(rally_dir.join("manifest.json"), serde_json::to_vec(&rally).unwrap()).unwrap();
+            let index_path = album_path.join("index.json");
+            let original_index = fs::read(&index_path).unwrap();
+            let mut other_project: Value = serde_json::from_slice(&original_index).unwrap();
+            other_project["photos"][0]["project_id"] = json!("bbbbbbbbbbbb");
+            fs::write(&index_path, serde_json::to_vec(&other_project).unwrap()).unwrap();
+            let unassigned = change(&shared, &TrackEdit { action:"unassign".into(), player_id:None,
+                expected_revision:reassigned["revision"].as_str().unwrap().into(), ..assign.clone() }).unwrap();
+            let compare_req: ReidReviewRequest = serde_json::from_value(json!({"project_id":id,"video":video,
+                "replay_id":replay,"rally_run_id":run_id,"expected_source_sha256":source_sha,
+                "action":"compare_photos"})).unwrap();
+            let result = reid_review(State(shared.clone()), HeaderMap::new(), Json(compare_req)).await.unwrap().0;
+            assert_eq!(result["schema"], "volley-native-player-photo-comparison/1");
+            assert_eq!(result["photo_count"], 1);
+            assert_eq!(result["auto_assign_enabled"], false);
+            assert_eq!(result["player_matches"]["7"][0]["player_id"], "abcdef012345");
+            let score = result["player_matches"]["7"][0]["cosine_similarity"].as_f64().unwrap();
+            println!("Synthetic reference cosine: {score}");
+            assert!(score > 0.0 && score <= 1.0);
+            change(&shared, &TrackEdit { expected_revision:unassigned["revision"].as_str().unwrap().into(), ..assign.clone() }).unwrap();
+            fs::write(&index_path, original_index).unwrap();
+        }
         assert!(references(
             State(shared.clone()),
             HeaderMap::new(),
@@ -745,8 +874,8 @@ fn isolated_project_edits_reject_stale_revision_reassignment_and_excluded_track(
         if std::env::var("VOLLEY_OPENVINO_C_LIB").is_ok() {
             let fixture_models = Path::new(env!("CARGO_MANIFEST_DIR"))
                 .join("../..")
-                .join("ov");
-            let local_models = shared.repository_root.join("ov");
+                .join("models/openvino");
+            let local_models = shared.repository_root.join("models/openvino");
             fs::create_dir_all(&local_models).unwrap();
             for suffix in ["xml", "bin"] {
                 let filename = format!("person-reidentification-retail-0287.{suffix}");
@@ -761,6 +890,7 @@ fn isolated_project_edits_reject_stale_revision_reassignment_and_excluded_track(
                     replay_id: replay.into(),
                     rally_run_id: None,
                     track_ids: vec![7],
+                    transient: false,
                     expected_source_sha256: source_sha.clone(),
                 }),
             )
@@ -790,6 +920,7 @@ fn isolated_project_edits_reject_stale_revision_reassignment_and_excluded_track(
                     replay_id: replay.into(),
                     rally_run_id: None,
                     track_ids: vec![7],
+                    transient: false,
                     expected_source_sha256: source_sha.clone(),
                 }),
             )
@@ -815,6 +946,7 @@ fn isolated_project_edits_reject_stale_revision_reassignment_and_excluded_track(
                     replay_id: replay.into(),
                     rally_run_id: None,
                     track_ids: vec![7],
+                    transient: false,
                     expected_source_sha256: "0".repeat(64),
                 })
             )
@@ -875,6 +1007,45 @@ fn photo_crop_is_bounded_and_rejects_corrupted_geometry() {
     assert!(crop_box([-0.1, 0.0, 0.5, 0.6], 640, 360).is_err());
     assert!(crop_box([0.2, 0.1, 0.4, f64::NAN], 640, 360).is_err());
     assert!(crop_box([0.2, 0.1, 0.4, 0.7], 32, 360).is_err());
+}
+
+#[test]
+fn track_gallery_filters_owners_before_pagination() {
+    let (root, _, sha) = fixture();
+    let tracks = index_replay(&root.join("tracked_frames.jsonl"), &sha, 18).unwrap();
+    let mut ctx = context(&root, sha, tracks);
+    let sample = ctx.tracks.get(&7).unwrap().clone();
+    ctx.tracks.insert(8, sample.clone());
+    ctx.tracks.insert(9, sample);
+    let mut doc = base_document(&ctx);
+    doc["assignments"]["7"] = json!("abcdef012345");
+    let unassigned = filtered_page(&ctx, &doc, "revision", 1, 1, Some("unassigned"), None).unwrap();
+    assert_eq!(unassigned["filtered_total"], 2);
+    assert_eq!(unassigned["unassigned_track_ids"], json!([8, 9]));
+    assert_eq!(unassigned["tracks"][0]["track_id"], 9);
+    let player = filtered_page(
+        &ctx,
+        &doc,
+        "revision",
+        0,
+        1,
+        Some("player"),
+        Some("abcdef012345"),
+    )
+    .unwrap();
+    assert_eq!(player["filtered_total"], 1);
+    assert_eq!(player["tracks"][0]["track_id"], 7);
+    assert!(filtered_page(
+        &ctx,
+        &doc,
+        "revision",
+        0,
+        1,
+        Some("player"),
+        Some("unknown")
+    )
+    .is_err());
+    fs::remove_dir_all(root).unwrap();
 }
 
 #[test]

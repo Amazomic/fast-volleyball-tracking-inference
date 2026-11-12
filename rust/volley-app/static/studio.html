@@ -119,11 +119,11 @@
               <div id="studio-quick-drop" class="quick-drop" role="button" tabindex="0" aria-label="Открыть выбор видеозаписей на устройстве">
                 <strong>Нажмите для выбора видео на устройстве</strong>
                 <span>Или перетащите файлы сюда</span>
-                <small>Работает в Windows, Linux и macOS. До 30 файлов.</small>
+                <small>Выбор оригиналов в Windows и WSL. До 30 файлов.</small>
               </div>
               <button id="studio-quick-browser" class="secondary" type="button">Открыть выбор файлов</button>
               <input id="studio-quick-files" type="file" accept=".mp4,.mov,.mkv,.avi,.webm,.m4v,.mts,video/*" multiple class="sr-only" tabindex="-1" aria-label="Файлы для Quick Reel">
-              <p class="panel-note">Выбранные файлы загружаются в отдельное хранилище Rust (до 32 ГиБ на файл). Оригиналы остаются без изменений. Браузер не передаёт полный путь к файлу.</p>
+              <p class="panel-note">Через выбор файлов добавляется ссылка на оригинал. При перетаскивании браузер создаёт временную копию (до 32 ГиБ на файл).</p>
               <ol id="studio-quick-sources" class="quick-sources" aria-label="Видео для рилса">
                 <li>Видео ещё не выбраны</li>
               </ol>
@@ -469,6 +469,16 @@
               </div>
             </details>
           </div>
+          <section class="analysis-history" aria-labelledby="studio-history-heading">
+            <div class="section-bar"><h2 id="studio-history-heading">История анализов</h2><button id="studio-history-refresh" class="secondary" type="button">↻ Обновить</button></div>
+            <div class="analysis-history-tabs" role="tablist" aria-label="Тип запусков">
+              <button type="button" role="tab" aria-selected="true" data-history-filter="all">Все</button>
+              <button type="button" role="tab" aria-selected="false" data-history-filter="gpu">Нейросеть</button>
+              <button type="button" role="tab" aria-selected="false" data-history-filter="post">Постобработка</button>
+            </div>
+            <div id="studio-history-list" class="analysis-history-list" aria-live="polite">Выберите проект.</div>
+            <button id="studio-history-more" class="secondary hidden" type="button">Показать ещё</button>
+          </section>
         </section>
         <section id="studio-players-view" class="hidden tab-workspace" aria-labelledby="studio-players-heading">
           <p id="studio-players-heading" class="eyebrow">03 / БИБЛИОТЕКА ИГРОКОВ</p>
@@ -514,32 +524,18 @@
           </section>
         </section>
         <section id="studio-report-view" class="hidden tab-workspace" aria-labelledby="studio-report-heading">
-          <p id="studio-report-heading" class="eyebrow">ОТЧЁТ / СТАТИСТИКА ПРОЕКТА</p>
-          <section id="studio-native-stats-panel" class="native-track-panel" aria-labelledby="studio-native-stats-title">
-            <p class="eyebrow">СТАТИСТИКА / CPU</p>
-            <h2 id="studio-native-stats-title">Касания игроков проекта</h2>
-            <p class="panel-note">Один результат CPU на каждое видео. Касания и розыгрыши предварительные, привязки к игрокам подтверждены вручную. Виды касаний определены приблизительно.</p>
-            <div class="track-actions">
-              <button id="studio-stats-refresh" class="secondary" type="button">↻ Найти обработки</button>
-              <button id="studio-stats-preview" class="secondary" type="button" disabled>Предпросмотр</button>
-              <button id="studio-stats-save" class="primary" type="button" disabled>Пересчитать и сохранить</button>
-            </div>
-            <p id="studio-stats-status" class="panel-note" role="status" aria-live="polite">Выберите проект и найдите CPU-обработки.</p>
-            <div id="studio-stats-sources" class="native-stats-sources" aria-label="Выбранные версии касаний по видео"></div>
-            <div id="studio-stats-summary" class="track-summary hidden" aria-live="polite">
-              <strong id="studio-stats-rallies">—</strong><span>Розыгрышей-кандидатов</span>
-              <strong id="studio-stats-attacks">—</strong><span>Ударов: атаки и подачи, оценка</span>
-              <strong id="studio-stats-total">—</strong><span>Касаний</span>
-              <strong id="studio-stats-mean">—</strong><span>В среднем на игрока</span>
-              <strong id="studio-stats-assigned">—</strong><span>Привязано</span>
-              <strong id="studio-stats-unknown">—</strong><span>Без игрока</span>
-            </div>
-            <div id="studio-stats-players" class="native-stats-players" aria-live="polite"></div>
-            <details id="studio-stats-diagnostics" class="native-stats-diagnostics hidden">
-              <summary>Версии источников и диагностика</summary>
-              <div id="studio-stats-source-details"></div>
-            </details>
-          </section>
+          <h2 id="studio-report-heading">Статистика игры</h2>
+          <p id="studio-stats-status" class="panel-note" role="status" aria-live="polite">Выберите проект для просмотра статистики.</p>
+          <div id="studio-native-stats-panel"><div id="studio-stats-summary" class="report-summary hidden" aria-live="polite">
+            <div><span>Розыгрыши</span><strong id="studio-stats-rallies">—</strong></div>
+            <div><span>Касания</span><strong id="studio-stats-total">—</strong></div>
+            <div><span>Атаки</span><strong id="studio-stats-attacks">—</strong></div>
+            <div><span>Блоки</span><strong id="studio-stats-blocks">—</strong></div>
+          </div>
+          <p class="panel-note">Розыгрыши и касания предварительные; атаки и блоки определены автоматически и требуют проверки.</p>
+          </div>
+          <h3>Игроки</h3>
+          <div id="studio-stats-players" class="report-players" aria-live="polite"></div>
         </section>
         <footer class="footer">Volleyball Studio — анализ матчей, игроков и видеомонтаж. Исторические данные не изменяются.</footer>
       </div>

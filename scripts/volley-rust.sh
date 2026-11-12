@@ -117,6 +117,13 @@ stop_owned(){
 # The native ONNX Runtime GPU library is installed in the WSL user's
 # private runtime directory. UI works without it, GPU jobs do not.
 native_ort_root="$HOME/.local/share/volley-rust/ort-1.22.0"
+if [[ "$openvino_lib" == __not_configured__ ]];then
+  detected_openvino="${VOLLEY_OPENVINO_C_LIB:-}"
+  if [[ -z "$detected_openvino" ]];then
+    detected_openvino="$(bash "$repo/scripts/find-openvino-runtime.sh" "$HOME")"
+  fi
+  if [[ -n "$detected_openvino" ]];then openvino_lib="$detected_openvino";fi
+fi
 if [[ "$ort_lib" == __not_configured__ &&
       -s "$native_ort_root/lib/libonnxruntime.so.1.22.0" ]];then
   ort_lib="$native_ort_root/lib/libonnxruntime.so.1.22.0"
@@ -149,7 +156,7 @@ doctor(){
   for model in \
     models/VballNetV4c_seq9_grayscale_20260908_213829.onnx \
     models/RAVEL-VB-013-9f.onnx \
-    ov/person-reidentification-retail-0287.xml;do
+    models/openvino/person-reidentification-retail-0287.xml;do
     if [[ ! -s "$repo/$model" ]];then
       echo "Missing model: $model" >&2;return 1
     fi
@@ -234,6 +241,7 @@ case "$action" in
       export VOLLEY_RUST_DATA_ROOT="$data_root"
     fi
     export VOLLEY_RUST_BIND="$bind" VOLLEY_REPOSITORY_ROOT="$repo"
+    export VOLLEY_DEV_UI_ROOT="$repo/rust/volley-app/static"
     configure_ort_environment
     if [[ "$openvino_lib" != __not_configured__ ]];then
       [[ -f "$openvino_lib" ]]||{ echo "OpenVINO library missing" >&2;exit 2; }

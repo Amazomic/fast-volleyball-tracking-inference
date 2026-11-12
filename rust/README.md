@@ -22,7 +22,7 @@ and `cargo test --workspace --offline` from this directory. GPU smoke:
 `bash ../scripts/ci/smoke_rust_ort.sh /path/to/libonnxruntime.so cuda full`.
 
 OpenVINO person ReID uses volley-inference/src/reid_openvino.rs and the
-bundled ov/person-reidentification-retail-0287 model. Configure the absolute
+bundled models/openvino/person-reidentification-retail-0287 model. Configure the absolute
 WSL path VOLLEY_OPENVINO_C_LIB and native LD_LIBRARY_PATH or pass the Windows
 launcher option -OpenvinoLibrary /absolute/wsl/path/libopenvino_c.so.
 Run cargo test --workspace --offline with VOLLEY_TEST_OPENVINO_C_LIB set
@@ -39,3 +39,8 @@ Existing Python source is retained only in Git history/checkpoint; legacy
 media and snapshots remain readable through Rust data adapters but are
 never silently modified. See `../docs/RUST_MIGRATION.md` for missing
 features, decisions and test evidence.
+## Development UI assets
+
+The local development launcher sets `VOLLEY_DEV_UI_ROOT` to `rust/volley-app/static`. In debug builds, HTML, CSS, SVG and JavaScript are read from that directory on each request with caching disabled. Refresh the browser after editing them. Release builds and debug builds without this variable use embedded assets. WASM and PNG remain embedded and require rebuilding the server.
+
+`static/ui-contract.txt` is the manually maintained UI/server contract version. Increase it whenever changing the backend API or WASM ABI in a way the UI depends on, in the same change as the UI. A running debug server rejects disk assets when the file differs from its compiled version or is missing; rebuild and restart it. This version check depends on developers updating the contract and cannot detect unmarked incompatibilities. The launcher does not restart an active server, and its existing active-job guard remains in effect.

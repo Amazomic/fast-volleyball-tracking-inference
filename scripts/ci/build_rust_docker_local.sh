@@ -13,7 +13,6 @@ trap 'rm -rf -- "$ctx"' EXIT
 mkdir -p "$ctx/prebuilt"
 cp "$release" "$ctx/prebuilt/volley-app"
 cp -a "$repo/models" "$ctx/models"
-cp -a "$repo/ov" "$ctx/ov"
 cp "$repo/Dockerfile" "$ctx/Dockerfile"
 # Only include the release binary and the models; Docker build does not
 # read or tar any user recordings, Python projects or local credentials.
@@ -24,8 +23,6 @@ cat > "$ctx/.dockerignore" <<'IGNORE'
 !prebuilt/volley-app
 !models/
 !models/**
-!ov/
-!ov/**
 IGNORE
 DOCKER_BUILDKIT=1 docker build --pull=false --progress plain \
   --target prebuilt -t volley-rust-stage82:local "$ctx"

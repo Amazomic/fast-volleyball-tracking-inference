@@ -24,6 +24,7 @@
                                          "rust/volley-app/src/reid_npz.rs",
                                          "rust/volley-app/src/reid_group_edits.rs",
                                          "rust/volley-app/src/native_player_tracks/reid_handlers.rs",
+                                         "rust/volley-app/src/native_player_tracks/photo_comparison.rs",
                                          "rust/volley-app/src/native_player_tracks/embedding_jobs.rs",
                                          "rust/volley-app/src/native_player_tracks/reference_store.rs"
                                      ],

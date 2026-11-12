@@ -15,6 +15,7 @@
     progress:$("studio-analysis-progress"),profileDelta:$("studio-analysis-profile-delta"),
     logPanel:$("studio-analysis-log-panel"),logOutput:$("studio-analysis-log-output"),
     logCurrent:$("studio-analysis-log-current"),logCount:$("studio-analysis-log-count"),
+    historyList:$("studio-history-list"),historyRefresh:$("studio-history-refresh"),historyMore:$("studio-history-more"),
     playerForm:$("studio-player-create"),playerName:$("studio-player-name"),
     playerList:$("studio-player-list"),playerCount:$("studio-player-count"),
     playerRefresh:$("studio-player-refresh")
@@ -26,6 +27,7 @@
     pipelineId:"",pipelineProject:"",pipelineTimer:null,
     starting:false,stopRequested:false,polling:false,pollErrors:0,completedId:"",
     logKey:"",logOffset:0,logBusy:false,logLastCall:"",logPending:null,
+    historyRows:[],historyFilter:"all",historyEpoch:0,historyOffset:0,
     revision:"absent",players:[],mutating:false,playersLoaded:false,
     projectMemberIds:new Set(),trackCoverScope:"",trackCovers:new Map()
   };
@@ -323,6 +325,92 @@
     if(pending&&pending.project_id===projectId())await loadLog(pending);
     else if(more&&state.logKey===key)await loadLog(status);
   };
+  const historyDuration=ms=>{
+    if(!Number.isFinite(ms)||ms<0)return "—";
+    const seconds=Math.floor(ms/1000),hours=Math.floor(seconds/3600);
+    return hours?hours+" ч "+Math.floor(seconds%3600/60)+" мин":
+      seconds>=60?Math.floor(seconds/60)+" мин "+seconds%60+" с":seconds+" с";
+  };
+  const historyLog=async(project,id,output)=>{
+    let after=0,more=true,rows=[];
+    try{
+      while(more){
+        const data=await get("/api/studio/pipeline/log",{project_id:project,id,after});
+        if(projectId()!==project)return;
+        if(data.schema!=="volley-studio-pipeline-log/1"||data.id!==id||
+          data.project_id!==project||!Array.isArray(data.entries)||
+          !Number.isSafeInteger(data.next_offset)||data.next_offset<after)
+          throw Error("Некорректный ответ журнала");
+        rows.push(...data.entries.map(formatLogRow));
+        more=data.has_more===true&&data.next_offset>after;
+        after=data.next_offset;
+      }
+      output.textContent=rows.length?rows.join("\n\n"):"Записей нет.";
+      return true;
+    }catch(error){output.textContent="Не удалось загрузить журнал: "+String(error.message||error);return false;}
+  };
+  const renderHistory=()=>{
+    clear(ui.historyList);
+    const rows=state.historyRows.filter(row=>state.historyFilter==="all"||
+      row.mode===state.historyFilter||!row.mode||row.mode==="full");
+    if(!rows.length){ui.historyList.textContent=state.historyRows.length?"На загруженных страницах запусков нет.":"Запусков пока нет.";return;}
+    const labels={gpu:"Нейросеть",post:"Постобработка",full:"Полный анализ"};
+    const statuses={queued:"В очереди",running:"Выполняется",complete:"Завершён",failed:"Ошибка",cancelled:"Отменён",interrupted:"Прерван"};
+    for(const row of rows){
+      const details=make("details","analysis-history-run"),summary=make("summary");
+      summary.append(make("strong","",(labels[row.mode]||labels.full)+" · "+String(row.video||"—")));
+      const date=Number.isFinite(row.started_ms)?new Date(row.started_ms).toLocaleString():"Дата недоступна";
+      summary.append(make("span","",date),make("span","",statuses[row.status]||String(row.status||"—")),
+        make("span","",historyDuration(row.duration_ms)));
+      if(row.result_reused===true)summary.append(make("span","","Готовый результат"));
+      else if(row.gpu_reused===true)summary.append(make("span","","GPU использован повторно"));
+      details.append(summary);
+      const body=make("div","analysis-history-detail"),stages=make("div","analysis-history-stages");
+      if(Array.isArray(row.stages)&&row.stages.length){
+        for(const stage of row.stages)stages.append(make("span","",String(stage.name||"Этап")+": "+historyDuration(stage.duration_ms)));
+      }else stages.textContent="Длительность этапов для этого запуска недоступна.";
+      body.append(stages);
+      if(row.error)body.append(make("p","",String(row.error)));
+      const log=make("details"),title=make("summary","","Журнал выполнения"),output=make("pre","analysis-run-log-output","Загрузка…");
+      log.append(title,output);body.append(log);details.append(body);
+      let loaded=false;
+      log.addEventListener("toggle",()=>{
+        if(log.open&&!loaded){loaded=true;historyLog(projectId(),row.id,output).then(ok=>{if(!ok)loaded=false;});}
+      });
+      ui.historyList.append(details);
+    }
+  };
+  const loadHistory=async(append=false)=>{
+    const project=projectId(),epoch=++state.historyEpoch,offset=append?state.historyOffset:0;
+    if(!append){state.historyRows=[];state.historyOffset=0;}
+    ui.historyMore.classList.add("hidden");
+    if(!project){ui.historyList.textContent="Выберите проект.";return;}
+    if(!append)ui.historyList.textContent="Загрузка истории…";
+    try{
+      const data=await get("/api/studio/pipeline/history",{project_id:project,offset});
+      if(epoch!==state.historyEpoch||project!==projectId())return;
+      if(data.schema!=="volley-studio-pipeline-history/1"||data.project_id!==project||!Array.isArray(data.runs)||
+        !Number.isSafeInteger(data.next_offset)||data.next_offset<offset)
+        throw Error("Некорректный ответ истории");
+      state.historyRows=append?state.historyRows.concat(data.runs):data.runs;
+      state.historyOffset=data.next_offset;
+      ui.historyMore.classList.toggle("hidden",data.has_more!==true);
+      renderHistory();
+    }catch(error){if(epoch===state.historyEpoch){
+      if(append)ui.historyMore.classList.remove("hidden");
+      else ui.historyList.textContent="Не удалось загрузить историю: "+String(error.message||error);
+    }}
+  };
+  ui.historyRefresh.addEventListener("click",()=>loadHistory());
+  ui.historyMore.addEventListener("click",()=>loadHistory(true));
+  for(const button of document.querySelectorAll("[data-history-filter]")){
+    button.addEventListener("click",()=>{
+      state.historyFilter=button.dataset.historyFilter;
+      for(const tab of document.querySelectorAll("[data-history-filter]"))
+        tab.setAttribute("aria-selected",String(tab===button));
+      renderHistory();
+    });
+  }
   const displayPipeline=(status,notifyCompletion=false)=>{
     if(!status||status.schema!=="volley-studio-pipeline/1")return;
     const percent=Number(status.progress_percent);
@@ -367,6 +455,7 @@
     if(!active&&status.id===state.pipelineId){
       stopPipelinePolling();
       state.pipelineId="";state.pipelineProject="";state.stopRequested=false;
+      loadHistory();
       if(status.status==="failed"||status.status==="interrupted")
         announce(runLabel+": "+String(status.error||stage),true);
     }
@@ -417,6 +506,7 @@
     const project=projectId(),old=ui.video.value;
     const token=runtime.beginLoad("analysis");
     state.analysisGeneration++;
+    loadHistory();
     if(!project){
       resetLog();
       clear(ui.video);ui.video.append(make("option","","Сначала выберите проект"));
@@ -474,6 +564,7 @@
           !/^[a-f0-9]{32}$/.test(String(response.id||"")))
         throw Error("Сервер не подтвердил создание анализа");
       state.pipelineId=response.id;state.pipelineProject=project;
+      loadHistory();
       resetLog();ui.logPanel.open=true;
       ui.progress.value=0;state.stopRequested=false;
       saveMessage(mode==="gpu"?"Запущен отдельный анализ: VballNet → RAVEL → объединение.":
@@ -540,7 +631,54 @@
         make("span","players-side-membership"+
           (state.projectMemberIds.has(player.id)?" is-linked":""),
           state.projectMemberIds.has(player.id)?"В проекте":"В библиотеке"));
-      card.append(avatar,meta);
+      const menu=make("details","players-side-menu");
+      const selectPlayer=make("button","players-side-select");
+      selectPlayer.type="button";
+      selectPlayer.ariaLabel="Показать привязанные Track ID игрока "+player.name;
+      selectPlayer.addEventListener("click",()=>window.dispatchEvent(
+        new CustomEvent("volley:player-gallery-select",{
+          detail:{project_id:projectId(),player_id:player.id,name:player.name}
+        })));
+      const toggle=make("summary","","⋮");
+      toggle.ariaLabel="Действия с фотографиями "+player.name;
+      const show=make("button","","Привязанные фото");show.type="button";
+      const attach=make("button","","Привязать фото от Track ID");attach.type="button";
+      attach.title="Выберите один Track ID. Он также будет привязан к этому игроку.";
+      const gallery=make("div","players-side-gallery");gallery.hidden=true;
+      show.addEventListener("click",async()=>{
+        menu.open=false;
+        if(!gallery.hidden){gallery.hidden=true;return;}
+        gallery.hidden=false;clear(gallery);
+        gallery.append(make("span","","Загрузка фото…"));
+        const project=projectId();
+        try{
+          const album=await post("/api/players/native/references",{
+            project_id:project,player_id:player.id,action:"read"
+          });
+          if(project!==projectId())return;
+          clear(gallery);
+          const seen=new Set();
+          for(const photo of Array.isArray(album.photos)?album.photos:[]){
+            if(seen.has(photo.image_sha256))continue;
+            seen.add(photo.image_sha256);
+            const img=make("img");img.loading="lazy";
+            img.alt="Фото игрока "+player.name+" · Track ID "+photo.track_id;
+            img.src="/api/players/library/photo?"+new URLSearchParams({
+              player_id:player.id,reference_id:photo.id
+            });
+            gallery.append(img);
+          }
+          if(!seen.size)gallery.append(make("span","","Сохранённых фото пока нет."));
+        }catch(error){clear(gallery);gallery.append(make("span","",String(error.message||error)));}
+      });
+      attach.addEventListener("click",()=>{
+        menu.open=false;
+        window.dispatchEvent(new CustomEvent("volley:enroll-selected-photo",{
+          detail:{project_id:projectId(),player_id:player.id}
+        }));
+      });
+      menu.append(toggle,show,attach);
+      card.append(avatar,meta,menu,gallery,selectPlayer);
       sidebar.append(card);
     }
   };
@@ -679,6 +817,7 @@
   });
   ui.project.addEventListener("change",()=>{
     resetLog();
+    state.historyEpoch++;state.historyRows=[];state.historyOffset=0;ui.historyMore.classList.add("hidden");ui.historyList.textContent="Выберите проект.";
     state.analysisGeneration++;
     // project-ready is the canonical data refresh event (no double fetch).
   });

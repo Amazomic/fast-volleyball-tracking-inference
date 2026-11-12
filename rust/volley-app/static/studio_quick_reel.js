@@ -62,24 +62,14 @@
     s.sources.push(...items);renderSources();
     if(items.length)note("Выбрано "+s.sources.length+" видео. Добавьте музыку и запустите рилс.");
   };
-  // Always open the file chooser in the user's BROWSER, synchronously inside
-  // a click/keyboard gesture. A server-side PowerShell dialog is not portable:
-  // Linux/WSL services may have no interactive desktop or user session.
-  // Browsers never reveal local absolute paths, so this flow streams an
-  // isolated temporary copy (see native/upload); it cannot link by path.
-  const openFilePicker=()=>{
-    if(s.busy||s.active||ui.files.disabled)return;
-    // Reset BEFORE showing the dialog: reselecting the same file must fire
-    // change again after a cancelled or failed upload.
-    ui.files.value="";
+  const openFilePicker=async()=>{
+    if(s.busy||s.active)return;
+    s.busy=true;controls();
     try{
-      if(typeof ui.files.showPicker==="function")ui.files.showPicker();
-      else ui.files.click();
-    }catch(error){
-      // File input click is supported in browsers without showPicker().
-      try{ui.files.click();}
-      catch(fallbackError){note("Не удалось открыть выбор файла: "+msg(fallbackError),true);}
-    }
+      const result=await post("/api/quick-reel/native/pick",{});
+      addSources(result.videos);
+    }catch(error){note("Выбор видео: "+msg(error),true);}
+    finally{s.busy=false;controls();}
   };
   const browserFiles=async(list)=>{
     if(s.busy||s.active)return;

@@ -59,6 +59,9 @@ async function scene(initial="idle"){
       });
       return body({id:job,status:"cancelled",stage_index:2,progress:34});
     }
+    if(url==="/api/quick-reel/native/pick"){
+      return body({videos:[{id:linked,name:"match.mp4",size_gb:0.01,copied:false}]});
+    }
     if(url==="/api/quick-reel/native/upload"){
       assert.equal(opts.method,"POST");
       assert.equal(opts.body.items.length,1);
@@ -76,7 +79,7 @@ async function scene(initial="idle"){
     }
     if(url==="/api/quick-reel/native/start"){
       const payload=JSON.parse(opts.body);
-      assert.deepEqual(payload.selection_ids,[copied]);
+      assert.deepEqual(payload.selection_ids,[linked]);
       assert.equal(payload.audio_file,"track_"+"d".repeat(32)+".wav");
       assert.equal(payload.project_id,undefined);
       state="running";
@@ -115,35 +118,11 @@ async function scene(initial="idle"){
   const a=await scene();
   const {$}=a;
   assert.equal($("start").disabled,true);
-  // Browser-owned chooser, never a Windows-only server-side PowerShell dialog.
-  $("drop").dispatch("keydown",{key:"Enter"});
-  assert.equal($("files").clickCount,1,"Keyboard Enter opens browser file picker");
-  $("drop").dispatch("keydown",{key:" "});
-  assert.equal($("files").clickCount,2,"Keyboard Space opens browser file picker");
-  $("drop").dispatch("click");
-  assert.equal($("files").clickCount,3,"Mouse click opens browser file picker");
-  assert.equal(a.requestLog.length,1,"Opening local chooser must not call backend");
-  assert.equal($("sources").children[0].textContent,"Видео ещё не выбраны",
-    "Cancelling file chooser keeps original selection");
-  $("browser").dispatch("click");
-  assert.equal($("files").clickCount,4,"Secondary button opens browser chooser");
-  assert.equal(a.requestLog.filter(r=>r.url==="/api/quick-reel/native/pick").length,0,
-    "Never use server-side Windows dialog on Linux, WSL or Windows");
-  $("files").showPicker=()=>{$("files").showCount=($("files").showCount||0)+1;};
-  $("drop").dispatch("click");
-  assert.equal($("files").showCount,1,"Browser showPicker API is supported");
-  $("files").showPicker=()=>{throw Error("Not allowed");};
-  $("drop").dispatch("click");
-  assert.equal($("files").clickCount,5,"showPicker failure uses native input.click fallback");
-  delete $("files").showPicker;
-  $("files").files=[{name:"match.mp4",size:1000}];
-  await $("files").dispatch("change");
-  await tick();
-  assert.equal($("files").value,"","Reset allows choosing the same file again");
-  assert.equal($("sources").children.length,1);
+  await $("browser").dispatch("click");
+  assert.equal(a.requestLog.filter(r=>r.url==="/api/quick-reel/native/pick").length,1);
+  assert.equal(a.requestLog.filter(r=>r.url==="/api/quick-reel/native/upload").length,0);
   assert.match($("sources").children[0].textContent,/match.mp4/);
-  assert.match($("sources").children[0].textContent,/временная копия/);
-  assert.equal(a.requestLog.filter(r=>r.url==="/api/quick-reel/native/upload").length,1);
+  assert.match($("sources").children[0].textContent,/ссылка на оригинал/);
   assert.equal($("start").disabled,true,"Quick Reel requires soundtrack");
   $("music").files=[{name:"music.wav",size:1500}];
   $("music").dispatch("change");
@@ -152,8 +131,7 @@ async function scene(initial="idle"){
   await $("start").dispatch("click");
   $("drop").dispatch("click");
   assert.equal(a.requestLog.filter(r=>r.url==="/api/quick-reel/native/start").length,1);
-  assert.equal($("files").clickCount,5,"Do not open picker while analysis is active");
-  assert.equal(a.requestLog.filter(r=>r.url==="/api/quick-reel/native/pick").length,0);
+  assert.equal(a.requestLog.filter(r=>r.url==="/api/quick-reel/native/pick").length,1);
   assert.equal($("cancel").classList.contains("hidden"),false);
   assert.equal($("progress").value,33);
   assert.match(a.launch.attributes.get("aria-label"),/GPU/);
@@ -203,4 +181,4 @@ async function scene(initial="idle"){
   assert.equal($("download").classList.contains("hidden"),true,
     "No completed audio/source verification means no download");
 }
-console.log("Quick Reel UI: universal browser chooser, upload/drop/release, keyboard/cancel/reselection, GPU progress, cancel, reconnect and MP4 passed");
+console.log("Quick Reel UI: original linking, upload/drop/release, GPU progress, cancel, reconnect and MP4 passed");

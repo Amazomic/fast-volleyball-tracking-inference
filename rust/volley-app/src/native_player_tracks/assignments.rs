@@ -66,8 +66,25 @@ pub(super) fn page(
     offset: usize,
     limit: usize,
 ) -> Result<Value, String> {
+    filtered_page(ctx, doc, version, offset, limit, None, None)
+}
+pub(super) fn filtered_page(
+    ctx: &Inputs,
+    doc: &Value,
+    version: &str,
+    offset: usize,
+    limit: usize,
+    view: Option<&str>,
+    player_id: Option<&str>,
+) -> Result<Value, String> {
     if limit == 0 || limit > 100 || offset > MAX_TRACKS {
         return Err("Invalid Track ID page size".into());
+    }
+    if !matches!(view, None | Some("unassigned") | Some("player"))
+        || (view == Some("player") && player_id.is_none_or(|id| !ctx.roster.contains_key(id)))
+        || (view != Some("player") && player_id.is_some())
+    {
+        return Err("Invalid Track ID gallery filter".into());
     }
     let assignments = doc["assignments"]
         .as_object()
@@ -105,8 +122,20 @@ pub(super) fn page(
         .iter()
         .filter(|id| ctx.tracks.contains_key(id))
         .count();
+    let matches = |id: &u64| match view {
+        Some("unassigned") => !reviewed.owners.contains_key(id),
+        Some("player") => reviewed.owners.get(id).map(String::as_str) == player_id,
+        _ => true,
+    };
+    let filtered_total = ctx.tracks.keys().filter(|id| matches(id)).count();
     let mut rows = Vec::new();
-    for (id, info) in ctx.tracks.iter().skip(offset).take(limit) {
+    for (id, info) in ctx
+        .tracks
+        .iter()
+        .filter(|(id, _)| matches(id))
+        .skip(offset)
+        .take(limit)
+    {
         let owner = reviewed.owners.get(id).map(String::as_str);
         rows.push(json!({
             "track_id":id,"first_frame":info.first,"last_frame":info.last,
@@ -132,6 +161,9 @@ pub(super) fn page(
         "evidence_source":ctx.evidence,
         "revision":version,"writable":ctx.can_write,
         "total_tracks":ctx.tracks.len(),"offset":offset,"limit":limit,
+        "filtered_total":filtered_total,
+        "unassigned_track_ids":ctx.tracks.keys().filter(|id| !reviewed.owners.contains_key(id)).copied().collect::<Vec<_>>(),
+        "comparison_track_ids":ctx.tracks.keys().filter(|id| !reviewed.owners.contains_key(id) && !excluded.contains(id)).copied().collect::<Vec<_>>(),
         "rally_track_ids":ctx.tracks.keys().copied().collect::<Vec<_>>(),
         "assigned_count":scoped_assigned,"excluded_count":scoped_excluded,
         "roster":roster,"tracks":rows,
@@ -201,12 +233,14 @@ pub(super) fn read_internal(state: &AppState, req: &TrackQuery) -> Result<Value,
     )?;
     let bytes = existing(&ctx.sidecar).map_err(storage::bad_request)?;
     let doc = validated(bytes.as_deref(), &ctx).map_err(storage::bad_request)?;
-    page(
+    filtered_page(
         &ctx,
         &doc,
         &revision(bytes.as_deref()),
         req.offset,
         req.limit,
+        req.view.as_deref(),
+        req.view_player_id.as_deref(),
     )
     .map_err(storage::bad_request)
 }

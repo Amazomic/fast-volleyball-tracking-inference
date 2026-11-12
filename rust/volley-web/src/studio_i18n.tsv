@@ -4,8 +4,8 @@
 Каждый запуск выполняет новый GPU и CPU анализ. Результаты проектов не переиспользуются. Только подготовленные видео могут быть взяты из общего кэша. Формат: вертикальный 9:16 с музыкой.	Every run performs fresh GPU and CPU analysis. Project inference is never reused; only video preparation may be cached. Output is vertical 9:16 with music.
 Нажмите для выбора видео на устройстве	Click to select videos on your device
 Или перетащите файлы сюда	Or drag files here
-Работает в Windows, Linux и macOS. До 30 файлов.	Works on Windows, Linux and macOS. Up to 30 files.
-Выбранные файлы загружаются в отдельное хранилище Rust (до 32 ГиБ на файл). Оригиналы остаются без изменений. Браузер не передаёт полный путь к файлу.	Selected files are uploaded to separate project storage (up to 32 GiB each). Originals are unchanged. Browsers do not reveal full local paths.
+Выбор оригиналов в Windows и WSL. До 30 файлов.	Select originals on Windows and WSL. Up to 30 files.
+Через выбор файлов добавляется ссылка на оригинал. При перетаскивании браузер создаёт временную копию (до 32 ГиБ на файл).	Choosing files links to the originals. Dragging files creates temporary copies (up to 32 GiB each).
 Видео ещё не выбраны	No videos selected
 Загрузите музыку перед запуском. Используются параметры профиля по умолчанию, без повторного использования GPU-результатов.	Add music before starting. Default GPU/CPU settings apply; inference is not reused.
 Ожидание выбора видео.	Waiting for video selection.
@@ -276,3 +276,16 @@ RTMPose · шаг кадров (1–9)	RTMPose · frame stride (1–9)
 Включено (геометрия — резерв)	Enabled (geometry fallback)
 Только геометрия	Geometry only
 Для анализа порядок углов важен: 1 → 2 вдоль одной длинной боковой линии, 3 → 4 обратно вдоль противоположной. Сетка находится посередине между короткими лицевыми линиями.	Corner order matters for analysis: 1 → 2 along one long sideline, 3 → 4 back along the opposite sideline. The net lies halfway between the short end lines.
+Статистика игры	Game statistics
+Выберите проект для просмотра статистики.	Select a project to view statistics.
+Атаки	Attacks
+Блоки	Blocks
+Розыгрыши и касания предварительные; атаки и блоки определены автоматически и требуют проверки.	Rallies and touches are provisional; attacks and blocks are automatically estimated and require review.
+История анализов	Analysis history
+Тип запусков	Run type
+Нейросеть	Neural network
+Запусков пока нет.	No runs yet.
+Журнал выполнения	Execution log
+Длительность этапов для этого запуска недоступна.	Stage durations are unavailable for this run.
+Выберите проект.	Select a project.
+Показать ещё	Show more
