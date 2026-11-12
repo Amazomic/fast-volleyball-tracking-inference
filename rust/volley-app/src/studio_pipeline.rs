@@ -487,11 +487,13 @@ fn cpu_lineage_valid(project: &Path, request: &StartRequest, saved: &Value) -> b
         && touches["source_replay_id"] == replay
         && touches["project_id"] == request.project_id
         && touches["video"] == request.video
+        && touches["court_revision"] == saved["court_revision"]
         && rallies["schema"] == "volley-native-cpu-rally-proposals/1"
         && rallies["state"] == "provisional_rally_segments"
         && rallies["rally_run_id"] == rally
         && rallies["source_replay_id"] == replay
         && rallies["source_touch_id"] == touch
+        && rallies["court_revision"] == touches["court_revision"]
         && rallies["project_id"] == request.project_id
         && rallies["video"] == request.video
 }
@@ -533,6 +535,13 @@ fn find_reusable(
     }
     paths.sort_by_key(|entry| std::cmp::Reverse(entry.0));
     let project = projects::project_root(state).join(&request.project_id);
+    // Real execution validates the court snapshot before attempting reuse.
+    // In synthetic version tests, the optional source store is absent.
+    let court_revision =
+        crate::video_edits::court_snapshot(state, &request.project_id, &request.video)
+            .ok()
+            .flatten()
+            .map(|court| court.revision);
     for (_, id) in paths {
         let Ok(file) = status_path(&root, &id) else {
             continue;
@@ -550,6 +559,7 @@ fn find_reusable(
             && saved["pipeline_complete"] == true
             && saved["profile"]["post"]
                 == serde_json::to_value(&request.post).unwrap_or(Value::Null)
+            && saved["court_revision"] == json!(court_revision)
             && cpu_lineage_valid(&project, request, &saved)
         {
             matches.full = Some(saved);
@@ -857,6 +867,11 @@ async fn pipeline(
     let (bytes, mtime_ns) = crate::inference_stream::source_stamp(&prepared)?;
     let identity = json!({"bytes":bytes,"mtime_ns":mtime_ns});
     status["source_identity"] = identity.clone();
+    let court_revision =
+        crate::video_edits::court_snapshot(app, &request.project_id, &request.video)
+            .map_err(reason)?
+            .map(|court| court.revision);
+    status["court_revision"] = json!(court_revision);
     save(path, status)?;
     let current_id = status["id"].as_str().unwrap_or_default();
     log_event(
@@ -1131,6 +1146,9 @@ async fn pipeline(
     )
     .await?;
     let touch_id = require_id(&touches, "touch_id")?;
+    if touches["court_revision"] != status["court_revision"] {
+        return Err("Court calibration changed during CPU processing".into());
+    }
     status["cpu_runs"]["touches"] = json!(touch_id);
     save(path, status)?;
     log_event(

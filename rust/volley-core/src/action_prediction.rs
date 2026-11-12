@@ -67,6 +67,7 @@ pub struct ActionPrediction {
 pub enum PredictionMethod {
     ContactGeometryV1,
     PoseKeypointsV1,
+    CourtGeometryV1,
 }
 
 impl ActionPrediction {
@@ -80,7 +81,9 @@ impl ActionPrediction {
             && (0.0..=4.0).contains(&self.posture_ratio)
             && matches!(
                 self.method,
-                PredictionMethod::ContactGeometryV1 | PredictionMethod::PoseKeypointsV1
+                PredictionMethod::ContactGeometryV1
+                    | PredictionMethod::PoseKeypointsV1
+                    | PredictionMethod::CourtGeometryV1
             )
     }
 }

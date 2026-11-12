@@ -109,11 +109,16 @@ pub async fn get(
 // Coordinates are normalized against the *image*, not the editing stage.
 // The extra margin permits estimated court corners outside the camera view.
 fn court_is_valid(court: &[[f64; 2]]) -> bool {
-    (court.is_empty() || court.len() == 4)
-        && court
-            .iter()
-            .flatten()
-            .all(|v| v.is_finite() && (-0.5..=1.5).contains(v))
+    court.is_empty()
+        || (court.len() == 4
+            && court
+                .iter()
+                .flatten()
+                .all(|v| v.is_finite() && (-0.5..=1.5).contains(v))
+            && volley_core::court_geometry::CourtTransform::new([
+                court[0], court[1], court[2], court[3],
+            ])
+            .is_ok())
 }
 
 pub async fn set(
@@ -193,6 +198,21 @@ mod tests {
         ]));
     }
     #[test]
+    fn impossible_court_mapping_cannot_be_saved() {
+        assert!(!court_is_valid(&[
+            [0.1, 0.1],
+            [0.9, 0.9],
+            [0.9, 0.1],
+            [0.1, 0.9]
+        ]));
+        assert!(!court_is_valid(&[
+            [0.1, 0.1],
+            [0.5, 0.5],
+            [0.9, 0.9],
+            [0.1, 0.9]
+        ]));
+    }
+    #[test]
     fn draft_revision_changes_with_source_or_persisted_edit() {
         let path =
             std::env::temp_dir().join(format!("video-edit-revision-{}", uuid::Uuid::new_v4()));
@@ -213,4 +233,52 @@ mod tests {
         );
         fs::remove_file(path).unwrap();
     }
+}
+
+/// A source-scoped, immutable CPU calibration snapshot.
+#[derive(Clone, Debug)]
+pub(crate) struct CourtSnapshot {
+    pub(crate) transform: volley_core::court_geometry::CourtTransform,
+    pub(crate) revision: String,
+}
+
+/// The CPU pipeline reads the same saved court.json-equivalent as the editor.
+/// A change of any of the four corners creates a different CPU lineage,
+/// without invalidating the previously computed GPU fusion.
+pub(crate) fn court_snapshot(
+    state: &AppState,
+    project_id: &str,
+    video: &str,
+) -> Result<Option<CourtSnapshot>, storage::ApiError> {
+    let path = edit_path(state, project_id, video)?;
+    if fs::symlink_metadata(&path).is_ok_and(|m| m.file_type().is_symlink() || !m.is_file()) {
+        return Err(storage::bad_request("Unsafe court calibration file"));
+    }
+    let Some(record) = storage::read_json(&path)? else {
+        return Ok(None);
+    };
+    if record["schema"] != "volley-video-edit/1"
+        || record["project_id"] != project_id
+        || record["video"] != video
+    {
+        return Err(storage::bad_request(
+            "Court calibration has different source identity",
+        ));
+    }
+    let points: Vec<[f64; 2]> = serde_json::from_value(record["court"].clone())
+        .map_err(|_| storage::bad_request("Invalid saved court coordinates"))?;
+    if points.is_empty() {
+        return Ok(None);
+    }
+    let corners: [[f64; 2]; 4] = points
+        .try_into()
+        .map_err(|_| storage::bad_request("Court calibration requires exactly four corners"))?;
+    let transform =
+        volley_core::court_geometry::CourtTransform::new(corners).map_err(storage::bad_request)?;
+    let bytes = serde_json::to_vec(&corners)
+        .map_err(|e| storage::internal(format!("Serialize court revision: {e}")))?;
+    Ok(Some(CourtSnapshot {
+        transform,
+        revision: format!("{:x}", Sha256::digest(bytes)),
+    }))
 }

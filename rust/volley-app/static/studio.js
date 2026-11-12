@@ -1100,6 +1100,12 @@
       const pill=make("span","event-pill",clock(evidence.frame_index)+" · "+label);
       pill.title=kind?"Автоматический прогноз, не подтверждён человеком":
         "Найдено физическое касание без достаточно надёжных данных для определения типа";
+      if(evidence.court){
+        const c=evidence.court;
+        const side=c.side==="near"?"ближняя":c.side==="far"?"дальняя":"—";
+        pill.title+=" · Площадка: "+side+" сторона, x="+Number(c.x_m).toFixed(1)+" м, y="+Number(c.y_m).toFixed(1)+" м"+
+          (c.near_net?" · у сетки":"")+(c.in_serve_zone?" · зона подачи":"");
+      }
       ui.events.append(pill);
     }
     ui.emptyVideo.classList.add("hidden");

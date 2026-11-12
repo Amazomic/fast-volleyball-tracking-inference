@@ -93,6 +93,9 @@ pub struct PhysicalTouchCandidate {
     /// Unverified, source-backed geometry hypothesis; never a reviewed game action.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub action_prediction: Option<ActionPrediction>,
+    /// Player-foot projection on the user-calibrated court, if available.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub court: Option<crate::court_geometry::CourtContactEvidence>,
     pub physical_motion_supported: bool,
     pub athlete_identity_verified: bool,
 }
@@ -333,6 +336,7 @@ pub fn evaluate_block(
             velocity_residual_px_frame: touch.velocity_residual_px_frame,
             technique: "unknown_touch",
             action_prediction,
+            court: None,
             physical_motion_supported: true,
             athlete_identity_verified: false,
         });
@@ -376,6 +380,7 @@ pub fn evaluate_block(
             velocity_residual_px_frame: candidate.motion.residual,
             technique: "unknown_touch",
             action_prediction,
+            court: None,
             physical_motion_supported: true,
             athlete_identity_verified: false,
         });

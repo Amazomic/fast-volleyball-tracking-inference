@@ -92,6 +92,8 @@ pub(crate) struct NativeMotion {
     technique: String,
     #[serde(default)]
     action_prediction: Option<ActionPrediction>,
+    #[serde(default)]
+    court: Option<volley_core::court_geometry::CourtContactEvidence>,
     physical_motion_supported: bool,
     athlete_identity_verified: bool,
 }
@@ -119,6 +121,9 @@ impl NativeMotion {
                 .action_prediction
                 .as_ref()
                 .is_none_or(|prediction| self.provisional_track_id.is_some() && prediction.valid())
+            && self
+                .court
+                .is_none_or(|court| self.provisional_track_id.is_some() && court.valid())
             && self
                 .provisional_track_id
                 .is_none_or(|id| id > 0 && id <= i64::MAX as u64)
@@ -733,6 +738,9 @@ fn generate(run: &ValidatedRun, choice: Choice) -> Result<PreviewContent, String
                 detail["frame_index"] = json!(event.frame_index);
                 detail["ball_position_px"] = json!([event.ball_x_px, event.ball_y_px]);
                 detail["action_prediction"] = json!(event.action_prediction);
+                if event.court.is_some() {
+                    detail["court"] = json!(event.court);
+                }
                 row["motion_events"]
                     .as_array_mut()
                     .ok_or("Invalid motion event card")?
@@ -1073,6 +1081,34 @@ mod tests {
         assert!(!RallyWindows { intervals: vec![] }.contains(100));
     }
 
+    #[test]
+    fn motion_court_context_roundtrip_is_source_bounded() {
+        let mut row = json!({
+            "frame_index":115, "provisional_track_id":3,
+            "probability":0.93, "ball_x_px":150.0, "ball_y_px":100.0,
+            "motion_frame_index":115, "direction_change_deg":100.0,
+            "speed_before_px_frame":4.0, "speed_after_px_frame":11.0,
+            "velocity_residual_px_frame":8.0, "technique":"unknown_touch",
+            "action_prediction":{
+                "kind":"block","method":"court_geometry_v1",
+                "evidence_score":0.86,"depth_ratio":-0.12,"posture_ratio":0.4
+            },
+            "court":{
+                "x_m":-0.45,"y_m":1.0,"side":"near",
+                "near_net":true,"in_serve_zone":false
+            },
+            "physical_motion_supported":true, "athlete_identity_verified":false
+        });
+        let event: NativeMotion = serde_json::from_value(row.clone()).unwrap();
+        assert!(event.valid(400, 640, 360));
+        assert_eq!(
+            event.court.unwrap().side,
+            volley_core::court_geometry::CourtSide::Near
+        );
+        row["court"]["x_m"] = json!(-20.0);
+        let malformed: NativeMotion = serde_json::from_value(row).unwrap();
+        assert!(!malformed.valid(400, 640, 360));
+    }
     fn fixture() -> (ValidatedRun, PathBuf) {
         let root =
             std::env::temp_dir().join(format!("rally-evidence-preview-{}", uuid::Uuid::new_v4()));

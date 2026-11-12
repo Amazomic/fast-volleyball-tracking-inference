@@ -3,6 +3,7 @@ mod analysis_runs;
 #[cfg(test)]
 mod api_http_tests;
 mod catalog;
+mod court_touch;
 mod cpu_rallies;
 mod cpu_retrack;
 mod cpu_touches;

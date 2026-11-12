@@ -2,10 +2,11 @@
 //! native CPU Track IDs and selected-ball proposals, never rerunning ONNX.
 //! These events are not yet authoritative game/rally/athlete statistics.
 use crate::{
+    court_touch,
     cpu_retrack::{opaque_id, safe_file, safe_folder, BoundedReader},
     inference_stream, native_preview_pose, preparation, project_guard, projects,
     storage::{self, ApiError, ApiResult},
-    AppState,
+    video_edits, AppState,
 };
 use axum::{
     extract::{Query, State},
@@ -24,6 +25,7 @@ use std::{
 };
 use uuid::Uuid;
 use volley_core::{
+    court_geometry::CourtTransform,
     fusion::Candidate,
     pose_classification::{self, PoseEvidence},
     touch_pipeline::{
@@ -245,6 +247,7 @@ pub(crate) fn detect_stream(
         height,
         settings,
         None,
+        None,
     )
 }
 
@@ -258,6 +261,7 @@ fn detect_stream_with_pose(
     height: u32,
     settings: TouchSettings,
     pose_source: Option<(&Path, &str)>,
+    court: Option<&CourtTransform>,
 ) -> Result<(String, u64, u64), String> {
     settings.validate()?;
     if count == 0 || count > 48 * 3600 * 30 {
@@ -303,9 +307,19 @@ fn detect_stream_with_pose(
                 .take(n)
                 .cloned()
                 .collect::<Vec<_>>();
-            let mut events = evaluate_block(&block, width, height, start, end, settings)?;
+            let filtered;
+            let evidence_frames: &[TouchFrame] = if let Some(calibration) = court {
+                filtered = court_touch::filter_on_court(&block, calibration);
+                &filtered
+            } else {
+                &block
+            };
+            let mut events = evaluate_block(evidence_frames, width, height, start, end, settings)?;
             if let Some((root, fusion)) = pose_source {
-                refine_pose_events(&mut events, &block, width, height, root, fusion)?;
+                refine_pose_events(&mut events, evidence_frames, width, height, root, fusion)?;
+            }
+            if let Some(calibration) = court {
+                court_touch::annotate(&mut events, evidence_frames, calibration);
             }
             for event in events {
                 motion_candidates += 1;
@@ -415,6 +429,7 @@ pub(crate) fn process(state: &AppState, req: &TouchRequest) -> Result<Value, Api
             "CPU Touch requires 30-fps prepared media dimensions",
         ));
     }
+    let court_calibration = video_edits::court_snapshot(state, &req.project_id, &req.video)?;
     let project_dir = projects::project_root(state).join(&req.project_id);
     safe_folder(&project_dir).map_err(storage::bad_request)?;
     let replay_root = project_dir.join("native_cpu_replays");
@@ -495,6 +510,7 @@ pub(crate) fn process(state: &AppState, req: &TouchRequest) -> Result<Value, Api
             settings,
             req.pose_classification
                 .then_some((project_dir.as_path(), fusion_id.as_str())),
+            court_calibration.as_ref().map(|value| &value.transform),
         )?;
         if inference_stream::source_stamp(prepared)? != (size, mtime) {
             return Err("Prepared source changed during CPU Touch replay".into());
@@ -513,6 +529,8 @@ pub(crate) fn process(state: &AppState, req: &TouchRequest) -> Result<Value, Api
             "width":dimensions.width,"height":dimensions.height,"fps":30,
             "frames":frames,
             "settings":settings,
+            "court_revision":court_calibration.as_ref().map(|c| &c.revision),
+            "court_context_enabled":court_calibration.is_some(),
             "motion_supported_proposals_before_dedup":raw,
             "touch_candidates":events,
             "method":"RAVEL Touch peaks + motion-backed geometry + optional RTMPose17 refinement",
@@ -659,6 +677,7 @@ mod tests {
             speed_after_px_frame: 13.0,
             velocity_residual_px_frame: 12.0,
             technique: "unknown_touch",
+            court: None,
             action_prediction: Some(ActionPrediction {
                 kind: ActionKind::Attack,
                 evidence_score: 0.87,

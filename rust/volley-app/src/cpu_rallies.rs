@@ -89,6 +89,8 @@ struct MotionContact {
     technique: String,
     #[serde(default)]
     action_prediction: Option<ActionPrediction>,
+    #[serde(default)]
+    court: Option<volley_core::court_geometry::CourtContactEvidence>,
     physical_motion_supported: bool,
     athlete_identity_verified: bool,
 }
@@ -101,6 +103,9 @@ impl MotionContact {
             || self.action_prediction.as_ref().is_some_and(|prediction| {
                 self.provisional_track_id.is_none() || !prediction.valid()
             })
+            || self
+                .court
+                .is_some_and(|ctx| self.provisional_track_id.is_none() || !ctx.valid())
             || self
                 .provisional_track_id
                 .is_some_and(|id| id == 0 || id > i64::MAX as u64)
@@ -397,6 +402,14 @@ pub(crate) fn process(state: &AppState, request: &RallyRequest) -> Result<Value,
     let touch_dir = touch_root.join(&request.touch_id);
     let tracked = source_manifest(&track_dir, "CPU Track ID").map_err(storage::bad_request)?;
     let contacts = source_manifest(&touch_dir, "CPU Touch").map_err(storage::bad_request)?;
+    let current_court_revision =
+        crate::video_edits::court_snapshot(state, &request.project_id, &request.video)?
+            .map(|snapshot| snapshot.revision);
+    if contacts["court_revision"] != json!(current_court_revision) {
+        return Err(storage::bad_request(
+            "Touch results were computed from an outdated court markup",
+        ));
+    }
     let identity = json!({"bytes":size,"mtime_ns":mtime});
     if tracked["schema"] != "volley-native-cpu-tracking/1"
         || tracked["state"] != "provisional_tracklets_rebuilt"
@@ -501,6 +514,8 @@ pub(crate) fn process(state: &AppState, request: &RallyRequest) -> Result<Value,
             "width":dimensions.width,"height":dimensions.height,"fps":30,
             "frames":frames,
             "settings":settings,
+            "court_revision":contacts["court_revision"],
+            "court_context_enabled":contacts["court_context_enabled"],
             "touch_candidates_ingested":output.ingested_touch_candidates,
             "physical_touch_player_gate":"same_frame_verified_cpu_track",
             "physical_touch_ball_gate":"same_frame_selected_ball",

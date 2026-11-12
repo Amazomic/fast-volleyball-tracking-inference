@@ -2,6 +2,7 @@ pub mod action_prediction;
 pub mod action_review;
 pub mod continuity;
 pub mod contracts;
+pub mod court_geometry;
 pub mod event_evidence;
 pub mod evidence_source;
 pub mod fusion;

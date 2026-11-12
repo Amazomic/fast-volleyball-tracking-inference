@@ -275,3 +275,4 @@ RTMPose · шаг кадров (1–9)	RTMPose · frame stride (1–9)
 Учитывать кисти, локти и плечи RTMPose	Use RTMPose wrists, elbows and shoulders
 Включено (геометрия — резерв)	Enabled (geometry fallback)
 Только геометрия	Geometry only
+Для анализа порядок углов важен: 1 → 2 вдоль одной длинной боковой линии, 3 → 4 обратно вдоль противоположной. Сетка находится посередине между короткими лицевыми линиями.	Corner order matters for analysis: 1 → 2 along one long sideline, 3 → 4 back along the opposite sideline. The net lies halfway between the short end lines.
