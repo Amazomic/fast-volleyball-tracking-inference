@@ -225,19 +225,27 @@
             const source=primary?s.chain?.choices.find(item=>item.value===option.value):s.chain?.choices.find(item=>item.value===s.analysis);
             if(!source)return;
             const id=primary?source.id:option.value,kind=primary?source.kind:"rallies";
+            const project=s.project;
             let name=null;
             if(action==="rename"){
               name=window.prompt("Новое название результата",primary?source.display_name:(s.chain?.byAnalysis.get(s.analysis)||[]).find(item=>item.rally_run_id===id)?.display_name||"");
               if(name===null)return;
             }else if(!window.confirm(primary?"Удалить первичный анализ и все связанные результаты постобработки?":"Удалить результат постобработки?"))return;
+            button.disabled=true;
             try{
-              await post(action==="rename"?"/api/studio/analysis-rename":"/api/studio/analysis-edit",{project_id:s.project,video:source.video,kind,id,action,name});
+              await post(action==="rename"?"/api/studio/analysis-rename":"/api/studio/analysis-edit",{project_id:project,video:source.video,kind,id,action,name});
               invalidateCatalog();
-              const analysis=action==="delete"&&primary?"":s.analysis;
-              const run=action==="delete"&&!primary&&s.run===id?"":s.run;
-              close();await loadChain(analysis,run);
+              if(project!==s.project)return;
+              const deletesActiveAnalysis=action==="delete"&&primary&&s.analysis===option.value;
+              const deletesActiveRun=action==="delete"&&!primary&&s.run===id;
+              const analysis=deletesActiveAnalysis?"":s.analysis;
+              const run=deletesActiveAnalysis||deletesActiveRun?"":s.run;
+              // Refresh metadata without resetting the player when editing another version.
+              close();
+              await loadChain(analysis,run,!deletesActiveAnalysis&&!deletesActiveRun);
               message(action==="rename"?"Название сохранено.":"Результат удалён.","ok");
             }catch(error){failed(error);}
+            finally{button.disabled=false;}
           });
           row.append(button);
         }
@@ -922,7 +930,10 @@
   const chainSignature=chain=>JSON.stringify([
     chain.choices,[...chain.byAnalysis].map(([key,rows])=>[key,rows])
   ]);
-  const renderChain=async(chain,preferredAnalysis="",preferredRun="")=>{
+  const renderChain=async(chain,preferredAnalysis="",preferredRun="",retainCurrent=false)=>{
+    const unchanged=retainCurrent&&s.analysis===preferredAnalysis&&s.run===preferredRun&&
+      chain.choices.some(row=>row.value===s.analysis)&&
+      (!s.run||(chain.byAnalysis.get(s.analysis)||[]).some(row=>row.rally_run_id===s.run));
     s.chain=chain;
     options(ui.analysis,chain.choices,"value",item=>item.label,
       chain.choices.length?"Выберите первичный анализ":"Нет GPU-анализов");
@@ -930,17 +941,33 @@
     ui.analysis.value=chain.choices.some(row=>row.value===preferredAnalysis)?
       preferredAnalysis:chain.choices.length===1?chain.choices[0].value:"";
     refreshPicker(ui.analysis);
-    // setAnalysis may start the CPU preview, but does not await its heavy I/O.
+    if(unchanged){
+      // Only labels and available versions changed. Do not discard the active
+      // preview, playback position, marks or in-flight requests.
+      const rows=chain.byAnalysis.get(s.analysis)||[];
+      options(ui.run,rows,"rally_run_id",row=>
+        (window.VolleyStudioChain.stamp(row.created_at)||"CPU "+row.rally_run_id.slice(0,8))+
+        " · "+(row.display_name||((row.candidate_count||0)+" розыгрышей")),
+        rows.length?"Выберите постобработку":"Нет CPU-версий для анализа");
+      ui.run.disabled=!rows.length;
+      ui.run.value=s.run;
+      refreshPicker(ui.run);
+      return;
+    }
+    // If the selected source was deleted (including dependent data), switch
+    // to the remaining available versions using the normal reset flow.
     await setAnalysis(preferredRun);
   };
-  const loadChain=async(preferredAnalysis="",preferredRun="")=>{
+  const loadChain=async(preferredAnalysis="",preferredRun="",retainCurrent=false)=>{
     await window.VolleyballUi?.ready;
     const token=++s.chainEpoch,project=s.project;
-    reset();
-    s.chain=null;
-    options(ui.analysis,[],"value",x=>x,"Загрузка анализов…");
-    options(ui.run,[],"rally_run_id",x=>x,"Сначала выберите анализ");
-    ui.analysis.disabled=true;ui.run.disabled=true;
+    if(!retainCurrent){
+      reset();
+      s.chain=null;
+      options(ui.analysis,[],"value",x=>x,"Загрузка анализов…");
+      options(ui.run,[],"rally_run_id",x=>x,"Сначала выберите анализ");
+      ui.analysis.disabled=true;ui.run.disabled=true;
+    }
     if(!project){
       options(ui.analysis,[],"value",x=>x,"Сначала выберите проект");
       message("Выберите проект для просмотра цепочки обработок.");
@@ -949,7 +976,8 @@
     const videos=s.projectVideos.slice(0,40);
     const cached=chainSnapshot.read(project,videos);
     if(cached){
-      await renderChain(cached,preferredAnalysis,preferredRun);
+      await renderChain(cached,retainCurrent?s.analysis:preferredAnalysis,
+        retainCurrent?s.run:preferredRun,retainCurrent);
       if(token!==s.chainEpoch||s.project!==project)return;
     }else{
       message("Первичная загрузка списка GPU- и CPU-версий…");
@@ -988,8 +1016,10 @@
       chainSnapshot.save(project,videos,overviews,runs.runs);
       if(!s.chain||chainSignature(s.chain)!==chainSignature(fresh)){
         // Preserve edits to the current selection made while revalidating.
-        await renderChain(fresh,cached?(s.analysis||preferredAnalysis):preferredAnalysis,
-          cached?(s.run||preferredRun):preferredRun);
+        await renderChain(fresh,retainCurrent?s.analysis:
+          cached?(s.analysis||preferredAnalysis):preferredAnalysis,
+          retainCurrent?s.run:cached?(s.run||preferredRun):preferredRun,
+          retainCurrent);
       }
       if(unavailable)message("Не удалось прочитать стадии "+unavailable+
         " видео. Для части CPU-версий происхождение GPU не подтверждено.","error");

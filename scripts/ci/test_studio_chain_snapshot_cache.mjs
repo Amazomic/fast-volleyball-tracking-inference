@@ -69,7 +69,7 @@ const context={
     return path.includes("/runs?")?metadata:Promise.resolve(overview);
   }},
   reset:()=>{s.run="";s.generation++;s.items=[];},
-  options,loadPage:()=>{cardsRequested++;return new Promise(()=>{});},
+  options,refreshPicker(){},loadPage:()=>{cardsRequested++;return new Promise(()=>{});},
   loadTimeline:()=>Promise.resolve(),
   message:value=>msgs.push(value),failed:error=>{throw error;},
   console
