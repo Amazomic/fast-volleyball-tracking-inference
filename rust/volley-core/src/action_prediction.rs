@@ -66,6 +66,7 @@ pub struct ActionPrediction {
 #[serde(rename_all = "snake_case")]
 pub enum PredictionMethod {
     ContactGeometryV1,
+    PoseKeypointsV1,
 }
 
 impl ActionPrediction {
@@ -77,7 +78,7 @@ impl ActionPrediction {
             && (-2.0..=3.0).contains(&self.depth_ratio)
             && self.posture_ratio.is_finite()
             && (0.0..=4.0).contains(&self.posture_ratio)
-            && self.method == PredictionMethod::ContactGeometryV1
+            && matches!(self.method, PredictionMethod::ContactGeometryV1 | PredictionMethod::PoseKeypointsV1)
     }
 }
 

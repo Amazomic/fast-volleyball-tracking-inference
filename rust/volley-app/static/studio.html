@@ -178,6 +178,7 @@
                   <button type="button" id="studio-overlay-touches" class="video-overlay-toggle" aria-pressed="true" title="Показывать или скрывать касания">● Касания</button>
                   <button type="button" id="studio-overlay-trajectory" class="video-overlay-toggle" aria-pressed="true" title="Показывать или скрывать траекторию мяча">⌁ Траектория</button>
                   <button type="button" id="studio-overlay-players" class="video-overlay-toggle" aria-pressed="true" title="Показывать или скрывать рамки игроков">▢ Игроки</button>
+                  <button type="button" id="studio-overlay-pose" class="video-overlay-toggle" aria-pressed="false" title="Показывать точки суставов и скелеты RTMPose">♧ Скелеты</button>
                   <button type="button" id="studio-overlay-mode" class="video-overlay-toggle" aria-pressed="false">Обработанные</button>
                 </div>
                 <div id="studio-overlay-raw-controls" class="video-overlay-raw-controls hidden">
@@ -342,6 +343,10 @@
                 </div>
                 <div><label class="field-label" for="studio-gpu-stride">Шаг окон, кадров</label>
                   <input id="studio-gpu-stride" type="number" min="1" max="9" step="1" value="9" data-default="9"></div>
+                <div><label class="field-label" for="studio-gpu-pose-enabled">RTMPose-M · анализ поз игроков</label>
+                  <select id="studio-gpu-pose-enabled" data-default="1"><option value="1">Включён</option><option value="0">Выключен</option></select></div>
+                <div><label class="field-label" for="studio-gpu-pose-stride">RTMPose · шаг кадров (1–9)</label>
+                  <input id="studio-gpu-pose-stride" type="number" min="1" max="9" step="1" value="6" data-default="6"></div>
                 <div><label class="field-label" for="studio-gpu-memory">Лимит VRAM, МБ · 0 = без лимита</label>
                   <input id="studio-gpu-memory" type="number" min="0" max="131072" step="1" value="0" data-default="0"></div>
                 <div><label class="field-label" for="studio-gpu-threads">Потоки CPU</label>
@@ -404,6 +409,11 @@
                   <p>Новый Track ID → физические касания → розыгрыши. Не требует повторного GPU для самостоятельного CPU-пересчёта.</p></div>
                 <button id="studio-analysis-post-only" class="primary analysis-stage-launch" type="button" title="Запустить CPU на выбранной в шапке GPU-версии и сохранить новую постобработку">▶ Начать анализ</button>
               </div>
+              <div class="analysis-profile-subtitle">Классификация по позе</div>
+              <div class="analysis-profile-fields"><div>
+                <label class="field-label" for="studio-post-pose-classify">Учитывать кисти, локти и плечи RTMPose</label>
+                <select id="studio-post-pose-classify" data-default="1"><option value="1">Включено (геометрия — резерв)</option><option value="0">Только геометрия</option></select>
+              </div></div>
               <div class="analysis-profile-subtitle">Трекинг игроков</div>
               <div class="analysis-profile-fields">
                 <div><label class="field-label" for="studio-post-player-score">Мин. уверенность игрока</label><input id="studio-post-player-score" type="number" min="0.05" max="1" step="0.01" value="0.30" data-default="0.30"></div>

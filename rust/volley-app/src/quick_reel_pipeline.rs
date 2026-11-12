@@ -458,6 +458,7 @@ pub(super) async fn run_native_pipeline(
                 video: alias.clone(),
                 replay_id: replay_id.clone(),
                 settings: None,
+                pose_classification: false,
             },
             &workspace,
             "CPU: физические касания",

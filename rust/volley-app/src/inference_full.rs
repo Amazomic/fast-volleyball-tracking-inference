@@ -1024,6 +1024,7 @@ mod tests {
                 video: video.into(),
                 replay_id: cpu_replay["replay_id"].as_str().unwrap().into(),
                 settings: None,
+                pose_classification: false,
             },
         )
         .unwrap();

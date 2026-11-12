@@ -161,6 +161,10 @@ pub struct GpuProfile {
     stride: usize,
     gpu_memory_limit_mb: u64,
     cpu_threads: usize,
+    /// Run independent RTMPose GPU pose evidence for this fusion.
+    pose_enabled: bool,
+    /// Inter-frame stride for pose, independent from nine-frame Vball/RAVEL windows.
+    pose_stride: usize,
 }
 impl Default for GpuProfile {
     fn default() -> Self {
@@ -168,15 +172,32 @@ impl Default for GpuProfile {
             stride: 9,
             gpu_memory_limit_mb: 0,
             cpu_threads: 8,
+            pose_enabled: true,
+            pose_stride: 6,
         }
     }
 }
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct PostProfile {
     tracking: TrackingOptions,
     touches: TouchSettings,
     rallies: RallySettings,
+    #[serde(default = "default_pose_classification")]
+    pose_classification: bool,
+}
+fn default_pose_classification() -> bool {
+    true
+}
+impl Default for PostProfile {
+    fn default() -> Self {
+        Self {
+            tracking:TrackingOptions::default(),
+            touches:TouchSettings::default(),
+            rallies:RallySettings::default(),
+            pose_classification:true,
+        }
+    }
 }
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -384,6 +405,27 @@ fn gpu_lineage_valid(
         ) || raw["source_identity"] != *identity
             || raw["stride"] != request.gpu.stride
             || raw["sha256"] != fusion["sources"][source]["sha256"]
+        {
+            return false;
+        }
+    }
+    if request.gpu.pose_enabled {
+        let Some(pose_id) = saved["gpu_jobs"]["pose"].as_str().filter(|id| valid_id(id)) else {
+            return false;
+        };
+        let Some(pose) = saved_stage(project, "native_gpu_pose_runs", pose_id, "poses.jsonl") else {
+            return false;
+        };
+        if pose["schema"] != "volley-native-gpu-pose/1"
+            || pose["state"] != "pose_evidence_complete"
+            || pose["pose_run_id"] != pose_id
+            || pose["fusion_id"] != fusion_id
+            || pose["model_sha256"] != volley_inference::pose::MODEL_SHA256
+            || pose["stride"] != request.gpu.pose_stride
+            || pose["project_id"] != request.project_id
+            || pose["video"] != request.video
+            || pose["source_identity"] != *identity
+            || pose["source_fusion_sha256"] != fusion["sha256"]
         {
             return false;
         }
@@ -972,6 +1014,39 @@ async fn pipeline(
         }
     }
 
+    // RTMPose is a separate GPU evidence stage. It uses the immutable fusion
+    // source, never Track IDs, and is intentionally never executed in Post mode.
+    if request.mode.allows_gpu_execution() && request.gpu.pose_enabled
+        && status["gpu_jobs"]["pose"].as_str().is_none() {
+            if cancel.load(Ordering::Acquire) {
+                return Err("cancelled".into());
+            }
+            let fusion_id = require_id(status, "analysis_id")?;
+            progress(path, status, "GPU · RTMPose-M: позы игроков", 82.0)?;
+            log_native(
+                path,
+                "GPU · RTMPose-M",
+                "pose_inference::process",
+                json!({"fusion_id":fusion_id,"model":"RTMPose-M-Body7","stride":request.gpu.pose_stride,
+                    "threads":request.gpu.cpu_threads,"gpu_memory_limit_mb":request.gpu.gpu_memory_limit_mb}),
+            )?;
+            let _permit = app.inference_limit.acquire().await
+                .map_err(|e| format!("RTMPose inference limit: {e}"))?;
+            let pose = tokio::task::block_in_place(|| {
+                crate::pose_inference::process(
+                    app, &request.project_id, &request.video, &fusion_id,
+                    request.gpu.pose_stride, request.gpu.gpu_memory_limit_mb,
+                    request.gpu.cpu_threads, cancel, |p| {
+                        progress(path, status, "GPU · RTMPose-M: позы игроков", 82.0 + p*2.5)
+                    },
+                )
+            })?;
+            status["gpu_jobs"]["pose"] = pose["pose_run_id"].clone();
+            save(path,status)?;
+            log_event(path,"GPU · RTMPose-M","success",
+                &format!("Позы сохранены: samples={}, players={}",
+                    pose["sampled_frames"],pose["player_poses"]))?;
+    }
     if request.mode == PipelineMode::Gpu {
         progress(path, status, "Первичный GPU-анализ завершён", 99.9)?;
         return Ok(());
@@ -1027,6 +1102,7 @@ async fn pipeline(
             video: request.video.clone(),
             replay_id: replay_id.clone(),
             settings: Some(request.post.touches),
+            pose_classification: request.post.pose_classification,
         },
         cpu_touches::process,
     )
@@ -1189,6 +1265,7 @@ pub async fn start(
     if !(1..=9).contains(&request.gpu.stride)
         || !(1..=128).contains(&request.gpu.cpu_threads)
         || request.gpu.gpu_memory_limit_mb > 131072
+        || !(1..=9).contains(&request.gpu.pose_stride)
     {
         return Err(storage::bad_request(
             "GPU-профиль вне допустимых диапазонов",
@@ -1472,6 +1549,9 @@ mod branching_tests {
             "project_id":"abc123def456","video":"match.mp4"
         }))
         .unwrap();
+        // The historic fixture contains no RTMPose run, so its GPU profile
+        // must explicitly disable the newly introduced pose stage.
+        request.gpu.pose_enabled = false;
         let sha = "a".repeat(64);
         for (model, id) in [("ball", &gpu_ball), ("players", &gpu_players)] {
             emit(

@@ -99,3 +99,6 @@ node_modules/
 # Editor-generated timestamped backups (never part of a migration commit)
 *.bak.*
 /.studio-runtime/
+
+# Official pretrained pose weights: install locally, do not commit 54 MB binaries.
+models/RTMPose-M-Body7.onnx

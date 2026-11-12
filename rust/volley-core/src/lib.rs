@@ -60,3 +60,5 @@ mod tests {
         assert_eq!(ab, bbox_iou(b, a));
     }
 }
+
+pub mod pose_classification;

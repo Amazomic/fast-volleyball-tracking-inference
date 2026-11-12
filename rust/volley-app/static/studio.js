@@ -200,13 +200,14 @@
     canvas:$("studio-video-overlay"),status:$("studio-overlay-status"),
     rallies:$("studio-overlay-rallies"),touches:$("studio-overlay-touches"),
     trajectory:$("studio-overlay-trajectory"),players:$("studio-overlay-players"),
+    pose:$("studio-overlay-pose"),
     mode:$("studio-overlay-mode"),rawControls:$("studio-overlay-raw-controls"),
     rawBall:$("studio-raw-ball"),rawPlayer:$("studio-raw-player"),rawTouch:$("studio-raw-touch"),
     raw:false,
     actionFlags:{attack:true,block:true,serve:true,overhead_pass:true,dig:true,low_touch:true},
     source:null,cache:new Map(),
     fetching:new Set(),failed:new Map(),loop:0,
-    flags:{rallies:true,touches:true,trajectory:true,players:true}
+    flags:{rallies:true,touches:true,trajectory:true,players:true,pose:false}
   };
   try {
     const saved=JSON.parse(localStorage.getItem("volley:preview-overlays:v1")||"null");
@@ -215,7 +216,7 @@
         if(typeof saved[k]==="boolean")overlay.flags[k]=saved[k];
   }catch{}
   const updateOverlayToggles=()=>{
-    for(const key of ["rallies","touches","trajectory","players"]){
+    for(const key of ["rallies","touches","trajectory","players","pose"]){
       const button=overlay[key];
       button.setAttribute("aria-pressed",String(overlay.flags[key]));
     }
@@ -244,7 +245,7 @@
   };
   const overlayWindowStart=frame=>Math.max(0,Math.floor(frame/90)*90-60);
   const overlayWindowKey=(project,run,video,start)=>
-    [project,run,video,start,...(overlay.raw?["raw",overlay.rawBall.value,overlay.rawPlayer.value,overlay.rawTouch.value]:[])].join(":");
+    [project,run,video,start,...(overlay.flags.pose?["pose"]:[]),...(overlay.raw?["raw",overlay.rawBall.value,overlay.rawPlayer.value,overlay.rawTouch.value]:[])].join(":");
   // The API returns overlapping 180-frame windows every 90 frames.
   // Keep drawing from a previous window while the next one loads.
   const cachedOverlayForFrame=(project,run,video,frame)=>{
@@ -262,6 +263,7 @@
     overlay.fetching.add(key);
     request(url("/api/cpu/native/rallies/overlays",{
       project_id:project,rally_run_id:run,start_frame:start,count:180,
+      ...(overlay.flags.pose?{pose:true}:{}),
       ...(overlay.raw?{raw:true,ball_confidence:overlay.rawBall.value,player_confidence:overlay.rawPlayer.value,touch_confidence:overlay.rawTouch.value}:{})
     })).then(value=>{
       if(value.schema!=="volley-native-preview-overlay/1"||
@@ -273,7 +275,8 @@
       overlay.cache.set(key,value);
       while(overlay.cache.size>16)overlay.cache.delete(overlay.cache.keys().next().value);
       if(s.project===project&&s.run===run&&s.video===video){
-        overlayMessage("");
+        overlayMessage(overlay.flags.pose&&value.poses_available===false?
+          "У выбранного анализа нет сохранённых точек RTMPose. Запустите первичный GPU-анализ с RTMPose.":"");
         drawOverlay();
       }
     }).catch(error=>{
@@ -286,7 +289,7 @@
   const drawOverlay=()=>{
     const box=overlayContext(),source=overlay.source;
     if(!box||!source||!s.run||!s.video||!ui.video.src)return;
-    if(!overlay.flags.touches&&!overlay.flags.trajectory&&!overlay.flags.players)return;
+    if(!overlay.flags.touches&&!overlay.flags.trajectory&&!overlay.flags.players&&!overlay.flags.pose)return;
     const frame=Math.max(0,Math.floor(ui.video.currentTime*fps()+0.001));
     const project=s.project,run=s.run,video=s.video;
     const start=overlayWindowStart(frame);
@@ -325,6 +328,28 @@
       ctx.shadowColor="#1cb9ff";ctx.shadowBlur=5;ctx.stroke();ctx.shadowBlur=0;
     }
     const current=frames.find(row=>row.frame===frame);
+    if(overlay.flags.pose && current?.players?.length){
+      const edges=[[5,7],[7,9],[6,8],[8,10],[5,6],[5,11],[6,12],
+        [11,12],[11,13],[13,15],[12,14],[14,16]];
+      ctx.strokeStyle="#6af6ae";ctx.fillStyle="#f9d977";
+      ctx.lineWidth=2.25;ctx.lineCap="round";
+      for(const person of current.players){
+        const pose=person.pose;
+        if(!Array.isArray(pose)||pose.length!==17)continue;
+        const valid=i=>Array.isArray(pose[i])&&pose[i].length===3&&
+          pose[i].every(Number.isFinite)&&pose[i][2]>=0.3;
+        for(const [a,b] of edges){
+          if(!valid(a)||!valid(b))continue;
+          const [ax,ay]=point(pose[a]),[bx,by]=point(pose[b]);
+          ctx.beginPath();ctx.moveTo(ax,ay);ctx.lineTo(bx,by);ctx.stroke();
+        }
+        for(let i=0;i<pose.length;i++){
+          if(!valid(i))continue;
+          const [px,py]=point(pose[i]);
+          ctx.beginPath();ctx.arc(px,py,i===9||i===10?3.5:2.5,0,2*Math.PI);ctx.fill();
+        }
+      }
+    }
     if(overlay.raw){
       const raw=current?.raw;
       if(!raw)return;
@@ -397,7 +422,7 @@
     if(!item){overlay.cache.clear();overlay.failed.clear();}
     drawOverlay();
   };
-  for(const key of ["rallies","touches","trajectory","players"]){
+  for(const key of ["rallies","touches","trajectory","players","pose"]){
     overlay[key].addEventListener("click",()=>{
       overlay.flags[key]=!overlay.flags[key];
       updateOverlayToggles();

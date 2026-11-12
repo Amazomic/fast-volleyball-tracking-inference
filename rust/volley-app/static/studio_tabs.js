@@ -152,10 +152,13 @@
   const gpuProfile=()=>({
     stride:inputValue("studio-gpu-stride"),
     gpu_memory_limit_mb:inputValue("studio-gpu-memory"),
-    cpu_threads:inputValue("studio-gpu-threads")
+    cpu_threads:inputValue("studio-gpu-threads"),
+    pose_enabled:$("studio-gpu-pose-enabled").value==="1",
+    pose_stride:inputValue("studio-gpu-pose-stride")
   });
   // Mirrors volley-core's validated native defaults (no JS-only processing).
   const postProfile=()=>({
+    pose_classification:$("studio-post-pose-classify").value==="1",
     tracking:{
       min_player_score:inputValue("studio-post-player-score"),
       nms_iou:inputValue("studio-post-nms"),
@@ -184,7 +187,7 @@
       suggested_context_frames:inputValue("studio-post-context")
     }
   });
-  const allProfileFields=()=>[...ui.analysis.querySelectorAll("input[data-default]")];
+  const allProfileFields=()=>[...ui.analysis.querySelectorAll("input[data-default],select[data-default]")];
   const saveAnalysisSettings=()=>{
     const fields={};
     for(const input of allProfileFields()){
@@ -223,7 +226,7 @@
     const valid=gpuValid&&postValid;
     if(!valid)ui.profileDelta.textContent=invalid;
     if(valid){
-      const changed=allProfileFields().filter(item=>Number(item.value)!==Number(item.dataset.default));
+      const changed=allProfileFields().filter(item=>item.value!==item.dataset.default);
       ui.profileDelta.textContent=changed.length?
         "Изменено параметров: "+changed.length+
         ". При изменении GPU создаётся новый анализ; при изменении только CPU — новая постобработка.":
@@ -503,10 +506,10 @@
     if(!sidebar)return;
     clear(sidebar);
     const rows=[...state.players].filter(p=>
-      typeof p.id==="string"&&typeof p.name==="string"
+      typeof p.id==="string"&&typeof p.name==="string"&&state.projectMemberIds.has(p.id)
     ).sort((a,b)=>String(a.name).localeCompare(String(b.name),"ru"));
     if(!rows.length){
-      sidebar.append(make("div","players-sidebar-empty","Игроков ещё нет."));
+      sidebar.append(make("div","players-sidebar-empty","В проект пока не добавлены игроки."));
       return;
     }
     for(const player of rows){
@@ -651,7 +654,7 @@
     }finally{state.mutating=false;}
   });
   ui.playerRefresh.addEventListener("click",()=>loadPlayers().catch(failure));
-  for(const field of allProfileFields())field.addEventListener("input",()=>{
+  for(const field of allProfileFields())field.addEventListener(field.tagName==="SELECT"?"change":"input",()=>{
     updateProfile();saveAnalysisSettings();
   });
   ui.reset.addEventListener("click",event=>{event.preventDefault();resetProfile();});
@@ -705,6 +708,9 @@
       detail.player_ids:[]);
     renderSidebarPlayers();
     if(state.playersLoaded)renderPlayers();
+  });
+  window.addEventListener("volley:player-photo-saved",()=>{
+    if(state.tab==="players")loadPlayers().catch(failure);
   });
   window.addEventListener("volley:project-ready",()=>{
     state.playersLoaded=false;
