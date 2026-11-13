@@ -88,11 +88,12 @@ pub(super) fn native_reid_report(
         .into_iter()
         .map(|(id, player)| (id as i64, player))
         .collect::<std::collections::HashMap<_, _>>();
-    let excluded = reviewed
+    let mut excluded: std::collections::HashSet<i64> = reviewed
         .excluded
         .into_iter()
         .map(|id| id as i64)
         .collect::<std::collections::HashSet<_>>();
+    excluded.extend(owners.keys().copied());
     let report = reid::build_groups(
         &features,
         &stats,
@@ -171,19 +172,19 @@ pub(super) const MAX_REID_REVIEW_BYTES: u64 = 256 * 1024;
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReidReviewRequest {
-    pub(super) project_id: String,
-    pub(super) video: String,
-    pub(super) replay_id: String,
-    pub(super) expected_source_sha256: String,
+    pub(crate) project_id: String,
+    pub(crate) video: String,
+    pub(crate) replay_id: String,
+    pub(crate) expected_source_sha256: String,
     #[serde(default)]
-    pub(super) rally_run_id: Option<String>,
-    pub(super) action: String,
+    pub(crate) rally_run_id: Option<String>,
+    pub(crate) action: String,
     #[serde(default)]
-    pub(super) track_ids: Vec<u64>,
+    pub(crate) track_ids: Vec<u64>,
     #[serde(default)]
-    pub(super) expected_revision: Option<String>,
+    pub(crate) expected_revision: Option<String>,
     #[serde(default = "default_reid_threshold")]
-    pub(super) threshold_percent: u8,
+    pub(crate) threshold_percent: u8,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -376,7 +377,7 @@ pub(super) fn photo_match_candidates(
                 && reference.replay_id == ctx.replay_id
             {
                 if let Some(other) = ctx.tracks.get(&reference.track_id) {
-                    if track.first <= other.last && other.first <= track.last {
+                    if reference.track_id != id && tracks_co_visible(track, other) {
                         continue;
                     }
                 }
@@ -399,8 +400,8 @@ pub(super) fn photo_match_candidates(
         let mut rows = ranked.into_iter().collect::<Vec<_>>();
         rows.sort_by(|a, b| b.1 .0.total_cmp(&a.1 .0).then_with(|| a.0.cmp(&b.0)));
         if !rows.is_empty() {
-            matches.insert(id.to_string(), json!(rows.into_iter().take(3).map(|(player,(score,track_id))|
-                json!({"player_id":player,"name":ctx.roster[&player],"cosine_similarity":(score.min(1.0)*10000.0).round()/10000.0,
+            matches.insert(id.to_string(), json!(rows.into_iter().take(ctx.roster.len()).map(|(player,(score,track_id))|
+                json!({"player_id":player,"name":ctx.roster[&player],"cosine_similarity":score.min(1.0),
                     "reference_track_id":track_id,"reference_kind":"saved_photo"})).collect::<Vec<_>>()));
         }
     }
@@ -517,7 +518,23 @@ pub(super) fn review_response(
             })
         })
     });
-    for members in &doc.groups {
+    let assigned = identity["assignments"]
+        .as_object()
+        .ok_or("Assignments missing")?;
+    for group in &doc.groups {
+        let members = group
+            .iter()
+            .filter(|id| !assigned.contains_key(&id.to_string()))
+            .copied()
+            .collect::<Vec<_>>();
+        if members.len() < 2 {
+            continue;
+        }
+        let group_vectors = members
+            .iter()
+            .map(|id| vectors.get(id).map(Vec::as_slice))
+            .collect::<Option<Vec<_>>>();
+        let average = group_vectors.as_deref().and_then(reid::average_similarity);
         let key = members
             .iter()
             .map(u64::to_string)
@@ -528,9 +545,17 @@ pub(super) fn review_response(
             "id":format!("manual-{}", &digest[..16]),
             "track_ids":members.iter().map(u64::to_string).collect::<Vec<_>>(),
             "similarity":null,
+            "average_similarity":average,
             "source":"manual"
         }));
     }
+    groups.sort_by(|a, b| {
+        b["track_ids"]
+            .as_array()
+            .map_or(0, Vec::len)
+            .cmp(&a["track_ids"].as_array().map_or(0, Vec::len))
+            .then_with(|| a["id"].as_str().cmp(&b["id"].as_str()))
+    });
     let used = groups
         .iter()
         .flat_map(|group| {
@@ -576,12 +601,61 @@ pub(super) fn review_response(
         "auto_assign_enabled":false,"confirmed":false
     }))
 }
+pub(super) fn scope_review_groups(
+    result: &mut Value,
+    scope: &BTreeSet<u64>,
+    vectors: &BTreeMap<u64, Vec<f32>>,
+) -> Result<(), String> {
+    let groups = result["groups"]
+        .as_array_mut()
+        .ok_or("ReID groups missing")?;
+    for group in groups.iter_mut() {
+        let members = group["track_ids"]
+            .as_array()
+            .ok_or("ReID group IDs missing")?
+            .iter()
+            .filter_map(Value::as_str)
+            .filter_map(|id| id.parse::<u64>().ok())
+            .filter(|id| scope.contains(id))
+            .collect::<Vec<_>>();
+        let features = members
+            .iter()
+            .map(|id| vectors.get(id).map(Vec::as_slice))
+            .collect::<Option<Vec<_>>>();
+        group["track_ids"] = json!(members.iter().map(u64::to_string).collect::<Vec<_>>());
+        group["average_similarity"] = json!(features.as_deref().and_then(reid::average_similarity));
+    }
+    groups.retain(|group| {
+        group["track_ids"]
+            .as_array()
+            .is_some_and(|ids| ids.len() >= 2)
+    });
+    groups.sort_by(|a, b| {
+        b["track_ids"]
+            .as_array()
+            .map_or(0, Vec::len)
+            .cmp(&a["track_ids"].as_array().map_or(0, Vec::len))
+            .then_with(|| a["id"].as_str().cmp(&b["id"].as_str()))
+    });
+    Ok(())
+}
+
 pub async fn reid_review(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Json(req): Json<ReidReviewRequest>,
 ) -> ApiResult<Value> {
     storage::validate_origin(&headers)?;
+    if req.action == "auto_assign" {
+        let comparison =
+            super::photo_comparison::compare(state.clone(), headers, req.clone()).await?;
+        let result = tokio::task::spawn_blocking(move || {
+            save_automatic_photo_links(&state, &req, &comparison)
+        })
+        .await
+        .map_err(|e| storage::internal(format!("Automatic identity worker: {e}")))??;
+        return Ok(Json(result));
+    }
     if req.action == "compare_photos" {
         return Ok(Json(
             super::photo_comparison::compare(state, headers, req).await?,
@@ -671,7 +745,7 @@ pub async fn reid_review(
                 "OpenVINO model changed during manual ReID review",
             ));
         }
-        review_response(
+        let mut response = review_response(
             &ctx,
             &identity,
             &cache.vectors,
@@ -680,7 +754,23 @@ pub async fn reid_review(
             state.writes_enabled,
             req.threshold_percent,
         )
-        .map_err(storage::bad_request)
+        .map_err(storage::bad_request)?;
+        if req.rally_run_id.is_some() {
+            let scoped = source_for_rallies(
+                &state,
+                &req.project_id,
+                &req.video,
+                &req.replay_id,
+                req.rally_run_id.as_deref(),
+            )?;
+            scope_review_groups(
+                &mut response,
+                &scoped.tracks.keys().copied().collect(),
+                &cache.vectors,
+            )
+            .map_err(storage::bad_request)?;
+        }
+        Ok(response)
     })
     .await
     .map_err(|e| storage::internal(format!("Manual ReID task: {e}")))??;

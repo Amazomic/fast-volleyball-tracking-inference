@@ -30,7 +30,7 @@ impl Default for RallySettings {
             min_ball_samples: 12,
             min_ball_coverage: 0.25,
             min_touch_candidates: 2,
-            max_without_touch_frames: 180,
+            max_without_touch_frames: 120,
             suggested_context_frames: 45,
         }
     }
@@ -62,6 +62,28 @@ pub struct BallFrame {
     pub x_px: f64,
     pub y_px: f64,
     pub score: f64,
+}
+pub fn ground_bounce_candidate(points: &[BallFrame; 9], near_player: bool, on_court: bool) -> bool {
+    if near_player
+        || !on_court
+        || points.iter().any(|p| {
+            !p.x_px.is_finite() || !p.y_px.is_finite() || !p.score.is_finite() || p.score < 0.35
+        })
+    {
+        return false;
+    }
+    if points
+        .windows(2)
+        .any(|pair| (pair[0].x_px - pair[1].x_px).hypot(pair[0].y_px - pair[1].y_px) > 70.0)
+    {
+        return false;
+    }
+    let incoming = (points[4].y_px - points[0].y_px) / 4.0;
+    let outgoing = (points[8].y_px - points[4].y_px) / 4.0;
+    incoming >= 2.0
+        && outgoing <= -1.0
+        && points[4].y_px >= points[0].y_px
+        && points[4].y_px >= points[8].y_px
 }
 #[derive(Clone, Copy, Debug)]
 pub struct ContactFrame {
@@ -118,6 +140,7 @@ struct ActiveSegment {
     touches: u64,
     first_touch: Option<u64>,
     last_touch: Option<u64>,
+    last_touch_track_id: Option<u64>,
     max_touch: f64,
     ids: BTreeSet<u64>,
     unknown: u64,
@@ -128,6 +151,7 @@ pub struct RallySegmenter {
     last_frame: Option<u64>,
     last_rest_center: Option<[f64; 2]>,
     waiting_motion: bool,
+    waiting_contact_after_ground: bool,
     width: u32,
     height: u32,
     totals: RallyTotals,
@@ -144,6 +168,7 @@ impl RallySegmenter {
             last_frame: None,
             last_rest_center: None,
             waiting_motion: false,
+            waiting_contact_after_ground: false,
             width,
             height,
             totals: RallyTotals::default(),
@@ -186,7 +211,7 @@ impl RallySegmenter {
         active: &mut ActiveSegment,
         frame: u64,
         touch: ContactFrame,
-    ) -> Result<(), String> {
+    ) -> Result<bool, String> {
         if !touch.probability.is_finite()
             || !(0.0..=1.0).contains(&touch.probability)
             || touch
@@ -195,20 +220,23 @@ impl RallySegmenter {
         {
             return Err("Invalid motion-gated contact proposal".into());
         }
+        let Some(id) = touch.provisional_track_id else {
+            return Ok(false);
+        };
+        if active.last_touch_track_id == Some(id) {
+            // Repeated physical proposals for one player count as one Touch.
+            return Ok(false);
+        }
         if active.ids.len() > 512 {
             return Err("Too many distinct provisional tracks in one rally".into());
         }
         active.touches += 1;
         active.first_touch.get_or_insert(frame);
         active.last_touch = Some(frame);
+        active.last_touch_track_id = Some(id);
         active.max_touch = active.max_touch.max(touch.probability);
-        match touch.provisional_track_id {
-            Some(id) => {
-                active.ids.insert(id);
-            }
-            None => active.unknown += 1,
-        }
-        Ok(())
+        active.ids.insert(id);
+        Ok(true)
     }
     fn finish_active(&mut self, reason: &'static str) -> Option<RallyProposal> {
         let mut active = self.active.take()?;
@@ -308,13 +336,20 @@ impl RallySegmenter {
             .map(|item| self.measured(frame, item))
             .transpose()?
             .flatten();
+        if self.waiting_contact_after_ground {
+            if contacts.is_empty() || valid.is_none() {
+                self.totals.ignored_touch_proposals += contacts.len() as u64;
+                return Ok(None);
+            }
+            self.waiting_contact_after_ground = false;
+        }
         let mut emitted = None;
         if let Some(active) = &self.active {
             if frame.saturating_sub(active.last_ball) > self.config.max_ball_gap_frames {
                 emitted = self.finish_active("ball_missing");
-            } else if frame.saturating_sub(active.last_touch.unwrap_or(active.start))
-                > self.config.max_without_touch_frames
-            {
+            } else if active.last_touch.is_some_and(|last| {
+                frame.saturating_sub(last) > self.config.max_without_touch_frames.min(120)
+            }) {
                 emitted = self.finish_active("touchless_timeout");
             }
         }
@@ -344,6 +379,7 @@ impl RallySegmenter {
                     touches: 0,
                     first_touch: None,
                     last_touch: None,
+                    last_touch_track_id: None,
                     max_touch: 0.0,
                     ids: BTreeSet::new(),
                     unknown: 0,
@@ -380,7 +416,9 @@ impl RallySegmenter {
         if let Some(segment) = self.active.as_mut() {
             for &touch in contacts {
                 if frame.saturating_sub(segment.last_ball) <= self.config.max_ball_gap_frames {
-                    Self::push_touch(segment, frame, touch)?;
+                    if !Self::push_touch(segment, frame, touch)? {
+                        self.totals.ignored_touch_proposals += 1;
+                    }
                 } else {
                     self.totals.ignored_touch_proposals += 1;
                 }
@@ -393,6 +431,30 @@ impl RallySegmenter {
     pub fn finish(&mut self) -> Option<RallyProposal> {
         self.finish_active("end_of_video")
     }
+    pub fn finish_at_possible_ground_bounce(&mut self, frame: u64) -> Option<RallyProposal> {
+        let active = self.active.as_mut()?;
+        if frame < active.start
+            || frame > active.last_ball
+            || active.last_touch.is_some_and(|touch| touch >= frame)
+        {
+            return None;
+        }
+        let trailing = active.last_ball - frame;
+        let samples = active.samples.saturating_sub(trailing);
+        let frames = frame - active.start + 1;
+        if frames < self.config.min_rally_frames
+            || samples < self.config.min_ball_samples
+            || active.touches < self.config.min_touch_candidates
+            || (samples.min(frames) as f64 / frames as f64) < self.config.min_ball_coverage
+        {
+            return None;
+        }
+        active.samples = samples;
+        active.last_ball = frame;
+        let result = self.finish_active("possible_ground_bounce");
+        self.waiting_contact_after_ground = result.is_some();
+        result
+    }
     pub fn totals(&self) -> &RallyTotals {
         &self.totals
     }
@@ -401,6 +463,81 @@ impl RallySegmenter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn ground_candidate_distinguishes_bounce_from_ballistic_apex_and_player_contact() {
+        let mut points = [BallFrame {
+            x_px: 300.0,
+            y_px: 0.0,
+            score: 0.9,
+        }; 9];
+        for (i, point) in points.iter_mut().enumerate() {
+            point.y_px = 300.0 - (i as f64 - 4.0).abs() * 8.0;
+        }
+        assert!(ground_bounce_candidate(&points, false, true));
+        assert!(!ground_bounce_candidate(&points, true, true));
+        assert!(!ground_bounce_candidate(&points, false, false));
+        let mut unreliable = points;
+        unreliable[2].score = 0.1;
+        assert!(!ground_bounce_candidate(&unreliable, false, true));
+        let mut jumped = points;
+        jumped[3].x_px = 1100.0;
+        assert!(!ground_bounce_candidate(&jumped, false, true));
+        for (i, point) in points.iter_mut().enumerate() {
+            point.y_px = 200.0 + (i as f64 - 4.0).abs() * 8.0;
+        }
+        assert!(!ground_bounce_candidate(&points, false, true));
+    }
+    #[test]
+    fn ground_candidate_ends_provisional_rally_at_impact_frame() {
+        let mut segment = RallySegmenter::new(RallySettings::default(), 640, 360).unwrap();
+        for frame in 0..110 {
+            let touches = if frame == 20 {
+                hit().to_vec()
+            } else if frame == 70 {
+                hit_with_id(4).to_vec()
+            } else {
+                vec![]
+            };
+            assert!(segment
+                .push(frame, b(100.0 + frame as f64 * 3.0), &touches)
+                .unwrap()
+                .is_none());
+        }
+        let rally = segment.finish_at_possible_ground_bounce(105).unwrap();
+        assert_eq!(rally.detected_end_frame, 105);
+        assert_eq!(rally.end_reason, "possible_ground_bounce");
+        assert!(!rally.authoritative_rally);
+        for frame in 110..140 {
+            assert!(segment
+                .push(frame, b(100.0 + frame as f64 * 3.0), &[])
+                .unwrap()
+                .is_none());
+        }
+        assert!(segment.finish().is_none());
+    }
+    #[test]
+    fn early_ground_candidate_does_not_discard_incomplete_rally() {
+        let mut segment = RallySegmenter::new(RallySettings::default(), 640, 360).unwrap();
+        for frame in 0..110 {
+            let touches = if frame == 20 {
+                hit().to_vec()
+            } else if frame == 70 {
+                hit_with_id(4).to_vec()
+            } else {
+                vec![]
+            };
+            segment
+                .push(frame, b(100.0 + frame as f64 * 3.0), &touches)
+                .unwrap();
+            if frame == 50 {
+                assert!(segment.finish_at_possible_ground_bounce(47).is_none());
+            }
+        }
+        assert_eq!(
+            segment.finish().unwrap().motion_supported_touch_proposals,
+            2
+        );
+    }
     fn b(x: f64) -> Option<BallFrame> {
         Some(BallFrame {
             x_px: x,
@@ -408,11 +545,14 @@ mod tests {
             score: 0.9,
         })
     }
-    fn hit() -> [ContactFrame; 1] {
+    fn hit_with_id(id: u64) -> [ContactFrame; 1] {
         [ContactFrame {
             probability: 0.94,
-            provisional_track_id: Some(3),
+            provisional_track_id: Some(id),
         }]
+    }
+    fn hit() -> [ContactFrame; 1] {
+        hit_with_id(3)
     }
     fn run(
         frames: u64,
@@ -422,9 +562,11 @@ mod tests {
     ) -> (Vec<RallyProposal>, RallyTotals) {
         let mut segment = RallySegmenter::new(settings, 640, 360).unwrap();
         let mut result = Vec::new();
+        let mut contact_number = 0;
         for frame in 0..frames {
             let contacts = if touches.contains(&frame) {
-                hit().to_vec()
+                contact_number += 1;
+                hit_with_id(contact_number).to_vec()
             } else {
                 vec![]
             };
@@ -521,6 +663,79 @@ mod tests {
         assert!(r[0].detected_end_frame < r[1].detected_start_frame);
         assert!(stats.ended_on_touch_gap >= 1);
     }
+    #[test]
+    fn four_seconds_without_a_different_player_ends_rally_even_if_ball_visible() {
+        let mut config = RallySettings::default();
+        config.max_without_touch_frames = 900; // old saved profile cannot extend beyond 4s
+        let mut segment = RallySegmenter::new(config, 640, 360).unwrap();
+        let mut results = Vec::new();
+        for frame in 0..270 {
+            let contact = match frame {
+                20 => Some(1),
+                50 | 90 | 130 => Some(2),
+                _ => None,
+            };
+            let contacts = contact
+                .map(|id| {
+                    vec![ContactFrame {
+                        probability: 0.9,
+                        provisional_track_id: Some(id),
+                    }]
+                })
+                .unwrap_or_default();
+            let observed = BallFrame {
+                x_px: 100.0 + (frame % 40) as f64 * 5.0,
+                y_px: 140.0,
+                score: 0.95,
+            };
+            if let Some(rally) = segment.push(frame, Some(observed), &contacts).unwrap() {
+                results.push(rally);
+            }
+        }
+        if let Some(rally) = segment.finish() {
+            results.push(rally);
+        }
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].motion_supported_touch_proposals, 2);
+        assert_eq!(results[0].end_reason, "touchless_timeout");
+        assert!(results[0].detected_end_frame <= 170);
+    }
+
+    #[test]
+    fn repeated_player_is_suppressed_within_each_rally_but_resets_at_boundary() {
+        let mut segment = RallySegmenter::new(RallySettings::default(), 640, 360).unwrap();
+        let mut rallies = Vec::new();
+        for frame in 0..360 {
+            let ball = if (145..=250).contains(&frame) {
+                None
+            } else {
+                b(80.0 + (frame % 145) as f64 * 2.0)
+            };
+            let contact = match frame {
+                20 | 60 | 280 => hit_with_id(3).to_vec(),
+                100 => hit_with_id(4).to_vec(),
+                310 => hit_with_id(5).to_vec(),
+                320 => vec![ContactFrame {
+                    probability: 0.9,
+                    provisional_track_id: None,
+                }],
+                _ => vec![],
+            };
+            if let Some(rally) = segment.push(frame, ball, &contact).unwrap() {
+                rallies.push(rally);
+            }
+        }
+        if let Some(rally) = segment.finish() {
+            rallies.push(rally);
+        }
+        assert_eq!(rallies.len(), 2);
+        assert_eq!(rallies[0].motion_supported_touch_proposals, 2);
+        assert_eq!(rallies[1].motion_supported_touch_proposals, 2);
+        assert_eq!(rallies[0].unidentified_contacts, 0);
+        assert_eq!(rallies[1].unidentified_contacts, 0);
+        assert_eq!(segment.totals().ignored_touch_proposals, 2);
+    }
+
     #[test]
     fn invalid_parameters_sequence_and_untrusted_contacts_rejected() {
         assert!(RallySegmenter::new(

@@ -182,6 +182,14 @@
                                        {
                                            "path":  "/api/cpu/native/rallies/overlays",
                                            "handler":  "native_preview_overlay::get"
+                                       },
+                                       {
+                                           "path":  "/api/cpu/native/rallies/overlay-player-labels",
+                                           "handler":  "native_preview_overlay::player_labels"
+                                       },
+                                       {
+                                           "path":  "/api/gpu/native/overlays",
+                                           "handler":  "native_preview_overlay::gpu"
                                        }
                                    ],
                         "stores":  [

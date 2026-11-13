@@ -2,7 +2,7 @@
 //! Reads a verified project/prepared-video source. Never writes GPU cache,
 //! claims confirmed detections, or replaces a full inference pipeline.
 use crate::{
-    inference_clip::{ball_peaks, pixel_params, touch_peaks},
+    inference_clip::{ball_peaks, pixel_params},
     preparation, projects,
     storage::{self, ApiResult},
     AppState,
@@ -16,7 +16,8 @@ use std::{
     time::UNIX_EPOCH,
 };
 use volley_inference::{
-    decode::{decode_ravel, decode_vball, DecodeConfig},
+    decode::{decode_vball, RawDetection},
+    person::PersonEngine,
     Config, Device, Engine, ModelKind,
 };
 use volley_media::{
@@ -135,7 +136,16 @@ pub async fn scan(
     let before = source_stamp(&file).map_err(storage::bad_request)?;
     let repo = state.repository_root.clone();
     let result = tokio::task::spawn_blocking(move || -> Result<Value, String> {
-        let mut engine = Engine::load(&repo, &config)?;
+        let mut ball_engine = if request.model == ModelKind::Ball {
+            Some(Engine::load(&repo, &config)?)
+        } else {
+            None
+        };
+        let mut person_engine = if request.model == ModelKind::Players {
+            Some(PersonEngine::load(&repo, config.device, config.cpu_threads, config.gpu_memory_limit_mb)?)
+        } else {
+            None
+        };
         let (w, h, channels, _) = pixel_params(request.model);
         let pixels = if request.model == ModelKind::Ball {
             ModelPixels::BallGray
@@ -148,37 +158,60 @@ pub async fn scan(
         let summary = decode_windows(
             &file, pixels, request.first_frame, request.windows,
             request.stride, &cancellation, |window| {
-                let inputs = normalized_model_window(&window.data, w, h, channels)?;
-                let tensors = engine.infer_clip(inputs)?;
-                let current = tensors.iter().map(|tensor| json!({
-                    "name":tensor.name,
-                    "dimensions":tensor.dimensions,
-                    "values":tensor.data.len(),
-                })).collect::<Vec<_>>();
-                match &layout {
-                    Some(expected) if expected != &current =>
-                        return Err("ONNX tensor layout changed during streaming".into()),
-                    None => layout = Some(current),
-                    _ => {},
+                if let Some(engine) = person_engine.as_mut() {
+                    let rgb_size = w * h * 3;
+                    let mut raw = Vec::new();
+                    let mut frames = Vec::new();
+                    for (offset, rgb) in window.data.chunks_exact(rgb_size).enumerate() {
+                        let people = engine.detect(rgb)?;
+                        for (index, pose) in people.iter().enumerate() {
+                            raw.push(RawDetection {
+                                frame_index: window.first_frame + offset as u64,
+                                class_name: "player",
+                                score: pose.score,
+                                bbox_xyxy_norm: pose.bbox.map(|v| v as f32),
+                                query_index: Some(index),
+                                touch_probability: None,
+                                head_point_norm: pose.head.map(|p| p.map(|v| v as f32)),
+                            });
+                        }
+                        frames.push(json!({
+                            "frame": window.first_frame + offset as u64,
+                            "people_with_skeletons": people.len(),
+                        }));
+                    }
+                    if layout.is_none() {
+                        layout = Some(vec![json!({"name":"RTMDet + RTMPose skeleton observations"})]);
+                    }
+                    proposals.push(json!({
+                        "first_frame":window.first_frame,
+                        "candidate_frames":frames,
+                        "raw_detections":raw,
+                    }));
+                } else {
+                    let inputs = normalized_model_window(&window.data, w, h, channels)?;
+                    let engine = ball_engine.as_mut().ok_or("Missing VBallNet session")?;
+                    let tensors = engine.infer_clip(inputs)?;
+                    let current = tensors.iter().map(|tensor| json!({
+                        "name":tensor.name,
+                        "dimensions":tensor.dimensions,
+                        "values":tensor.data.len(),
+                    })).collect::<Vec<_>>();
+                    match &layout {
+                        Some(expected) if expected != &current =>
+                            return Err("ONNX tensor layout changed during streaming".into()),
+                        None => layout = Some(current),
+                        _ => {}
+                    }
+                    let proposal = tensors.iter().find(|t| t.name == "heatmaps")
+                        .ok_or("VBallNet output tensor missing")?;
+                    proposals.push(json!({
+                        "first_frame":window.first_frame,
+                        "candidate_frames":ball_peaks(proposal, window.first_frame)?,
+                        "raw_detections":decode_vball(&tensors, window.first_frame, 0.05)?,
+                    }));
                 }
-                let proposal = tensors.iter().find(|t| {
-                    t.name == if request.model == ModelKind::Ball { "heatmaps" } else { "action_logits" }
-                }).ok_or("Required model tensor missing")?;
-                let frames = if request.model == ModelKind::Ball {
-                    ball_peaks(proposal, window.first_frame)?
-                } else {
-                    touch_peaks(proposal, window.first_frame)?
-                };
-                let raw_detections = if request.model == ModelKind::Ball {
-                    decode_vball(&tensors, window.first_frame, 0.05)?
-                } else {
-                    decode_ravel(&tensors, window.first_frame, DecodeConfig::default())?
-                };
-                proposals.push(json!({
-                    "first_frame":window.first_frame,
-                    "candidate_frames":frames,
-                    "raw_detections":raw_detections,
-                }));
+
                 Ok(())
             },
         )?;

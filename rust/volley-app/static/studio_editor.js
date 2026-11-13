@@ -19,10 +19,10 @@
   const zoomLabel=$("studio-analysis-zoom-label");
   const minZoom=0.52,maxZoom=1.24,zoomStep=0.08;
   let project="",source="",generation=0,corners=[],drag=-1,duration=0;
-  let marking=false,zoom=0.84,settingsLoaded=false,settingsLoading=false;
+  let marking=false,zoom=0.84,settingsLoaded=false,settingsLoading=false,net=null,netDrag=-1;
 
   let baseRevision="",dirty=false,draftTimer=null,editEpoch=0;
-  const revision=data=>data.edit_revision||JSON.stringify([data.trim_start_sec??0,data.trim_end_sec??null,data.court||[],data.source_revision??null]);
+  const revision=data=>data.edit_revision||JSON.stringify([data.trim_start_sec??0,data.trim_end_sec??null,data.court||[],data.net||null,data.source_revision??null]);
   const draftKey=(id,name)=>"volley:editor-draft:v1:"+JSON.stringify([id,name]);
   const readDraft=(id,name)=>{
     try{
@@ -43,7 +43,7 @@
     draftTimer=null;
     if(!dirty||!project||!source||!baseRevision)return;
     const row={base:baseRevision,expires:Date.now()+14*86400000,
-      value:{trim_start_sec:Number(begin.value),trim_end_sec:Number(end.value)||null,court:corners}};
+      value:{trim_start_sec:Number(begin.value),trim_end_sec:Number(end.value)||null,court:corners,net}};
     try{const text=JSON.stringify(row);if(text.length<=4096)localStorage.setItem(draftKey(project,source),text);}catch{}
   };
   window.addEventListener("beforeunload",flushDraft);
@@ -122,7 +122,7 @@
     canvas.height=Math.round(rect.height*dpr);
     context.setTransform(dpr,0,0,dpr,0,0);
     context.clearRect(0,0,rect.width,rect.height);
-    if(!corners.length||!image.width||!image.height)return;
+    if((!corners.length&&!net)||!image.width||!image.height)return;
     const points=corners.map(p=>pointXY(p,rect,image));
     context.beginPath();
     points.forEach(([x,y],i)=>i?context.lineTo(x,y):context.moveTo(x,y));
@@ -131,7 +131,16 @@
     if(points.length===4)context.fill();
     context.strokeStyle="#ffd166";context.lineWidth=2.5;
     context.stroke();
-    points.forEach(([x,y],i)=>{
+    if(net){
+      const endpoints=net.map(p=>pointXY(p,rect,image));
+      context.beginPath();
+      context.moveTo(...endpoints[0]);context.lineTo(...endpoints[1]);
+      context.strokeStyle="#35e0ef";context.lineWidth=3;context.stroke();
+      endpoints.forEach(([x,y])=>{
+        context.beginPath();context.arc(x,y,6,0,Math.PI*2);
+        context.fillStyle="#35e0ef";context.fill();
+      });
+    }    points.forEach(([x,y],i)=>{
       const [nx,ny]=corners[i];
       context.beginPath();context.arc(x,y,7,0,Math.PI*2);
       context.fillStyle=nx<0||nx>1||ny<0||ny>1?"#ff984f":"#ffd166";
@@ -160,6 +169,8 @@
     if(!marking||!valid()||!video.videoWidth)return;
     const at=point(event),rect=canvas.getBoundingClientRect();
     const image=frame.getBoundingClientRect();
+    netDrag=net?net.findIndex(p=>{const [x,y]=pointXY(p,rect,image);return Math.hypot(x-(event.clientX-rect.left),y-(event.clientY-rect.top))<17;}):-1;
+    if(netDrag>=0){canvas.setPointerCapture(event.pointerId);return;}
     drag=corners.findIndex(p=>{
       const [x,y]=pointXY(p,rect,image);
       return Math.hypot(x-(event.clientX-rect.left),y-(event.clientY-rect.top))<17;
@@ -171,19 +182,35 @@
     if(drag>=0)canvas.setPointerCapture(event.pointerId);
   });
   canvas.addEventListener("pointermove",event=>{
+    if(netDrag>=0){net[netDrag]=point(event);draw();return;}
     if(drag<0)return;
     corners[drag]=point(event);draw();
   });
-  const finishDrag=()=>{if(drag>=0)markModified();drag=-1;};
+  const finishDrag=()=>{if(drag>=0||netDrag>=0)markModified();drag=-1;netDrag=-1;};
   canvas.addEventListener("pointerup",finishDrag);
   canvas.addEventListener("pointercancel",finishDrag);
   $("studio-analysis-court-undo").addEventListener("click",()=>{
     corners.pop();draw();markModified();
   });
   $("studio-analysis-court-clear").addEventListener("click",()=>{
-    corners=[];draw();markModified();
+    corners=[];net=null;draw();markModified();
   });
-  modeButton.addEventListener("click",()=>setMarking(!marking));
+  $("studio-analysis-court-auto").addEventListener("click",async()=>{
+    if(!valid())return;
+    const token=generation,epoch=editEpoch,button=$("studio-analysis-court-auto");
+    button.disabled=true;message("Поиск линий площадки и сетки на нескольких кадрах…");
+    try{
+      const result=await api("/api/video-court/detect",{
+        method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({project_id:project,video:source,start_sec:Math.max(0,video.currentTime||0)})
+      });
+      if(token!==generation||epoch!==editEpoch)return;
+      if(!result.detected){message(result.message||"Не удалось уверенно распознать разметку. Отметьте углы вручную.",true);return;}
+      corners=result.court;net=result.net||null;setMarking(true);markModified();draw();
+      message("Найдена разметка ("+result.supporting_frames+"/"+result.sampled_frames+" кадров). Проверьте углы и сетку, при необходимости перетащите точки, затем сохраните.");
+    }catch(error){if(token===generation)message(error.message,true);}
+    finally{button.disabled=!valid();}
+  });  modeButton.addEventListener("click",()=>setMarking(!marking));
   zoomOut.addEventListener("click",()=>{if(marking)setZoom(zoom-zoomStep);});
   zoomIn.addEventListener("click",()=>{if(marking)setZoom(zoom+zoomStep);});
 
@@ -253,10 +280,11 @@
     try{
       const result=await api("/api/video-edit",{method:"POST",headers:{"Content-Type":"application/json"},
         body:JSON.stringify({project_id:project,video:source,trim_start_sec:from,
-          trim_end_sec:to,court})});
+          trim_end_sec:to,court,net})});
       if(token===generation){
-        const data={...result,trim_start_sec:from,trim_end_sec:to,court};
+        const data={...result,trim_start_sec:from,trim_end_sec:to,court,net};
         editCache.write(project,source,data);
+        window.dispatchEvent(new CustomEvent("volley:court-calibration-updated",{detail:{project_id:project,video:source}}));
         baseRevision=revision(data);
         if(epoch===editEpoch){dirty=false;removeDraft();}else{flushDraft();}
         message("Обрезка и разметка площадки сохранены.");
@@ -274,7 +302,7 @@
     video.pause();
     video.removeAttribute("src");
     video.load();
-    project=projectId||"";source=videoName||"";corners=[];
+    project=projectId||"";source=videoName||"";corners=[];net=null;
     duration=0;begin.value="0";end.value="0";seek.value="0";seek.max="1000";
     media.style.setProperty("--frame-ratio","1.77778");
     zoom=0.84;setMarking(false);
@@ -295,6 +323,7 @@
       end.value=data.trim_end_sec==null?"0":String(data.trim_end_sec);
       corners=Array.isArray(data.court)?data.court.filter(p=>
         Array.isArray(p)&&p.length===2&&p.every(v=>Number.isFinite(v)&&v>=-0.5&&v<=1.5)):[];
+      net=Array.isArray(data.net)&&data.net.length===2?data.net:null;
       video.src=url("/api/video-source",{project_id:project,video:source});
       video.load();
       settingsLoaded=true;

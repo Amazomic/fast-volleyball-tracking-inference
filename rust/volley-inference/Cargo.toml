@@ -3,7 +3,7 @@ name = "volley-inference"
 version = "0.1.0"
 edition = "2021"
 publish = false
-description = "Native ONNX Runtime inference for VballNetV4c and RAVEL-013"
+description = "Native ONNX Runtime inference for VballNet, RTMDet and RTMPose"
 
 [dependencies]
 ort = { version = "=2.0.0-rc.10", default-features = false, features = ["std", "ndarray", "load-dynamic", "cuda"] }

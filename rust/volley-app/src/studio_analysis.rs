@@ -188,7 +188,7 @@ fn stage_summary(
                 "id":id,"kind":stage,"state":state,"model":record["model"],
                 "display_name":crate::analysis_management::display_name(root.parent().ok_or_else(|| storage::internal("Missing project root"))?, if stage == "tracking" { "unlinked" } else { stage }, &id)?,
                 "created_at":created(&folder),
-                "ravel_job_id":record["sources"]["ravel"]["job_id"],
+                "person_job_id":record["sources"]["person_pose"]["job_id"],
                 "vball_job_id":record["sources"]["vballnet"]["job_id"],
                 "count":record[count_key],"count_unit":count_key,
                 "source_fusion_id":record["source_fusion_id"],

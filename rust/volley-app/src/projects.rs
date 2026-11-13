@@ -600,6 +600,62 @@ fn update_record(state: &AppState, request: Value) -> Result<Value, ApiError> {
     })
 }
 
+fn delete_from_root(root: &Path, id: &str) -> Result<(), ApiError> {
+    storage::project_id(id)?;
+    let registry = root.join("projects.json");
+    let mut data =
+        storage::read_json(&registry)?.ok_or_else(|| storage::not_found("Проект не найден"))?;
+    let rows = data["projects"]
+        .as_array_mut()
+        .ok_or_else(|| storage::internal("Invalid project registry"))?;
+    let index = rows
+        .iter()
+        .position(|row| row["id"].as_str() == Some(id))
+        .ok_or_else(|| storage::not_found("Проект не найден"))?;
+    let source = root.join(id);
+    let metadata = fs::symlink_metadata(&source)
+        .map_err(|_| storage::not_found("Каталог проекта не найден"))?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err(storage::bad_request("Небезопасный каталог проекта"));
+    }
+    let staged = root.join(format!(".deleted-{}", Uuid::new_v4().simple()));
+    fs::rename(&source, &staged)
+        .map_err(|e| storage::internal(format!("Stage project deletion: {e}")))?;
+    rows.remove(index);
+    if let Err(error) = storage::write_json_atomic(&registry, &data) {
+        fs::rename(&staged, &source)
+            .map_err(|e| storage::internal(format!("Restore project after registry error: {e}")))?;
+        return Err(error);
+    }
+    fs::remove_dir_all(&staged)
+        .map_err(|e| storage::internal(format!("Remove staged project: {e}")))?;
+    Ok(())
+}
+
+pub async fn delete_project(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(request): Json<Value>,
+) -> ApiResult<Value> {
+    storage::validate_origin(&headers)?;
+    let id = request["id"]
+        .as_str()
+        .ok_or_else(|| storage::bad_request("Укажите идентификатор проекта"))?;
+    existing_project(&state, id)?;
+    let _guard = crate::project_guard::write_guard(&state, id)?;
+    let _catalog = crate::analysis_management::catalog_guard(&state, id)?;
+    if crate::studio_pipeline::has_active().await
+        || state.full_inference.has_active().await
+        || state.quick_reel.has_active().await
+        || state.montage.has_active().await
+        || state.preparation.has_active().await
+    {
+        return Err(storage::conflict("Дождитесь завершения активного анализа"));
+    }
+    with_registry_lock(&state, || delete_from_root(&project_root(&state), id))?;
+    Ok(Json(json!({"ok":true})))
+}
+
 pub async fn create_project(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -701,6 +757,25 @@ pub(crate) fn scan_videos(state: &AppState) -> Result<Vec<Value>, ApiError> {
 #[cfg(test)]
 mod tests {
     use super::normalized_name;
+    #[test]
+    fn delete_project_preserves_other_data() {
+        let root = std::env::temp_dir().join(format!("volley-delete-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(root.join("123456abcdef")).unwrap();
+        std::fs::create_dir_all(root.join("other")).unwrap();
+        crate::storage::write_json_atomic(
+            &root.join("projects.json"),
+            &serde_json::json!({"schema":1,"projects":[{"id":"123456abcdef"},{"id":"other"}]}),
+        )
+        .unwrap();
+        super::delete_from_root(&root, "123456abcdef").unwrap();
+        assert!(!root.join("123456abcdef").exists());
+        assert!(root.join("other").exists());
+        let data = crate::storage::read_json(&root.join("projects.json"))
+            .unwrap()
+            .unwrap();
+        assert_eq!(data["projects"].as_array().unwrap().len(), 1);
+        std::fs::remove_dir_all(root).unwrap();
+    }
     #[test]
     fn normalized_project_name_collapses_whitespace_and_nfkc() {
         assert_eq!(normalized_name("  A  B  ").unwrap(), "A B");

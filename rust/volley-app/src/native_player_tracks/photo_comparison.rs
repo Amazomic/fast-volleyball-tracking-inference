@@ -10,17 +10,17 @@ struct PhotoInput {
     bytes: Vec<u8>,
 }
 
-struct Snapshot {
+pub(super) struct Snapshot {
     ctx: Inputs,
     identity: Value,
-    identity_revision: String,
-    albums: Vec<(String, String)>,
+    pub(super) identity_revision: String,
+    pub(super) albums: Vec<(String, String)>,
     photos: Vec<PhotoInput>,
     vectors: BTreeMap<u64, Vec<f32>>,
-    model: String,
+    pub(super) model: String,
 }
 
-fn snapshot(state: &AppState, req: &ReidReviewRequest) -> Result<Snapshot, ApiError> {
+pub(super) fn snapshot(state: &AppState, req: &ReidReviewRequest) -> Result<Snapshot, ApiError> {
     let ctx = source_for_rallies(
         state,
         &req.project_id,
@@ -46,18 +46,16 @@ fn snapshot(state: &AppState, req: &ReidReviewRequest) -> Result<Snapshot, ApiEr
         .iter()
         .filter_map(Value::as_u64)
         .collect::<BTreeSet<_>>();
+    let rebuild = req.action == "auto_assign";
     let eligible = ctx
         .tracks
         .keys()
-        .filter(|id| !assigned.contains_key(&id.to_string()) && !excluded.contains(id))
+        .filter(|id| (rebuild || !assigned.contains_key(&id.to_string())) && (rebuild || !excluded.contains(id)))
         .collect::<Vec<_>>();
     if eligible.len() > 1024 {
         return Err(storage::bad_request(
             "Comparison is limited to 1024 Track IDs",
         ));
-    }
-    if eligible.is_empty() {
-        return Err(storage::bad_request("No unassigned Track IDs to compare"));
     }
     let mut albums = Vec::new();
     let mut photos = Vec::new();
@@ -123,11 +121,8 @@ fn snapshot(state: &AppState, req: &ReidReviewRequest) -> Result<Snapshot, ApiEr
             });
         }
     }
-    if photos.is_empty() {
-        return Err(storage::bad_request(
-            "No saved reference photos for project players",
-        ));
-    }
+    // An empty album means there are no identity references yet, not a CPU
+    // postprocessing failure. Preserve the analysis and report zero matches.
     Ok(Snapshot {
         ctx,
         identity,
@@ -193,9 +188,9 @@ pub(super) async fn compare(
     headers: HeaderMap,
     req: ReidReviewRequest,
 ) -> Result<Value, ApiError> {
-    if req.rally_run_id.as_deref().is_none_or(|id| !opaque_id(id)) {
+    if req.rally_run_id.as_deref().is_some_and(|id| !opaque_id(id)) {
         return Err(storage::bad_request(
-            "Select a verified rally run for photo comparison",
+            "Invalid rally run for photo comparison",
         ));
     }
     let cloned = state.clone();
@@ -203,6 +198,18 @@ pub(super) async fn compare(
     let mut snap = tokio::task::spawn_blocking(move || snapshot(&cloned, &query))
         .await
         .map_err(|e| storage::internal(format!("Photo comparison source: {e}")))??;
+    if snap.photos.is_empty() {
+        return Ok(json!({
+            "schema":"volley-native-player-photo-comparison/1",
+            "project_id":snap.ctx.project_id,"replay_id":snap.ctx.replay_id,
+            "source_replay_sha256":snap.ctx.source_sha,
+            "player_matches":{},"photo_count":0,
+            "identity_revision":snap.identity_revision,
+            "album_revisions":snap.albums,
+            "model_fingerprint":snap.model,
+            "auto_assign_enabled":false,"confirmed":false
+        }));
+    }
     let assigned = snap.identity["assignments"]
         .as_object()
         .ok_or_else(|| storage::bad_request("Invalid assignments"))?;
@@ -216,9 +223,15 @@ pub(super) async fn compare(
         .ctx
         .tracks
         .keys()
-        .filter(|id| !assigned.contains_key(&id.to_string()) && !excluded.contains(id))
+        .filter(|id| (req.action == "auto_assign" || !assigned.contains_key(&id.to_string()))
+            && (req.action == "auto_assign" || !excluded.contains(id)))
         .copied()
         .collect::<Vec<_>>();
+    if ids.is_empty() {
+        return Ok(
+            json!({"schema":"volley-native-player-photo-comparison/1","project_id":snap.ctx.project_id,"replay_id":snap.ctx.replay_id,"source_replay_sha256":snap.ctx.source_sha,"player_matches":{},"photo_count":0,"identity_revision":snap.identity_revision,"album_revisions":snap.albums,"model_fingerprint":snap.model,"auto_assign_enabled":false,"confirmed":false}),
+        );
+    }
     for chunk in ids.chunks(8) {
         let Json(result) = embeddings(
             State(state.clone()),
@@ -310,12 +323,19 @@ pub(super) async fn compare(
             vector,
         })
         .collect::<Vec<_>>();
-    let matches = photo_match_candidates(&snap.ctx, &snap.identity, &snap.vectors, &refs)
+    // CPU postprocessing is a complete rebuild: old manual/automatic links
+    // must never suppress photo candidates from the new identity pass.
+    let mut match_identity = snap.identity.clone();
+    if req.action == "auto_assign" {
+        match_identity["assignments"] = json!({});
+        match_identity["excluded_ids"] = json!([]);
+    }
+    let matches = photo_match_candidates(&snap.ctx, &match_identity, &snap.vectors, &refs)
         .map_err(storage::bad_request)?;
     Ok(
         json!({"schema":"volley-native-player-photo-comparison/1", "project_id":snap.ctx.project_id,
         "replay_id":snap.ctx.replay_id,"source_replay_sha256":snap.ctx.source_sha,
-        "player_matches":matches,"photo_count":refs.len(),"auto_assign_enabled":false,"confirmed":false}),
+        "player_matches":matches,"photo_count":refs.len(),"identity_revision":snap.identity_revision,"album_revisions":snap.albums,"model_fingerprint":snap.model,"auto_assign_enabled":false,"confirmed":false}),
     )
 }
 

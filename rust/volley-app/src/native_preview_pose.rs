@@ -21,6 +21,7 @@ struct PoseIndex {
     sha: String,
     size: u64,
     modified: Option<SystemTime>,
+    change: Option<(u64, u64, i64, i64)>,
     samples: Arc<Vec<(u64, u64)>>,
 }
 static INDICES: OnceLock<Mutex<Vec<PoseIndex>>> = OnceLock::new();
@@ -87,6 +88,9 @@ fn pose_run(project_root: &Path, fusion: &str) -> Result<Option<(PathBuf, String
         let Some(manifest) = read_manifest(&folder.join("manifest.json"))? else {
             continue;
         };
+        if manifest["fusion_id"] != fusion {
+            continue;
+        }
         if manifest["schema"] != "volley-native-gpu-pose/1"
             || manifest["state"] != "pose_evidence_complete"
             || manifest["pose_run_id"] != id
@@ -98,29 +102,46 @@ fn pose_run(project_root: &Path, fusion: &str) -> Result<Option<(PathBuf, String
             || manifest["source_identity"] != source["source_identity"]
             || manifest["file"] != "poses.jsonl"
         {
-            continue;
+            return Err("RTMPose source provenance mismatch".into());
         }
         let Some(sha) = manifest["sha256"]
             .as_str()
             .filter(|s| volley_core::contracts::sha256(s))
         else {
-            continue;
+            return Err("Invalid RTMPose SHA-256 in source manifest".into());
         };
         let Some(stride) = manifest["stride"].as_u64().filter(|s| (1..=9).contains(s)) else {
-            continue;
+            return Err("Invalid RTMPose sample stride".into());
         };
         let path = folder.join("poses.jsonl");
-        if regular(&path, MAX_SIZE)? {
-            // One selected GPU fusion should own exactly one compatible pose snapshot.
-            if found.is_some() {
-                return Err(
-                    "Multiple pose runs for selected GPU fusion; refusing ambiguous overlay".into(),
-                );
-            }
-            found = Some((path, sha.to_owned(), stride as usize));
+        if !regular(&path, MAX_SIZE)? {
+            return Err("RTMPose manifest references missing pose evidence".into());
         }
+        // One selected GPU fusion should own exactly one compatible pose snapshot.
+        if found.is_some() {
+            return Err(
+                "Multiple pose runs for selected GPU fusion; refusing ambiguous overlay".into(),
+            );
+        }
+        found = Some((path, sha.to_owned(), stride as usize));
     }
     Ok(found)
+}
+
+pub fn source_info(
+    project_root: &Path,
+    fusion: &str,
+) -> Result<Option<(String, String, usize)>, String> {
+    let Some((path, sha, stride)) = pose_run(project_root, fusion)? else {
+        return Ok(None);
+    };
+    index_for(&path, &sha, stride)?;
+    let id = path
+        .parent()
+        .and_then(Path::file_name)
+        .and_then(|s| s.to_str())
+        .ok_or("Invalid pose run path")?;
+    Ok(Some((id.to_owned(), sha, stride)))
 }
 
 fn bounded_line(reader: &mut BufReader<File>) -> Result<Option<Vec<u8>>, String> {
@@ -142,13 +163,19 @@ fn bounded_line(reader: &mut BufReader<File>) -> Result<Option<Vec<u8>>, String>
 fn index_for(path: &Path, sha: &str, stride: usize) -> Result<Arc<Vec<(u64, u64)>>, String> {
     let m = fs::metadata(path).map_err(|e| e.to_string())?;
     let modified = m.modified().ok();
+    let change = volley_media::preparation::file_change_stamp(path, &m);
     let indices = INDICES.get_or_init(|| Mutex::new(Vec::new()));
     let mut cache = indices.lock().map_err(|_| "RTMPose index poisoned")?;
-    if let Some(item) = cache
-        .iter()
-        .find(|v| v.path == path && v.sha == sha && v.size == m.len() && v.modified == modified)
-    {
-        return Ok(item.samples.clone());
+    if change.is_some() {
+        if let Some(item) = cache.iter().find(|v| {
+            v.path == path
+                && v.sha == sha
+                && v.size == m.len()
+                && v.modified == modified
+                && v.change == change
+        }) {
+            return Ok(item.samples.clone());
+        }
     }
     let mut reader = BufReader::new(File::open(path).map_err(|e| e.to_string())?);
     let mut offsets = Vec::new();
@@ -173,17 +200,27 @@ fn index_for(path: &Path, sha: &str, stride: usize) -> Result<Arc<Vec<(u64, u64)
     if at != m.len() || format!("{:x}", digest.finalize()) != sha {
         return Err("RTMPose evidence SHA-256 mismatch".into());
     }
+    let after = fs::metadata(path).map_err(|e| e.to_string())?;
+    if after.len() != m.len()
+        || after.modified().ok() != modified
+        || volley_media::preparation::file_change_stamp(path, &after) != change
+    {
+        return Err("RTMPose source changed during SHA verification".into());
+    }
     let offsets = Arc::new(offsets);
-    cache.retain(|item| item.path != path);
-    cache.push(PoseIndex {
-        path: path.to_owned(),
-        sha: sha.to_owned(),
-        size: m.len(),
-        modified,
-        samples: offsets.clone(),
-    });
-    if cache.len() > MAX_CACHE {
-        cache.remove(0);
+    if change.is_some() {
+        cache.retain(|item| item.path != path);
+        cache.push(PoseIndex {
+            path: path.to_owned(),
+            sha: sha.to_owned(),
+            size: m.len(),
+            modified,
+            change,
+            samples: offsets.clone(),
+        });
+        if cache.len() > MAX_CACHE {
+            cache.remove(0);
+        }
     }
     Ok(offsets)
 }
@@ -225,7 +262,7 @@ fn keypoints(value: &Value) -> Option<&Vec<Value>> {
     Some(a)
 }
 
-fn attach_frame(row: &Value, frame: &mut Value) -> bool {
+fn attach_frame(row: &Value, frame: &mut Value, reject_ambiguous: bool) -> bool {
     let Some(poses) = row["players"].as_array() else {
         return false;
     };
@@ -234,7 +271,8 @@ fn attach_frame(row: &Value, frame: &mut Value) -> bool {
     };
     let mut used = vec![false; poses.len()];
     let mut matched = false;
-    for player in tracked {
+    let boxes: Vec<_> = tracked.iter().map(|p| valid_box(&p["box"])).collect();
+    for (track_index, player) in tracked.iter_mut().enumerate() {
         let Some(bb) = valid_box(&player["box"]) else {
             continue;
         };
@@ -254,6 +292,28 @@ fn attach_frame(row: &Value, frame: &mut Value) -> bool {
             }
         }
         if let Some(i) = best {
+            if reject_ambiguous {
+                let alternative = poses
+                    .iter()
+                    .enumerate()
+                    .filter(|(j, _)| *j != i)
+                    .filter_map(|(_, pose)| valid_box(&pose["box"]))
+                    .map(|b| iou(bb, b))
+                    .fold(0.0_f64, f64::max);
+                let pose_box = valid_box(&poses[i]["box"]).unwrap_or(bb);
+                let competing = boxes
+                    .iter()
+                    .enumerate()
+                    .filter(|(j, _)| *j != track_index)
+                    .filter_map(|(_, b)| *b)
+                    .map(|b| iou(b, pose_box))
+                    .fold(0.0_f64, f64::max);
+                if alternative >= 0.35 && max - alternative < 0.1
+                    || competing >= 0.35 && max - competing < 0.1
+                {
+                    continue;
+                }
+            }
             if let Some(points) = keypoints(&poses[i]["keypoints"]) {
                 player["pose"] = json!(points);
                 used[i] = true;
@@ -264,6 +324,159 @@ fn attach_frame(row: &Value, frame: &mut Value) -> bool {
     matched
 }
 
+/// Build an *overlay-only* intermediate pose. Unlike raw.poses, this
+/// data is never saved as a model observation or used by CPU analytics.
+/// Pose detections have no Track IDs: match by mutual, unambiguous box overlap,
+/// or omit the ambiguous person rather than attaching limbs to a stranger.
+fn interpolate_raw_players(before: &[Value], after: &[Value], t: f64) -> Vec<Value> {
+    if !(0.0..1.0).contains(&t) || before.len() > 128 || after.len() > 128 {
+        return Vec::new();
+    }
+    let first_boxes: Vec<_> = before.iter().map(|p| valid_box(&p["box"])).collect();
+    let last_boxes: Vec<_> = after.iter().map(|p| valid_box(&p["box"])).collect();
+    let mut result = Vec::new();
+    for (i, left) in before.iter().enumerate() {
+        let Some(a) = first_boxes[i] else { continue };
+        let Some(a_points) = keypoints(&left["keypoints"]) else {
+            continue;
+        };
+        let scored: Vec<_> = last_boxes
+            .iter()
+            .map(|bb| bb.map_or(0.0, |b| iou(a, b)))
+            .collect();
+        let Some((j, score)) = scored
+            .iter()
+            .copied()
+            .enumerate()
+            .max_by(|a, b| a.1.total_cmp(&b.1))
+        else {
+            continue;
+        };
+        if score < 0.35
+            || scored
+                .iter()
+                .enumerate()
+                .any(|(k, other)| k != j && *other >= score - 0.10)
+        {
+            continue;
+        }
+        // Check the reverse match: a player crossing another must not
+        // borrow either one's raw joints on the intervening frames.
+        if first_boxes.iter().enumerate().any(|(k, bb)| {
+            k != i && bb.is_some_and(|b| iou(b, last_boxes[j].unwrap_or(a)) >= score - 0.10)
+        }) {
+            continue;
+        }
+        let Some(b) = last_boxes[j] else { continue };
+        let Some(b_points) = keypoints(&after[j]["keypoints"]) else {
+            continue;
+        };
+        let bbox: Vec<_> = a.iter().zip(b).map(|(p, q)| p + (q - p) * t).collect();
+        let mut joints = Vec::with_capacity(17);
+        for (p, q) in a_points.iter().zip(b_points) {
+            let (Some(p), Some(q)) = (p.as_array(), q.as_array()) else {
+                continue;
+            };
+            let (Some(px), Some(py), Some(pc), Some(qx), Some(qy), Some(qc)) = (
+                p[0].as_f64(),
+                p[1].as_f64(),
+                p[2].as_f64(),
+                q[0].as_f64(),
+                q[1].as_f64(),
+                q[2].as_f64(),
+            ) else {
+                continue;
+            };
+            // A missing/uncertain endpoint cannot be made confident by interpolation.
+            joints.push(json!([px + (qx - px) * t, py + (qy - py) * t, pc.min(qc)]));
+        }
+        if joints.len() == 17 {
+            result.push(json!({"box":bbox,"keypoints":joints}));
+        }
+    }
+    result
+}
+
+/// Exact detections stay in raw.poses; interpolation for visual continuity
+/// is kept separately in raw.poses_interpolated. CPU inference/analysis does
+/// not read the synthetic poses, and each gap needs two saved RTMPose samples.
+pub fn raw_window(
+    project_root: &Path,
+    fusion_id: &str,
+    total_frames: u64,
+    start: u64,
+    end: u64,
+    frames: &mut [Value],
+) -> Result<Option<String>, String> {
+    if !volley_core::contracts::job_id(fusion_id)
+        || start >= end
+        || end > total_frames
+        || frames.len() != (end - start) as usize
+    {
+        return Err("Invalid raw RTMPose source or frame bounds".into());
+    }
+    let Some((path, sha, stride)) = pose_run(project_root, fusion_id)? else {
+        return Ok(None);
+    };
+    let index = index_for(&path, &sha, stride)?;
+    if index.iter().any(|(frame, _)| *frame >= total_frames) {
+        return Err("RTMPose evidence exceeds selected GPU fusion frames".into());
+    }
+    // Fetch one original pose sample on either side of the request, so
+    // each 180-frame API window shows the same smooth motion at its edges.
+    let lo = index.partition_point(|(frame, _)| *frame < start.saturating_sub(stride as u64));
+    let hi = index.partition_point(|(frame, _)| *frame < end.saturating_add(stride as u64));
+    let mut reader = BufReader::new(File::open(&path).map_err(|e| e.to_string())?);
+    let mut samples: Vec<(u64, Vec<Value>)> = Vec::new();
+    for &(frame, offset) in &index[lo..hi] {
+        reader
+            .seek(SeekFrom::Start(offset))
+            .map_err(|e| e.to_string())?;
+        let line = bounded_line(&mut reader)?.ok_or("RTMPose indexed row is missing")?;
+        let row: Value =
+            serde_json::from_slice(&line).map_err(|_| "Malformed RTMPose raw frame")?;
+        if row["frame"].as_u64() != Some(frame) {
+            return Err("RTMPose indexed frame mismatch".into());
+        }
+        let poses = row["players"].as_array().ok_or("Missing RTMPose players")?;
+        if poses.len() > 128 {
+            return Err("RTMPose player count exceeds bounds".into());
+        }
+        let mut evidence = Vec::with_capacity(poses.len());
+        for pose in poses {
+            let bb = valid_box(&pose["box"]).ok_or("Invalid RTMPose box")?;
+            let keypoints = keypoints(&pose["keypoints"]).ok_or("Invalid RTMPose keypoints")?;
+            evidence.push(json!({"box":bb,"keypoints":keypoints}));
+        }
+        if frame >= start && frame < end {
+            frames[(frame - start) as usize]["raw"]["poses"] = json!(evidence);
+        }
+        samples.push((frame, evidence));
+    }
+    for pair in samples.windows(2) {
+        let (before_frame, before) = (&pair[0].0, &pair[0].1);
+        let (after_frame, after) = (&pair[1].0, &pair[1].1);
+        // Never extrapolate across missing model samples or scene cuts.
+        if after_frame - before_frame != stride as u64 {
+            continue;
+        }
+        for frame in (before_frame + 1).max(start)..(*after_frame).min(end) {
+            let t = (frame - before_frame) as f64 / (after_frame - before_frame) as f64;
+            let interpolated = interpolate_raw_players(before, after, t);
+            if !interpolated.is_empty() {
+                frames[(frame - start) as usize]["raw"]["poses_interpolated"] = json!(interpolated);
+            }
+        }
+    }
+    Ok(Some(
+        path.parent()
+            .and_then(Path::file_name)
+            .and_then(|v| v.to_str())
+            .ok_or("Invalid RTMPose source ID")?
+            .to_owned(),
+    ))
+}
+
 /// Enrich only selected rally frame samples. Returns false if old GPU run has no poses.
 pub fn enrich(
     project_root: &Path,
@@ -271,6 +484,27 @@ pub fn enrich(
     start: u64,
     end: u64,
     frames: &mut [Value],
+) -> Result<bool, String> {
+    enrich_with_tolerance(project_root, fusion_id, start, end, frames, false)
+}
+
+pub fn enrich_exact(
+    project_root: &Path,
+    fusion_id: &str,
+    start: u64,
+    end: u64,
+    frames: &mut [Value],
+) -> Result<bool, String> {
+    enrich_with_tolerance(project_root, fusion_id, start, end, frames, true)
+}
+
+fn enrich_with_tolerance(
+    project_root: &Path,
+    fusion_id: &str,
+    start: u64,
+    end: u64,
+    frames: &mut [Value],
+    exact: bool,
 ) -> Result<bool, String> {
     if !volley_core::contracts::job_id(fusion_id) {
         return Err("Invalid source fusion ID for RTMPose preview".into());
@@ -282,7 +516,11 @@ pub fn enrich(
     // Closest observed RTMPose frame within half a sampling interval.
     // This keeps poses visible between sampled frames without generating
     // synthetic coordinates or accidentally attaching an unrelated player.
-    let tolerance = (stride as u64).div_ceil(2);
+    let tolerance = if exact {
+        0
+    } else {
+        (stride as u64).div_ceil(2)
+    };
     let lo = index.partition_point(|item| item.0 < start.saturating_sub(tolerance));
     let hi = index.partition_point(|item| item.0 < end.saturating_add(tolerance));
     if lo == hi {
@@ -313,7 +551,7 @@ pub fn enrich(
                 continue;
             };
             let delta = frame.abs_diff(sample_frame);
-            if delta <= tolerance && delta < closest[i] && attach_frame(&item, target) {
+            if delta <= tolerance && delta < closest[i] && attach_frame(&item, target, exact) {
                 closest[i] = delta;
             }
         }
@@ -324,12 +562,141 @@ pub fn enrich(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn raw_pose_interpolation_is_visual_only_and_leaves_original_samples_unchanged() {
+        let root = std::env::temp_dir().join(format!("volley-raw-pose-{}", uuid::Uuid::new_v4()));
+        let fusion = "a".repeat(32);
+        let run = "b".repeat(32);
+        let fusion_dir = root.join("native_gpu_fusions").join(&fusion);
+        let pose_dir = root.join("native_gpu_pose_runs").join(&run);
+        fs::create_dir_all(&fusion_dir).unwrap();
+        fs::create_dir_all(&pose_dir).unwrap();
+        let source_sha = "c".repeat(64);
+        let identity = json!({"bytes":123,"mtime_ns":456});
+        fs::write(
+            fusion_dir.join("manifest.json"),
+            serde_json::to_vec(&json!({"schema":"volley-native-gpu-fusion/1",
+                "fusion_id":fusion,"project_id":"project","video":"match.mp4",
+                "source_identity":identity,"sha256":source_sha}))
+            .unwrap(),
+        )
+        .unwrap();
+        let mut raw = Vec::new();
+        for frame in [0, 3] {
+            let keypoints = (0..17)
+                .map(|_| json!([0.30 + f64::from(frame) * 0.03, 0.5, 0.91]))
+                .collect::<Vec<_>>();
+            raw.extend(
+                serde_json::to_vec(&json!({"frame":frame,
+                "players":[{"box":[0.2,0.2,0.5,0.9],"keypoints":keypoints}]}))
+                .unwrap(),
+            );
+            raw.push(b'\n');
+        }
+        fs::write(pose_dir.join("poses.jsonl"), &raw).unwrap();
+        let sha = format!("{:x}", Sha256::digest(&raw));
+        let mut manifest = json!({"schema":"volley-native-gpu-pose/1",
+            "state":"pose_evidence_complete","pose_run_id":run,
+            "fusion_id":fusion,"project_id":"project","video":"match.mp4",
+            "source_identity":identity,"source_fusion_sha256":source_sha,
+            "model_sha256":MODEL_SHA256,"file":"poses.jsonl","sha256":sha,
+            "stride":3});
+        fs::write(
+            pose_dir.join("manifest.json"),
+            serde_json::to_vec(&manifest).unwrap(),
+        )
+        .unwrap();
+        let mut frames = (0..5)
+            .map(|frame| json!({"frame":frame,"raw":{"poses":[]}}))
+            .collect::<Vec<_>>();
+        let selected = raw_window(&root, &fusion, 9, 0, 5, &mut frames).unwrap();
+        assert_eq!(selected.as_deref(), Some(run.as_str()));
+        assert_eq!(frames[0]["raw"]["poses"][0]["keypoints"][0][2], 0.91);
+        assert_eq!(frames[3]["raw"]["poses"][0]["keypoints"][0][2], 0.91);
+        // Original model evidence stays sparse and is never substituted.
+        assert!(frames[1]["raw"]["poses"].as_array().unwrap().is_empty());
+        assert_eq!(frames[0]["raw"]["poses"][0]["keypoints"][0][0], 0.30);
+        assert_eq!(frames[3]["raw"]["poses"][0]["keypoints"][0][0], 0.39);
+        assert!(frames[0]["raw"].get("poses_interpolated").is_none());
+        assert!(frames[3]["raw"].get("poses_interpolated").is_none());
+        assert!(frames[4]["raw"].get("poses_interpolated").is_none());
+        assert_eq!(
+            frames[1]["raw"]["poses_interpolated"][0]["keypoints"][0][0],
+            0.33
+        );
+        assert_eq!(
+            frames[2]["raw"]["poses_interpolated"][0]["keypoints"][0][0],
+            0.36
+        );
+        assert!(frames[1]["raw"]["poses_interpolated"][0]
+            .get("track_id")
+            .is_none());
+        assert!(frames[0]["raw"]["poses"][0].get("track_id").is_none());
+        // The window can start between RTMPose measurements. Its first
+        // frames still interpolate from the real sample *outside* the window.
+        let mut shifted = (1..4)
+            .map(|frame| json!({"frame":frame,"raw":{"poses":[]}}))
+            .collect::<Vec<_>>();
+        raw_window(&root, &fusion, 9, 1, 4, &mut shifted).unwrap();
+        assert_eq!(
+            shifted[0]["raw"]["poses_interpolated"][0]["keypoints"][0][0],
+            0.33
+        );
+        assert_eq!(
+            shifted[1]["raw"]["poses_interpolated"][0]["keypoints"][0][0],
+            0.36
+        );
+        assert!(shifted[2]["raw"]["poses_interpolated"].is_null());
+        assert_eq!(shifted[2]["raw"]["poses"][0]["keypoints"][0][0], 0.39);
+        manifest["sha256"] = json!("0".repeat(64));
+        fs::write(
+            pose_dir.join("manifest.json"),
+            serde_json::to_vec(&manifest).unwrap(),
+        )
+        .unwrap();
+        assert!(raw_window(&root, &fusion, 9, 0, 5, &mut frames).is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn raw_pose_interpolation_rejects_ambiguous_or_missing_players() {
+        let joints = |confidence| {
+            (0..17)
+                .map(|_| json!([0.3, 0.4, confidence]))
+                .collect::<Vec<_>>()
+        };
+        let person = |bb: [f64; 4], confidence| json!({"box":bb,"keypoints":joints(confidence)});
+        let a = person([0.1, 0.1, 0.3, 0.7], 0.9);
+        let duplicate = person([0.1, 0.1, 0.3, 0.7], 0.8);
+        let distant = person([0.7, 0.1, 0.9, 0.7], 0.9);
+        assert!(interpolate_raw_players(&[a.clone()], &[distant], 0.5).is_empty());
+        assert!(
+            interpolate_raw_players(&[a.clone(), duplicate.clone()], &[a.clone()], 0.5).is_empty()
+        );
+        assert!(interpolate_raw_players(&[a.clone()], &[a.clone(), duplicate], 0.5).is_empty());
+        assert!(interpolate_raw_players(&[a.clone()], &[], 0.5).is_empty());
+        let low_confidence = person([0.1, 0.1, 0.3, 0.7], 0.1);
+        let preview = interpolate_raw_players(&[a], &[low_confidence], 0.5);
+        assert_eq!(preview.len(), 1);
+        assert_eq!(preview[0]["keypoints"][0][2], 0.1);
+    }
+
+    #[test]
+    fn exact_pose_matching_rejects_overlapping_tracks() {
+        let row = json!({"players":[{"box":[0.1,0.1,0.3,0.8],
+            "keypoints":(0..17).map(|_|json!([0.2,0.4,0.9])).collect::<Vec<_>>()}]});
+        let mut frame = json!({"players":[{"id":7,"box":[0.1,0.1,0.3,0.8]},
+            {"id":8,"box":[0.1,0.1,0.3,0.8]}]});
+        assert!(!attach_frame(&row, &mut frame, true));
+        assert!(frame["players"][0].get("pose").is_none());
+        assert!(frame["players"][1].get("pose").is_none());
+    }
     #[test]
     fn tracks_match_poses_by_iou_not_id() {
         let row = json!({"players":[{"box":[0.1,0.1,0.3,0.8],
             "keypoints":(0..17).map(|_|json!([0.2,0.4,0.9])).collect::<Vec<_>>()}]});
         let mut frame = json!({"players":[{"id":7,"box":[0.1,0.1,0.3,0.8]}]});
-        attach_frame(&row, &mut frame);
+        attach_frame(&row, &mut frame, false);
         assert_eq!(frame["players"][0]["pose"].as_array().unwrap().len(), 17);
     }
 }

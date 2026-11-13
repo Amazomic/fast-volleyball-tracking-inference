@@ -108,6 +108,12 @@ pub(crate) struct NativeMotion {
     #[serde(default)]
     court: Option<volley_core::court_geometry::CourtContactEvidence>,
     physical_motion_supported: bool,
+    #[serde(default)]
+    body_contact_supported: bool,
+    #[serde(default)]
+    ball_occluded_at_contact: bool,
+    #[serde(default)]
+    inferred_body_reach_supported: bool,
     athlete_identity_verified: bool,
 }
 impl NativeMotion {
@@ -126,8 +132,14 @@ impl NativeMotion {
     pub(crate) fn valid(&self, frames: u64, width: u32, height: u32) -> bool {
         self.frame_index < frames
             && self.motion_frame_index < frames
-            && self.motion_frame_index.abs_diff(self.frame_index) <= 4
+            && self.motion_frame_index.abs_diff(self.frame_index)
+                <= volley_core::touch_pipeline::MAX_OBSERVED_TOUCH_OFFSET_FRAMES
             && self.physical_motion_supported
+            && (!self.body_contact_supported || self.provisional_track_id.is_some())
+            && (!self.ball_occluded_at_contact
+                || self.body_contact_supported || self.inferred_body_reach_supported)
+            && (!self.inferred_body_reach_supported
+                || self.ball_occluded_at_contact && !self.body_contact_supported)
             && !self.athlete_identity_verified
             && self.technique == "unknown_touch"
             && self
@@ -205,6 +217,8 @@ pub(crate) struct ValidatedRun {
     pub(crate) context: u64,
     pub(crate) expected_rallies: u64,
     pub(crate) expected_touches: u64,
+    /// Ball confidence chosen for this immutable CPU version.
+    pub(crate) min_ball_score: f64,
 }
 
 pub(crate) fn inspect_project(
@@ -358,6 +372,16 @@ pub(crate) fn inspect_project(
         context,
         expected_rallies: count,
         expected_touches: touches,
+        min_ball_score: rally["settings"]["min_ball_score"]
+            .as_f64()
+            .filter(|value| value.is_finite() && (0.01..=1.0).contains(value))
+            .unwrap_or(0.35)
+            .max(
+                touch["settings"]["min_ball_score"]
+                    .as_f64()
+                    .filter(|value| value.is_finite() && (0.01..=1.0).contains(value))
+                    .unwrap_or(0.0),
+            ),
     })
 }
 #[derive(Clone)]
@@ -598,7 +622,11 @@ fn generate(run: &ValidatedRun, choice: Choice) -> Result<PreviewContent, String
         let mut contacts = BoundedReader::open(&run.touch_file)?;
         let mut touch_frames = Vec::<u64>::new();
         let mut raw_touch_count = 0u64;
+        let mut last_track_per_rally = vec![None::<u64>; intervals.len()];
         let mut estimated_actions = Vec::<Value>::new();
+        // Complete postprocessing result, including physical Touch candidates
+        // whose action type could not be classified. Never mix with GPU boxes.
+        let mut touch_annotations = Vec::<Value>::new();
         let mut prior = None;
         while let Some(bytes) = contacts.line()? {
             let event: NativeMotion = serde_json::from_slice(&bytes)
@@ -610,6 +638,9 @@ fn generate(run: &ValidatedRun, choice: Choice) -> Result<PreviewContent, String
             }
             prior = Some(event.frame_index);
             raw_touch_count += 1;
+            let Some(track_id) = event.provisional_track_id else {
+                continue;
+            };
             let contextual = timeline_contexts.get(&event.frame_index);
             if let Some((id, ignored, _)) = contextual {
                 if *id != event.provisional_track_id {
@@ -619,12 +650,29 @@ fn generate(run: &ValidatedRun, choice: Choice) -> Result<PreviewContent, String
                     continue;
                 }
             }
+            let rally_index =
+                intervals.partition_point(|interval| interval.end < event.frame_index);
+            if intervals
+                .get(rally_index)
+                .is_some_and(|interval| interval.start <= event.frame_index)
+            {
+                if last_track_per_rally[rally_index] == Some(track_id) {
+                    continue;
+                }
+                last_track_per_rally[rally_index] = Some(track_id);
+            }
             touch_frames.push(event.frame_index);
             let predicted_kind = if let Some((_, _, kind)) = contextual {
                 *kind
             } else {
                 event.action_prediction().map(|prediction| prediction.kind)
             };
+            touch_annotations.push(json!({
+                "frame_index":event.frame_index,
+                "kind":predicted_kind.map(ActionKind::as_str),
+                "ball_position_px":[event.ball_x_px,event.ball_y_px],
+                "provisional_track_id":event.provisional_track_id,
+            }));
             if let Some(kind) = predicted_kind {
                 estimated_actions.push(json!({
                     "frame_index":event.frame_index,
@@ -649,9 +697,11 @@ fn generate(run: &ValidatedRun, choice: Choice) -> Result<PreviewContent, String
                 "touch_frames": touch_frames,
                 "raw_touch_candidates": raw_touch_count,
                 "estimated_actions": estimated_actions,
+                "touch_annotations": touch_annotations,
                 "authoritative_game_events": false,
                 "source_rallies_sha256": run.rally_sha,
                 "source_touches_sha256": run.touch_sha,
+                "source_replay_sha256": run.replay_sha,
             }),
             clips: Vec::new(),
         });
@@ -744,6 +794,7 @@ fn generate(run: &ValidatedRun, choice: Choice) -> Result<PreviewContent, String
     let mut contacts = BoundedReader::open(&run.touch_file)?;
     let mut prior = None;
     let mut count = 0u64;
+    let mut last_track_per_card = vec![None::<u64>; cards.len()];
     while let Some(bytes) = contacts.line()? {
         let event: NativeMotion = serde_json::from_slice(&bytes)
             .map_err(|e| format!("Invalid native Touch evidence row: {e}"))?;
@@ -769,6 +820,9 @@ fn generate(run: &ValidatedRun, choice: Choice) -> Result<PreviewContent, String
             let row = &mut cards[idx];
             let raw = row["raw_motion_event_count"].as_u64().unwrap_or(0);
             row["raw_motion_event_count"] = json!(raw + 1);
+            let Some(track_id) = event.provisional_track_id else {
+                continue;
+            };
             let context = row["court_contact_context"]["events"]
                 .as_array()
                 .and_then(|entries| {
@@ -790,6 +844,10 @@ fn generate(run: &ValidatedRun, choice: Choice) -> Result<PreviewContent, String
                 row["ignored_serve_toss_count"] = json!(suppressed + 1);
                 continue;
             }
+            if last_track_per_card[idx] == Some(track_id) {
+                continue;
+            }
+            last_track_per_card[idx] = Some(track_id);
             let prev = row["motion_event_count"].as_u64().unwrap_or(0);
             row["motion_event_count"] = json!(prev + 1);
             let resolved_kind = if let Some(ref resolved) = context {
@@ -1218,10 +1276,10 @@ mod tests {
             rows.push(b'\n');
         }
         let mut events = Vec::new();
-        for frame in [40, 70, 115, 145, 330, 370] {
+        for (index, frame) in [40, 70, 115, 145, 330, 370].into_iter().enumerate() {
             let row = json!({
                 "frame_index":frame,"probability":0.93,
-                "provisional_track_id":3,
+                "provisional_track_id": if index % 2 == 0 { 3 } else { 4 },
                 "ball_x_px":150.0,"ball_y_px":100.0,
                 "motion_frame_index":frame,
                 "direction_change_deg":100.0,
@@ -1258,6 +1316,7 @@ mod tests {
             context: 45,
             expected_rallies: 3,
             expected_touches: 6,
+            min_ball_score: 0.35,
         };
         (run, root)
     }
@@ -1298,6 +1357,12 @@ mod tests {
                 "frame_index":115,"kind":"dig","ball_position_px":[150.0,100.0]
             }])
         );
+        let annotations = result.value["touch_annotations"].as_array().unwrap();
+        assert_eq!(annotations.len(), 6);
+        assert_eq!(annotations[0]["kind"], Value::Null);
+        assert_eq!(annotations[0]["provisional_track_id"], 3);
+        assert_eq!(annotations[0]["ball_position_px"], json!([150.0, 100.0]));
+        assert_eq!(annotations[2]["kind"], "dig");
         assert_eq!(result.value["rallies"][0]["start_frame"], 30);
         assert_eq!(result.value["rallies"][2]["end_frame"], 380);
         assert_eq!(result.value["authoritative_game_events"], false);
@@ -1368,6 +1433,21 @@ mod tests {
     #[test]
     fn saved_rally_context_hides_toss_without_changing_immutable_touch_source() {
         let (mut run, root) = fixture();
+        // Legacy serve-toss evidence can contain two proposals from one server;
+        // the ignored toss must not hide the later actual serve.
+        let mut touch_events = fs::read_to_string(&run.touch_file)
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str::<Value>(line).unwrap())
+            .collect::<Vec<_>>();
+        touch_events[1]["provisional_track_id"] = json!(3);
+        let mut touch_bytes = Vec::new();
+        for event in &touch_events {
+            touch_bytes.extend(serde_json::to_vec(event).unwrap());
+            touch_bytes.push(b'\n');
+        }
+        fs::write(&run.touch_file, &touch_bytes).unwrap();
+        run.touch_sha = format!("{:x}", Sha256::digest(&touch_bytes));
         let records = fs::read_to_string(&run.rally_file).unwrap();
         let mut rows = records
             .lines()

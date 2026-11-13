@@ -64,4 +64,24 @@ s.items[0].provisional_track_ids=undefined;
 context.render();
 assert.match(values(list.children[0]).join(" "),/Игроков —/,
   "No Track ID evidence must not be represented as zero players");
-console.log("Studio rally cards: duration, seconds, Touch, players, sizing: OK");
+// A fast bookmarks fetch / WASM initialization must never replace a pending
+// CPU page load with the misleading "No rallies found" placeholder.
+ui.filter={value:"all"};
+s.run="r";s.total=76;s.filtered=76;s.items=[];
+s.pageLoading=true;s.pageError="";
+context.render();
+assert.match(list.children[0].textContent,/Загрузка розыгрышей/i,
+  "An in-flight CPU request is not an empty CPU result");
+s.pageLoading=false;s.pageError="Source checksum mismatch";
+context.render();
+assert.match(list.children[0].textContent,/Source checksum mismatch/,
+  "The real backend/render error remains visible");
+s.pageError="";s.filtered=0;ui.filter.value="marked";
+context.render();
+assert.match(list.children[0].textContent,/нет избранных розыгрышей/i,
+  "Empty favorites must not say the CPU analysis has no rallies");
+ui.filter.value="all";s.total=0;
+context.render();
+assert.match(list.children[0].textContent,/нет обнаруженных розыгрышей/i,
+  "Only the genuinely empty run may show the no-rallies message");
+console.log("Studio rally cards: duration, actions, players and loading/empty states: OK");

@@ -38,7 +38,7 @@ assert.ok(montage.includes('02 / РУЧНОЙ МОНТАЖ'));
 assert.match(html, /id="studio-montage-view" class="hidden tab-workspace"/);
 assert.match(html, /id="studio-nav-montage"[^>]+data-studio-tab="montage"/);
 
-const start=script.indexOf('  const switchTab=(requested)=>{');
+const start=script.indexOf('  const views={');
 const end=script.indexOf('  const projectId=()=>',start);
 assert.ok(start>=0&&end>start);
 const nodes=Object.fromEntries(["preview","montage","quick","analysis","players","report"].map(k=>{
@@ -49,8 +49,8 @@ const nodes=Object.fromEntries(["preview","montage","quick","analysis","players"
 const ui={...nodes};
 const events=[],state={tab:"preview"};
 const runtime={navigate:requested=>requested,beginLoad:()=>{}};
-const window={dispatchEvent:event=>events.push(event)};
-const document={querySelectorAll:()=>[]};
+const window={dispatchEvent:event=>events.push(event),addEventListener(){}};
+const document={querySelectorAll:()=>[],addEventListener(){}};
 const CustomEvent=class{constructor(type,options){this.type=type;this.detail=options.detail;}};
 const loadVideos=()=>Promise.resolve(),loadPlayers=()=>Promise.resolve(),failure=()=>{};
 const context={ui,runtime,state,window,document,CustomEvent,loadVideos,loadPlayers,failure};

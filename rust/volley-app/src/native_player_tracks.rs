@@ -63,6 +63,12 @@ fn default_limit() -> usize {
 }
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct ProjectTrackReset {
+    project_id: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct TrackEdit {
     project_id: String,
     video: String,
@@ -88,6 +94,7 @@ struct Aggregate {
     best_score: f64,
     best_box: [f64; 4],
     photo_samples: Vec<PhotoSample>,
+    visible_spans: Vec<(u64, u64)>,
 }
 #[derive(Debug, Clone, PartialEq)]
 struct PhotoSample {
@@ -148,3 +155,72 @@ mod reference_store;
 pub(crate) use reference_store::*;
 #[cfg(test)]
 mod tests;
+
+// Reset all saved player Track ID bindings for this project, keeping evidence and albums.
+pub async fn reset_project(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(req): Json<ProjectTrackReset>,
+) -> crate::storage::ApiResult<Value> {
+    storage::validate_origin(&headers)?;
+    let result = tokio::task::spawn_blocking(move || {
+        let _guard = project_guard::write_guard(&state, &req.project_id)?;
+        if !state.writes_enabled {
+            return Err(storage::conflict("Project binding edits are disabled"));
+        }
+        storage::project_id(&req.project_id)?;
+        let root = projects::project_root(&state).join(&req.project_id);
+        safe_folder(&root).map_err(storage::bad_request)?;
+        let directory = root.join("native_track_assignments");
+        if !directory.exists() {
+            return Ok(json!({"reset_tracks":0,"reset_replays":0}));
+        }
+        safe_folder(&directory).map_err(storage::bad_request)?;
+        let mut count = 0usize;
+        let mut versions = 0usize;
+        for item in fs::read_dir(&directory)
+            .map_err(|e| storage::internal(format!("Read bindings directory: {e}")))?
+        {
+            let item = item.map_err(|e| storage::internal(format!("Read binding item: {e}")))?;
+            let path = item.path();
+            let metadata = fs::symlink_metadata(&path)
+                .map_err(|e| storage::bad_request(format!("Check binding item: {e}")))?;
+            if metadata.file_type().is_symlink()
+                || !metadata.is_file()
+                || path.extension().and_then(|v| v.to_str()) != Some("json")
+            {
+                return Err(storage::bad_request("Unsafe Track ID binding entry"));
+            }
+            let Some(bytes) = versioned_store::read_optional_bounded(&path, MAX_LINKS)
+                .map_err(storage::bad_request)? else { continue };
+            let mut doc: Value = serde_json::from_slice(&bytes)
+                .map_err(|e| storage::bad_request(format!("Invalid bindings JSON: {e}")))?;
+            if doc["schema"] != "volley-native-player-track-links/1"
+                || doc["project_id"] != req.project_id
+                || doc["replay_id"].as_str() != path.file_stem().and_then(|v| v.to_str())
+            {
+                return Err(storage::bad_request("Invalid project Track ID bindings"));
+            }
+            let manual = doc["assignments"].as_object().ok_or_else(|| storage::bad_request("Invalid manual bindings"))?.clone();
+            let automatic = doc["automatic_assignments"].as_object().cloned().unwrap_or_default();
+            if manual.is_empty() && automatic.is_empty() { continue; }
+            let mut suppressed: BTreeSet<u64> = doc["automatic_suppressed_ids"]
+                .as_array().into_iter().flatten().filter_map(Value::as_u64).collect();
+            for key in manual.keys().chain(automatic.keys()) {
+                let id = key.parse::<u64>().map_err(|_| storage::bad_request("Invalid linked ID"))?;
+                suppressed.insert(id);
+            }
+            count += manual.len() + automatic.len();
+            doc["assignments"] = json!({});
+            doc["automatic_assignments"] = json!({});
+            doc["automatic_suppressed_ids"] = json!(suppressed);
+            versioned_store::write_json_checked(&directory, &path, &doc, MAX_LINKS)
+                .map_err(storage::bad_request)?;
+            versions += 1;
+        }
+        Ok(json!({"reset_tracks":count,"reset_replays":versions}))
+    })
+    .await
+    .map_err(|e| storage::internal(format!("Reset project Track ID task: {e}")))??;
+    Ok(Json(result))
+}

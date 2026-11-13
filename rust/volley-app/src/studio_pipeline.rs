@@ -14,6 +14,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{
+    collections::BTreeSet,
     fs,
     io::Write,
     path::{Path, PathBuf},
@@ -26,7 +27,9 @@ use std::{
 use tokio::sync::Mutex;
 use uuid::Uuid;
 use volley_core::{
-    rally_reconstruction::RallySettings, touch_pipeline::TouchSettings, tracker::TrackingOptions,
+    rally_reconstruction::RallySettings,
+    touch_pipeline::{TouchAlgorithm, TouchSettings},
+    tracker::TrackingOptions,
 };
 use volley_inference::ModelKind;
 
@@ -162,6 +165,86 @@ pub struct HistoryQuery {
     offset: usize,
 }
 
+fn hidden_history(root: &Path) -> Result<BTreeSet<String>, ApiError> {
+    let path = root.join("history_hidden.json");
+    let meta = match fs::symlink_metadata(&path) {
+        Ok(meta) => meta,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(BTreeSet::new()),
+        Err(error) => return Err(storage::internal(format!("Read history metadata: {error}"))),
+    };
+    if !meta.is_file() || meta.file_type().is_symlink() || meta.len() > 65536 {
+        return Err(storage::bad_request("Повреждены настройки истории"));
+    }
+    let ids: BTreeSet<String> = serde_json::from_slice(
+        &fs::read(path).map_err(|e| storage::internal(format!("Read history: {e}")))?,
+    )
+    .map_err(|_| storage::bad_request("Повреждены настройки истории"))?;
+    if ids.len() > 1500 || ids.iter().any(|id| !valid_id(id)) {
+        return Err(storage::bad_request("Повреждены настройки истории"));
+    }
+    Ok(ids)
+}
+
+fn clear_history_rows(
+    state: &AppState,
+    project_id: &str,
+    active: Option<&str>,
+) -> Result<usize, ApiError> {
+    let root = folder(state, project_id, false)?;
+    if !root.exists() {
+        return Ok(0);
+    }
+    let mut ids = BTreeSet::new();
+    for entry in fs::read_dir(&root).map_err(|e| storage::internal(format!("Read history: {e}")))? {
+        let entry = entry.map_err(|e| storage::internal(format!("Read history entry: {e}")))?;
+        let id = entry.file_name().to_string_lossy().into_owned();
+        if !valid_id(&id) || active == Some(id.as_str()) {
+            continue;
+        }
+        let meta = fs::symlink_metadata(entry.path())
+            .map_err(|e| storage::internal(format!("Read history entry: {e}")))?;
+        if meta.is_dir() && !meta.file_type().is_symlink() {
+            ids.insert(id);
+        }
+        if ids.len() > 1500 {
+            return Err(storage::bad_request("Слишком много запусков анализа"));
+        }
+    }
+    storage::write_json_atomic(&root.join("history_hidden.json"), &json!(ids))
+        .map_err(|e| storage::internal(format!("Save history visibility: {e:?}")))?;
+    Ok(ids.len())
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ClearHistoryRequest {
+    project_id: String,
+}
+
+pub async fn clear_history(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(request): Json<ClearHistoryRequest>,
+) -> ApiResult<Value> {
+    storage::validate_origin(&headers)?;
+    if !state.writes_enabled {
+        return Err(storage::conflict(
+            "Очистка истории доступна только в рабочем хранилище",
+        ));
+    }
+    storage::project_id(&request.project_id)?;
+    let slot = manager().lock().await;
+    let _guard = project_guard::write_guard(&state, &request.project_id)?;
+    let active = slot
+        .as_ref()
+        .filter(|run| run.project_id == request.project_id)
+        .map(|run| run.id.as_str());
+    let count = clear_history_rows(&state, &request.project_id, active)?;
+    Ok(Json(
+        json!({"project_id":request.project_id,"hidden":count}),
+    ))
+}
+
 fn history_rows(state: &AppState, project_id: &str, offset: usize) -> Result<Value, ApiError> {
     if offset > 1500 {
         return Err(storage::bad_request("Недопустимая страница истории"));
@@ -172,6 +255,7 @@ fn history_rows(state: &AppState, project_id: &str, offset: usize) -> Result<Val
             json!({"schema":"volley-studio-pipeline-history/1","project_id":project_id,"runs":[],"next_offset":0,"has_more":false}),
         );
     }
+    let hidden = hidden_history(&root)?;
     let mut rows = Vec::new();
     let mut candidates = Vec::new();
     for entry in
@@ -179,7 +263,7 @@ fn history_rows(state: &AppState, project_id: &str, offset: usize) -> Result<Val
     {
         let entry = entry.map_err(|e| storage::internal(format!("Read pipeline history: {e}")))?;
         let id = entry.file_name().to_string_lossy().into_owned();
-        if !valid_id(&id) {
+        if !valid_id(&id) || hidden.contains(&id) {
             continue;
         }
         let Ok(meta) = fs::symlink_metadata(entry.path()) else {
@@ -310,7 +394,7 @@ impl Default for GpuProfile {
             gpu_memory_limit_mb: 0,
             cpu_threads: 8,
             pose_enabled: true,
-            pose_stride: 6,
+            pose_stride: 3,
         }
     }
 }
@@ -535,13 +619,13 @@ fn gpu_lineage_valid(
         || fusion["video"] != request.video
         || fusion["source_identity"] != *identity
         || fusion["sources"]["vballnet"]["job_id"] != ball_id
-        || fusion["sources"]["ravel"]["job_id"] != players_id
+        || fusion["sources"]["person_pose"]["job_id"] != players_id
     {
         return false;
     }
     for (id, model, source) in [
         (ball_id, "ball", "vballnet"),
-        (players_id, "players", "ravel"),
+        (players_id, "players", "person_pose"),
     ] {
         let Some(raw) = saved_stage(project, "native_gpu_runs", id, "detections.jsonl") else {
             return false;
@@ -627,8 +711,10 @@ fn cpu_lineage_valid(project: &Path, request: &StartRequest, saved: &Value) -> b
     };
     track["schema"] == "volley-native-cpu-tracking/1"
         && track["state"] == "provisional_tracklets_rebuilt"
+        && track["interpolated_positions_version"] == "bounded_same_track_3s_v1"
         && track["replay_id"] == replay
         && track["source_fusion_id"] == fusion
+        && track["ball_selection_policy"] == "vballnet_only_v1"
         && track["project_id"] == request.project_id
         && track["video"] == request.video
         && touches["schema"] == "volley-native-cpu-touch-proposals/1"
@@ -638,9 +724,16 @@ fn cpu_lineage_valid(project: &Path, request: &StartRequest, saved: &Value) -> b
         && touches["project_id"] == request.project_id
         && touches["video"] == request.video
         && touches["court_revision"] == saved["court_revision"]
+        // The new strict body/ball intersection must never reuse a saved
+        // PoseMotion v1 run just because its sliders happen to match.
+        && (match request.post.touches.algorithm {
+            TouchAlgorithm::PoseMotion => touches["method"] == "vballnet_trajectory_body_contact_v7",
+            TouchAlgorithm::Legacy => touches["method"] == "vballnet_gravity_player_geometry_pose_contact_v7",
+        })
         && rallies["schema"] == "volley-native-cpu-rally-proposals/1"
         && rallies["state"] == "provisional_rally_segments"
         && rallies["court_contact_context_version"] == "python_serve_toss_possession_v1"
+        && rallies["ground_boundary_version"] == "trajectory_court_player_v2"
         && rallies["rally_run_id"] == rally
         && rallies["source_replay_id"] == replay
         && rallies["source_touch_id"] == touch
@@ -648,8 +741,12 @@ fn cpu_lineage_valid(project: &Path, request: &StartRequest, saved: &Value) -> b
         && rallies["project_id"] == request.project_id
         && rallies["video"] == request.video
 }
+const GPU_MODEL_STACK: &str = "vballnet_rtmdet_rtmpose_tiled_coco17_v3";
+
 fn compatible_version(saved: &Value, request: &StartRequest, identity: &Value) -> bool {
-    saved["schema"] == SCHEMA && saved["project_id"] == request.project_id
+    saved["schema"] == SCHEMA
+        && saved["gpu_model_stack"] == GPU_MODEL_STACK
+        && saved["project_id"] == request.project_id
         && saved["video"] == request.video
         && saved["profile"]["gpu"] == serde_json::to_value(&request.gpu).unwrap_or(Value::Null)
         // Older pipeline status files can predate the source_identity field;
@@ -786,11 +883,11 @@ fn selected_gpu(
         return Err("Fusion не принадлежит выбранному видео или исходник изменился".into());
     }
     let ball = require_id(&fusion["sources"]["vballnet"], "job_id")?;
-    let players = require_id(&fusion["sources"]["ravel"], "job_id")?;
+    let players = require_id(&fusion["sources"]["person_pose"], "job_id")?;
     let mut stride = None;
     for (model, id, source) in [
         ("ball", ball.as_str(), "vballnet"),
-        ("players", players.as_str(), "ravel"),
+        ("players", players.as_str(), "person_pose"),
     ] {
         let raw = saved_stage(&project, "native_gpu_runs", id, "detections.jsonl")
             .ok_or("Не найден исходный GPU-результат для Fusion")?;
@@ -846,7 +943,7 @@ async fn gpu(
     let model_name = if model == ModelKind::Ball {
         "VballNet"
     } else {
-        "RAVEL"
+        "RTMDet + RTMPose"
     };
     progress(path, status, &format!("GPU · {model_name}"), from)?;
     log_event(
@@ -1042,6 +1139,15 @@ async fn pipeline(
             .as_deref()
             .ok_or("Не выбран первичный GPU-анализ в верхней панели")?;
         let source = selected_gpu(app, request, &identity, source_id)?;
+        if request.post.touches.algorithm == TouchAlgorithm::PoseMotion
+            && crate::native_preview_pose::source_info(
+                &projects::project_root(app).join(&request.project_id),
+                source_id,
+            )?
+            .is_none()
+        {
+            return Err("Для пересчёта по движению точек тела в выбранном GPU-анализе нужна сохранённая поза".into());
+        }
         status["analysis_id"] = source["analysis_id"].clone();
         status["gpu_jobs"] = source["gpu_jobs"].clone();
         status["profile"]["gpu"] = source["profile"]["gpu"].clone();
@@ -1060,7 +1166,22 @@ async fn pipeline(
             "Выбран сохранённый GPU-анализ · новый CPU-пересчёт",
             82.0,
         )?;
-    } else if let Some(existing) = reusable.full {
+    } else if let Some(existing) = reusable.full.filter(|v| {
+        v["automatic_identity"].is_object()
+            && v["cpu_runs"]["tracking"]
+                .as_str()
+                .and_then(|replay| {
+                    crate::native_player_tracks::automatic_links_revision(
+                        app,
+                        &request.project_id,
+                        &request.video,
+                        replay,
+                    )
+                    .ok()
+                    .flatten()
+                })
+                .is_some_and(|current| v["automatic_identity"]["identity_revision"] == current)
+    }) {
         status["analysis_id"] = existing["analysis_id"].clone();
         status["gpu_jobs"] = existing["gpu_jobs"].clone();
         status["cpu_runs"] = existing["cpu_runs"].clone();
@@ -1111,7 +1232,7 @@ async fn pipeline(
                 path,
                 "Первичный анализ",
                 "info",
-                "Совпадающего GPU-профиля нет, запуск двух нативных моделей",
+                "Совпадающего GPU-профиля нет, VBallNet и RTMDet + RTMPose",
             )?;
             let ball = gpu(
                 app,
@@ -1146,14 +1267,14 @@ async fn pipeline(
             progress(
                 path,
                 status,
-                "Постобработка · объединение VballNet и RAVEL",
+                "Постобработка · VBallNet и скелеты игроков",
                 82.0,
             )?;
             log_native(
                 path,
                 "Объединение GPU",
                 "inference_fusion::do_fusion",
-                json!({"project_id":request.project_id,"video":request.video,"vball_job_id":ball,"ravel_job_id":players}),
+                json!({"project_id":request.project_id,"video":request.video,"vball_job_id":ball,"person_job_id":players}),
             )?;
             let fusion = cpu(
                 app.clone(),
@@ -1161,7 +1282,7 @@ async fn pipeline(
                     project_id: request.project_id.clone(),
                     video: request.video.clone(),
                     vball_job_id: ball,
-                    ravel_job_id: players,
+                    person_job_id: players,
                 },
                 inference_fusion::do_fusion,
             )
@@ -1324,7 +1445,7 @@ async fn pipeline(
         cpu_rallies::RallyRequest {
             project_id: request.project_id.clone(),
             video: request.video.clone(),
-            replay_id,
+            replay_id: replay_id.clone(),
             touch_id,
             settings: Some(request.post.rallies),
         },
@@ -1343,6 +1464,80 @@ async fn pipeline(
     )?;
     if cancel.load(Ordering::Acquire) {
         return Err("cancelled".into());
+    }
+    progress(
+        path,
+        status,
+        "Постобработка · автоматическая привязка игроков",
+        98.0,
+    )?;
+    let replay_sha = replay["sha256"]
+        .as_str()
+        .ok_or("У треков отсутствует SHA-256")?;
+    let identity_result = crate::native_player_tracks::reid_review(
+        State(app.clone()),
+        HeaderMap::new(),
+        Json(crate::native_player_tracks::ReidReviewRequest {
+            project_id: request.project_id.clone(),
+            video: request.video.clone(),
+            replay_id,
+            expected_source_sha256: replay_sha.to_owned(),
+            // Only assign athletes actually observed in this CPU rally version.
+            rally_run_id: Some(rally_id.clone()),
+            action: "auto_assign".into(),
+            track_ids: Vec::new(),
+            expected_revision: None,
+            threshold_percent: 30,
+        }),
+    )
+    .await;
+    let identities = match identity_result {
+        Ok(Json(value)) => value,
+        Err(error) => {
+            // Missing references or ReID runtime must not invalidate saved
+            // tracking, touches and rallies. Expose the failure in the log.
+            let message = reason(error);
+            status["automatic_identity_complete"] = json!(false);
+            status["automatic_identity_error"] = json!(message);
+            save(path, status)?;
+            log_event(
+                path,
+                "Игроки",
+                "warning",
+                &format!("Автопривязка не выполнена: {message}"),
+            )?;
+            return Ok(());
+        }
+    };
+    status["automatic_identity"] = identities.clone();
+    let remaining = identities["unassigned_track_ids"]
+        .as_array()
+        .ok_or("Некорректный результат привязки")?;
+    status["automatic_identity_complete"] = json!(remaining.is_empty());
+    save(path, status)?;
+    if !remaining.is_empty() {
+        // Identity labels are suggestions, not a prerequisite for physical
+        // tracking, Touch detection or rally reconstruction.
+        log_event(
+            path,
+            "Игроки",
+            "warning",
+            &format!(
+                "Автопривязка: назначено {} ID, без совпадения {} ID (первые 12: {:?}). Неназначенные ID требуют проверки: отсутствуют признаки, сходство не выше 30%, либо все подходящие владельцы конфликтуют с уже видимыми треками.",
+                identities["automatic_count"],remaining.len(),
+                remaining.iter().take(12).collect::<Vec<_>>()
+            ),
+        )?;
+    } else {
+        log_event(
+            path,
+            "Игроки",
+            "success",
+            &format!(
+                "Предварительно привязано ID: {}",
+                identities["automatic_count"]
+            ),
+        )?;
     }
     Ok(())
 }
@@ -1447,6 +1642,14 @@ pub async fn start(
             "GPU-источник указывается только при CPU-пересчёте",
         ));
     }
+    if request.mode == PipelineMode::Full
+        && request.post.touches.algorithm == TouchAlgorithm::PoseMotion
+        && !request.gpu.pose_enabled
+    {
+        return Err(storage::bad_request(
+            "Для алгоритма касаний по движению точек тела включите GPU-анализ позы",
+        ));
+    }
     if request
         .client_request_id
         .as_deref()
@@ -1530,6 +1733,7 @@ pub async fn start(
         "profile":{"gpu":request.gpu,"post":request.post},
         "mode":request.mode,"source_analysis_id":request.source_analysis_id,
         "client_request_id":request.client_request_id,
+        "gpu_model_stack":GPU_MODEL_STACK,
         "gpu_jobs":{},"cpu_runs":{},"analysis_id":null,
         "postprocessing_id":null,"current_gpu_job_id":null,
         "source_identity":null,"gpu_reused":false,"result_reused":false,
@@ -1708,7 +1912,7 @@ mod tests {
         assert_eq!(profile.gpu.stride, 9);
         assert_eq!(profile.gpu.cpu_threads, 8);
         assert_eq!(profile.post.tracking.max_gap_frames, 90);
-        assert_eq!(profile.post.touches.threshold, 0.5);
+        assert_eq!(profile.post.touches.threshold, 0.48);
         assert_eq!(profile.post.rallies.min_rally_frames, 45);
         assert!(profile.post.tracking.validate().is_ok());
         assert!(profile.post.touches.validate().is_ok());
@@ -1790,7 +1994,7 @@ mod branching_tests {
                 "state":"raw_candidates_fused","fusion_id":analysis,
                 "project_id":request.project_id,"video":request.video,
                 "sources":{"vballnet":{"job_id":gpu_ball,"sha256":sha},
-                           "ravel":{"job_id":gpu_players,"sha256":sha}},
+                           "person_pose":{"job_id":gpu_players,"sha256":sha}},
                 "source_identity":identity,"sha256":sha,"fps":30
             }),
         );
@@ -1802,7 +2006,8 @@ mod branching_tests {
             &json!({
                 "schema":"volley-native-cpu-tracking/1","state":"provisional_tracklets_rebuilt","replay_id":replay,
                 "project_id":request.project_id,"video":request.video,
-                "source_fusion_id":analysis,"sha256":sha
+                "source_fusion_id":analysis,"ball_selection_policy":"vballnet_only_v1",
+                "interpolated_positions_version":"bounded_same_track_3s_v1","sha256":sha
             }),
         );
         emit(
@@ -1813,7 +2018,7 @@ mod branching_tests {
             &json!({
                 "schema":"volley-native-cpu-touch-proposals/1","state":"motion_gated_touch_proposals","touch_id":touch,
                 "project_id":request.project_id,"video":request.video,
-                "source_replay_id":replay,"sha256":sha
+                "source_replay_id":replay,"method":"vballnet_gravity_player_geometry_v6","sha256":sha
             }),
         );
         emit(
@@ -1824,6 +2029,7 @@ mod branching_tests {
             &json!({
                 "schema":"volley-native-cpu-rally-proposals/1","state":"provisional_rally_segments","rally_run_id":rally,
                 "court_contact_context_version":"python_serve_toss_possession_v1",
+                "ground_boundary_version":"trajectory_court_player_v2",
                 "project_id":request.project_id,"video":request.video,
                 "source_replay_id":replay,"source_touch_id":touch,"sha256":sha
             }),
@@ -1831,6 +2037,7 @@ mod branching_tests {
         let saved = json!({
             "schema":SCHEMA,"project_id":request.project_id,"video":request.video,
             "status":"complete","pipeline_complete":true,"source_identity":identity,
+            "gpu_model_stack":GPU_MODEL_STACK,
             "profile":{"gpu":request.gpu,"post":request.post},
             "gpu_jobs":{"ball":gpu_ball,"players":gpu_players},
             "analysis_id":analysis,"cpu_runs":{"tracking":replay,"touches":touch,"rallies":rally},
@@ -1867,6 +2074,17 @@ mod branching_tests {
         assert!(compatible_version(&saved, &request, &identity));
         assert!(gpu_lineage_valid(&project_dir, &request, &identity, &saved));
         assert!(cpu_lineage_valid(&project_dir, &request, &saved));
+        request.post.touches.algorithm = TouchAlgorithm::PoseMotion;
+        let obsolete_pose = find_reusable(&state, &request, &identity, &"2".repeat(32));
+        assert!(
+            obsolete_pose.full.is_none(),
+            "PoseMotion v1 must not be reused after the body-contact gate is upgraded"
+        );
+        assert!(
+            obsolete_pose.gpu.is_some(),
+            "The existing GPU source is still reusable"
+        );
+        request.post.touches.algorithm = TouchAlgorithm::Legacy;
 
         // Reconstructing touches differently reuses the same GPU analysis.
         request.post.touches.threshold = 0.61;
@@ -2056,6 +2274,44 @@ mod branching_tests {
         let page2 = history_rows(&handler_state, "abc123def456", 25).unwrap();
         assert_eq!(page2["runs"].as_array().unwrap().len(), 1);
         assert_eq!(page2["has_more"], false);
+        clear_history_rows(&handler_state, "abc123def456", None).unwrap();
+        assert!(
+            history_rows(&handler_state, "abc123def456", 0).unwrap()["runs"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
+        assert!(project_dir
+            .join("native_studio_pipelines")
+            .join(format!("{:032x}", 0))
+            .join("status.json")
+            .exists());
+        let new_id = "f".repeat(32);
+        let new_run = project_dir.join("native_studio_pipelines").join(&new_id);
+        fs::create_dir_all(&new_run).unwrap();
+        fs::write(new_run.join("status.json"), serde_json::to_vec(&json!({"schema":SCHEMA,"id":new_id,"project_id":"abc123def456","status":"complete"})).unwrap()).unwrap();
+        assert_eq!(
+            history_rows(&handler_state, "abc123def456", 0).unwrap()["runs"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+        clear_history_rows(&handler_state, "abc123def456", Some(&new_id)).unwrap();
+        assert_eq!(
+            history_rows(&handler_state, "abc123def456", 0).unwrap()["runs"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+        clear_history_rows(&handler_state, "abc123def456", None).unwrap();
+        assert!(
+            history_rows(&handler_state, "abc123def456", 0).unwrap()["runs"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
         fs::remove_dir_all(base).unwrap();
     }
 }

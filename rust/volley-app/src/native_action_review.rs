@@ -377,6 +377,7 @@ mod tests {
             context: 30,
             expected_rallies: 1,
             expected_touches: 2,
+            min_ball_score: 0.35,
         }
     }
     #[test]

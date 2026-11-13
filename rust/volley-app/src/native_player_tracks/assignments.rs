@@ -1,6 +1,148 @@
 use super::*;
+
+/// An overlap of lifespan ranges is not evidence of co-visibility:
+/// the same athlete may have a lost/reacquired track during those ranges.
+pub(super) fn tracks_co_visible(a: &Aggregate, b: &Aggregate) -> bool {
+    let (mut i, mut j) = (0, 0);
+    while i < a.visible_spans.len() && j < b.visible_spans.len() {
+        let (a0, a1) = a.visible_spans[i];
+        let (b0, b1) = b.visible_spans[j];
+        if a0 <= b1 && b0 <= a1 { return true; }
+        if a1 < b1 { i += 1; } else { j += 1; }
+    }
+    false
+}pub(super) fn choose_automatic_photo_links(
+    ctx: &Inputs,
+    doc: &Value,
+    matches: &Value,
+) -> Result<BTreeMap<u64, String>, String> {
+    let assigned = doc["assignments"]
+        .as_object()
+        .ok_or("Invalid assignments")?;
+    let excluded: BTreeSet<_> = doc["excluded_ids"]
+        .as_array()
+        .ok_or("Invalid exclusions")?
+        .iter()
+        .filter_map(Value::as_u64)
+        .collect();
+    let suppressed: BTreeSet<_> = doc["automatic_suppressed_ids"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_u64)
+        .collect();
+    // Evaluate strongest evidence first. An athlete can have many tracklets,
+    // but not two co-visible tracklets with distinct positions.
+    let mut candidates = Vec::<(f64, u64, String)>::new();
+    for (id, rows) in matches.as_object().ok_or("Invalid photo matches")? {
+        let track_id = id.parse::<u64>().map_err(|_| "Invalid track ID")?;
+        if !ctx.tracks.contains_key(&track_id)
+            || assigned.contains_key(id)
+            || excluded.contains(&track_id)
+            || suppressed.contains(&track_id)
+        {
+            continue;
+        }
+        for row in rows.as_array().ok_or("Invalid candidate list")? {
+            let Some(owner) = row["player_id"]
+                .as_str()
+                .filter(|owner| ctx.roster.contains_key(*owner)) else { continue };
+            let Some(score) = row["cosine_similarity"]
+                .as_f64()
+                .filter(|score| score.is_finite() && *score > 0.30 && *score <= 1.0)
+                else { continue };
+            candidates.push((score, track_id, owner.to_owned()));
+        }
+    }
+    // Try the best player first, then other photo matches above 30% only
+    // when the strongest candidate conflicts with a co-visible track.
+    let mut tracks = candidates.iter().map(|v| v.1).collect::<BTreeSet<_>>()
+        .into_iter().collect::<Vec<_>>();
+    let highest = |id| candidates.iter().filter(|v| v.1 == id)
+        .map(|v| v.0).fold(0.0_f64, f64::max);
+    tracks.sort_by(|a, b| {
+        let (score_a, score_b) = (highest(*a), highest(*b));
+        if score_a > 0.90 && score_b > 0.90 {
+            let strength = |score: f64, id: u64| {
+                score * (ctx.tracks[&id].observed as f64 + 1.0).ln()
+            };
+            strength(score_b, *b).total_cmp(&strength(score_a, *a))
+        } else {
+            score_b.total_cmp(&score_a)
+        }
+        .then_with(|| ctx.tracks[b].observed.cmp(&ctx.tracks[a].observed))
+        .then_with(|| a.cmp(b))
+    });
+    let mut chosen = BTreeMap::<u64, String>::new();
+    for id in tracks {
+        let candidate = &ctx.tracks[&id];
+        let overlaps = |other_id: u64| ctx.tracks.get(&other_id)
+            .is_some_and(|other| tracks_co_visible(candidate, other));
+        let mut ranked = candidates.iter().filter(|v| v.1 == id).collect::<Vec<_>>();
+        ranked.sort_by(|a, b| b.0.total_cmp(&a.0).then_with(|| a.2.cmp(&b.2)));
+        for (_, _, owner) in ranked {
+            let locked = assigned.iter().any(|(other_id, other_owner)| {
+                other_owner.as_str() == Some(owner.as_str())
+                    && other_id.parse::<u64>().ok().is_some_and(overlaps)
+            });
+            let occupied = chosen.iter().any(|(other_id, other_owner)| {
+                other_owner == owner && overlaps(*other_id)
+            });
+            if !locked && !occupied {
+                chosen.insert(id, owner.clone());
+                break;
+            }
+        }
+    }
+    Ok(chosen)
+}
 pub(super) fn existing(sidecar: &Path) -> Result<Option<Vec<u8>>, String> {
     versioned_store::read_optional_bounded(sidecar, MAX_LINKS)
+}
+fn automatic_links_current(state: &AppState, ctx: &Inputs, doc: &Value) -> bool {
+    if doc["automatic_assignments"]
+        .as_object()
+        .is_none_or(|map| map.is_empty())
+    {
+        return true;
+    }
+    let Ok(model) = volley_inference::reid_openvino::fingerprint(&state.repository_root) else {
+        return false;
+    };
+    if doc["automatic_identity_evidence"]["model_fingerprint"] != model {
+        return false;
+    }
+    let mut albums = Vec::new();
+    for player in ctx.roster.keys() {
+        let Ok(folder) = checked_reference_folder(state, player, false) else {
+            return false;
+        };
+        let Ok(raw) =
+            versioned_store::read_optional_bounded(&folder.join("index.json"), MAX_REFERENCE_INDEX)
+        else {
+            return false;
+        };
+        let Ok(album) = references_doc(raw.as_deref(), player) else {
+            return false;
+        };
+        for photo in album["photos"].as_array().into_iter().flatten() {
+            let (Some(id), Some(expected)) = (photo["id"].as_str(), photo["image_sha256"].as_str())
+            else {
+                return false;
+            };
+            let Ok(Some(bytes)) = versioned_store::read_optional_bounded(
+                &folder.join(format!("ref-{id}.jpg")),
+                MAX_PHOTO_BYTES as u64,
+            ) else {
+                return false;
+            };
+            if format!("{:x}", Sha256::digest(&bytes)) != expected {
+                return false;
+            }
+        }
+        albums.push((player.clone(), revision(raw.as_deref())));
+    }
+    doc["automatic_identity_evidence"]["album_revisions"] == json!(albums)
 }
 pub(super) fn base_document(ctx: &Inputs) -> Value {
     json!({
@@ -57,6 +199,23 @@ pub(super) fn validated(raw: Option<&[u8]>, ctx: &Inputs) -> Result<Value, Strin
             return Err("Linked player is no longer on the project's roster".into());
         }
     }
+    if let Some(automatic) = doc.get("automatic_assignments") {
+        for (key, value) in automatic.as_object().ok_or("Invalid automatic links")? {
+            let id = key
+                .parse::<u64>()
+                .map_err(|_| "Invalid automatic Track ID")?;
+            if id.to_string() != *key
+                || !ctx.known.contains_number(id)
+                || assignments.contains_key(key)
+                || excluded_set.contains(&id)
+                || !value
+                    .as_str()
+                    .is_some_and(|owner| ctx.roster.contains_key(owner))
+            {
+                return Err("Stale or conflicting automatic Track ID link".into());
+            }
+        }
+    }
     Ok(doc)
 }
 pub(super) fn page(
@@ -80,7 +239,7 @@ pub(super) fn filtered_page(
     if limit == 0 || limit > 100 || offset > MAX_TRACKS {
         return Err("Invalid Track ID page size".into());
     }
-    if !matches!(view, None | Some("unassigned") | Some("player"))
+    if !matches!(view, None | Some("unassigned") | Some("conflict") | Some("player"))
         || (view == Some("player") && player_id.is_none_or(|id| !ctx.roster.contains_key(id)))
         || (view != Some("player") && player_id.is_some())
     {
@@ -110,24 +269,55 @@ pub(super) fn filtered_page(
         .collect::<Result<Vec<_>, &str>>()?;
     let reviewed =
         identity_review::resolve_reviewed(ctx.known.ids(), &ctx.roster, &reviewed_links, &excluded);
-    let scoped_assigned = assignments
-        .keys()
-        .filter(|id| {
-            id.parse::<u64>()
-                .ok()
-                .is_some_and(|tid| ctx.tracks.contains_key(&tid))
+    let mut owners = reviewed.owners.clone();
+    if let Some(automatic) = doc["automatic_assignments"].as_object() {
+        for (id, owner) in automatic {
+            if let (Ok(id), Some(owner)) = (id.parse::<u64>(), owner.as_str()) {
+                if !excluded.contains(&id) {
+                    owners.entry(id).or_insert_with(|| owner.to_owned());
+                }
+            }
+        }
+    }
+    // Distinguish lack of photo similarity from a real co-visibility
+    // conflict. A >30% photo match is not the same as a valid assignment.
+    let unresolved_match_ids: BTreeSet<u64> = ctx.tracks.iter().filter(|(id, candidate)| {
+        if owners.contains_key(id) { return false; }
+        let Some(rows) = doc["automatic_identity_evidence"]["matches"][id.to_string()].as_array()
+        else { return false };
+        let eligible = rows.iter().filter(|row| {
+            row["cosine_similarity"].as_f64().is_some_and(|score| score > 0.30)
+                && row["player_id"].as_str().is_some_and(|name| ctx.roster.contains_key(name))
+        }).collect::<Vec<_>>();
+        !eligible.is_empty() && eligible.iter().all(|row| {
+            let player = row["player_id"].as_str().unwrap_or_default();
+            owners.iter().any(|(other_id, owner)| {
+                owner == player && ctx.tracks.get(other_id)
+                    .is_some_and(|other| tracks_co_visible(candidate, other))
+            })
         })
+    }).map(|(id, _)| *id).collect();
+    let scoped_assigned = owners
+        .keys()
+        .filter(|id| ctx.tracks.contains_key(id))
         .count();
     let scoped_excluded = excluded
         .iter()
         .filter(|id| ctx.tracks.contains_key(id))
         .count();
     let matches = |id: &u64| match view {
-        Some("unassigned") => !reviewed.owners.contains_key(id),
-        Some("player") => reviewed.owners.get(id).map(String::as_str) == player_id,
+        Some("unassigned") => !owners.contains_key(id) && !unresolved_match_ids.contains(id),
+        Some("conflict") => unresolved_match_ids.contains(id),
+        Some("player") => owners.get(id).map(String::as_str) == player_id,
         _ => true,
     };
     let filtered_total = ctx.tracks.keys().filter(|id| matches(id)).count();
+    let mut player_track_counts = std::collections::BTreeMap::<&str, usize>::new();
+    for id in ctx.tracks.keys() {
+        if let Some(owner) = owners.get(id) {
+            *player_track_counts.entry(owner.as_str()).or_default() += 1;
+        }
+    }
     let mut rows = Vec::new();
     for (id, info) in ctx
         .tracks
@@ -136,7 +326,7 @@ pub(super) fn filtered_page(
         .skip(offset)
         .take(limit)
     {
-        let owner = reviewed.owners.get(id).map(String::as_str);
+        let owner = owners.get(id).map(String::as_str);
         rows.push(json!({
             "track_id":id,"first_frame":info.first,"last_frame":info.last,
             "observations":info.observed,"best_frame":info.best_frame,
@@ -144,7 +334,8 @@ pub(super) fn filtered_page(
             "assigned_player_id":owner,
             "assigned_player_name":owner.and_then(|v|ctx.roster.get(v)),
             "excluded":excluded.contains(id),
-            "identity_source":if owner.is_some(){"manual"}else{"none"},
+            "identity_conflict":unresolved_match_ids.contains(id),
+            "identity_source":if reviewed.owners.contains_key(id){"manual"}else if owner.is_some(){"automatic_photo"}else{"none"},
             "track_id_provisional":true,
         }));
     }
@@ -162,13 +353,16 @@ pub(super) fn filtered_page(
         "revision":version,"writable":ctx.can_write,
         "total_tracks":ctx.tracks.len(),"offset":offset,"limit":limit,
         "filtered_total":filtered_total,
-        "unassigned_track_ids":ctx.tracks.keys().filter(|id| !reviewed.owners.contains_key(id)).copied().collect::<Vec<_>>(),
-        "comparison_track_ids":ctx.tracks.keys().filter(|id| !reviewed.owners.contains_key(id) && !excluded.contains(id)).copied().collect::<Vec<_>>(),
+        "player_track_counts":player_track_counts,
+        "unassigned_track_ids":ctx.tracks.keys().filter(|id| !owners.contains_key(id) && !unresolved_match_ids.contains(id)).copied().collect::<Vec<_>>(),
+        "comparison_track_ids":ctx.tracks.keys().filter(|id| !owners.contains_key(id) && !excluded.contains(id)).copied().collect::<Vec<_>>(),
         "rally_track_ids":ctx.tracks.keys().copied().collect::<Vec<_>>(),
         "assigned_count":scoped_assigned,"excluded_count":scoped_excluded,
+        "identity_conflict_track_ids":unresolved_match_ids,
         "roster":roster,"tracks":rows,
+        "automatic_identity_matches":doc["automatic_identity_evidence"]["matches"],
         "athlete_links_require_manual_confirmation":true,
-        "automatic_reid_binding":false,"photos_auto_registered":false,
+        "automatic_reid_binding":doc["automatic_assignments"].as_object().is_some_and(|map| !map.is_empty()),"photos_auto_registered":false,
     }))
 }
 pub(crate) struct NativeReviewedOwners {
@@ -223,6 +417,47 @@ pub(crate) fn reviewed_owners(
         roster: ctx.roster,
     })
 }
+pub(crate) fn display_player_names(
+    state: &AppState,
+    project_id: &str,
+    video: &str,
+    replay_id: &str,
+) -> Result<(String, String, BTreeMap<String, String>), ApiError> {
+    let ctx = source(state, project_id, video, replay_id)?;
+    let raw = existing(&ctx.sidecar).map_err(storage::bad_request)?;
+    let mut doc = validated(raw.as_deref(), &ctx).map_err(storage::bad_request)?;
+    if !automatic_links_current(state, &ctx, &doc) {
+        doc["automatic_assignments"] = json!({});
+    }
+    let mut names: BTreeMap<String, String> = doc["assignments"]
+        .as_object()
+        .into_iter()
+        .flat_map(|map| map.iter())
+        .filter_map(|(id, owner)| Some((id.clone(), ctx.roster.get(owner.as_str()?)?.to_owned())))
+        .collect();
+    names.extend(
+        doc["automatic_assignments"]
+            .as_object()
+            .into_iter()
+            .flat_map(|map| map.iter())
+            .filter_map(|(id, owner)| {
+                let name = ctx.roster.get(owner.as_str()?)?;
+                Some((id.clone(), name.to_owned()))
+            }),
+    );
+    Ok((ctx.source_sha, revision(raw.as_deref()), names))
+}
+pub(crate) fn automatic_links_revision(
+    state: &AppState,
+    project_id: &str,
+    video: &str,
+    replay_id: &str,
+) -> Result<Option<String>, ApiError> {
+    let ctx = source(state, project_id, video, replay_id)?;
+    let raw = existing(&ctx.sidecar).map_err(storage::bad_request)?;
+    let doc = validated(raw.as_deref(), &ctx).map_err(storage::bad_request)?;
+    Ok(automatic_links_current(state, &ctx, &doc).then(|| revision(raw.as_deref())))
+}
 pub(super) fn read_internal(state: &AppState, req: &TrackQuery) -> Result<Value, ApiError> {
     let ctx = source_for_rallies(
         state,
@@ -232,7 +467,10 @@ pub(super) fn read_internal(state: &AppState, req: &TrackQuery) -> Result<Value,
         req.rally_run_id.as_deref(),
     )?;
     let bytes = existing(&ctx.sidecar).map_err(storage::bad_request)?;
-    let doc = validated(bytes.as_deref(), &ctx).map_err(storage::bad_request)?;
+    let mut doc = validated(bytes.as_deref(), &ctx).map_err(storage::bad_request)?;
+    if !automatic_links_current(state, &ctx, &doc) {
+        doc["automatic_assignments"] = json!({});
+    }
     filtered_page(
         &ctx,
         &doc,
@@ -346,6 +584,46 @@ pub(super) fn change(state: &AppState, req: &TrackEdit) -> Result<Value, ApiErro
         .map(|(id, player)| (id.to_string(), player.clone()))
         .collect::<BTreeMap<_, _>>());
     doc["excluded_ids"] = json!(review.excluded);
+    let mut suppressed: BTreeSet<u64> = doc["automatic_suppressed_ids"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_u64)
+        .collect();
+    for id in &req.track_ids {
+        if req.action == "unassign" {
+            suppressed.insert(*id);
+        }
+        if req.action == "assign" || req.action == "restore" {
+            suppressed.remove(id);
+        }
+    }
+    doc["automatic_suppressed_ids"] = json!(suppressed);
+    let conflict_tracks = source(state, &req.project_id, &req.video, &req.replay_id)?;
+    if let Some(automatic) = doc
+        .get_mut("automatic_assignments")
+        .and_then(Value::as_object_mut)
+    {
+        for id in &req.track_ids {
+            automatic.remove(&id.to_string());
+        }
+        automatic.retain(|id, owner| {
+            let Some(track) = id
+                .parse::<u64>()
+                .ok()
+                .and_then(|id| conflict_tracks.tracks.get(&id))
+            else {
+                return false;
+            };
+            !review.assignments.iter().any(|(other_id, other_owner)| {
+                owner.as_str() == Some(other_owner.as_str())
+                    && conflict_tracks
+                        .tracks
+                        .get(other_id)
+                        .is_some_and(|other| track.first <= other.last && other.first <= track.last)
+            })
+        });
+    }
     if before.is_none()
         || doc != validated(before.as_deref(), &ctx).map_err(storage::bad_request)?
     {
@@ -357,14 +635,101 @@ pub(super) fn change(state: &AppState, req: &TrackEdit) -> Result<Value, ApiErro
             .map_err(storage::bad_request)?;
     }
     let new = existing(&ctx.sidecar).map_err(storage::bad_request)?;
+    let mut view = validated(new.as_deref(), &ctx).map_err(storage::bad_request)?;
+    if !automatic_links_current(state, &ctx, &view) {
+        view["automatic_assignments"] = json!({});
+    }
     page(
         &ctx,
-        &validated(new.as_deref(), &ctx).map_err(storage::bad_request)?,
+        &view,
         &revision(new.as_deref()),
         req.offset,
         req.limit,
     )
     .map_err(storage::bad_request)
+}
+
+pub(super) fn save_automatic_photo_links(
+    state: &AppState,
+    req: &ReidReviewRequest,
+    comparison: &Value,
+) -> Result<Value, ApiError> {
+    if !state.writes_enabled {
+        return Err(storage::conflict(
+            "Automatic links require isolated writable storage",
+        ));
+    }
+    let _guard = project_guard::write_guard(state, &req.project_id)?;
+    let snapshot = super::photo_comparison::snapshot(state, req)?;
+    if comparison["identity_revision"] != json!(snapshot.identity_revision)
+        || comparison["album_revisions"] != json!(snapshot.albums)
+        || comparison["model_fingerprint"] != json!(snapshot.model)
+    {
+        return Err(storage::conflict(
+            "Photo references or model changed during automatic comparison",
+        ));
+    }
+    let ctx = source(state, &req.project_id, &req.video, &req.replay_id)?;
+    if ctx.source_sha != req.expected_source_sha256 {
+        return Err(storage::conflict("Source replay changed"));
+    }
+    let before = existing(&ctx.sidecar).map_err(storage::bad_request)?;
+    if comparison["identity_revision"].as_str() != Some(revision(before.as_deref()).as_str()) {
+        return Err(storage::conflict(
+            "Player links changed during automatic comparison",
+        ));
+    }
+    let mut doc = validated(before.as_deref(), &ctx).map_err(storage::bad_request)?;
+    let scoped = source_for_rallies(
+        state,
+        &req.project_id,
+        &req.video,
+        &req.replay_id,
+        req.rally_run_id.as_deref(),
+    )?;
+    // Rebuild identity membership once per CPU result, using the photo
+    // comparison only. The old assignment sidecar must not bias this pass.
+    let mut reset = doc.clone();
+    reset["assignments"] = json!({});
+    reset["automatic_assignments"] = json!({});
+    reset["excluded_ids"] = json!([]);
+    reset["automatic_suppressed_ids"] = json!([]);
+    let matches = &comparison["player_matches"];
+    let chosen = choose_automatic_photo_links(&scoped, &reset, matches)
+        .map_err(storage::bad_request)?;
+    doc = reset;
+    doc["automatic_assignments"] = json!(chosen.iter()
+        .map(|(id, player)| (id.to_string(), player.clone()))
+        .collect::<BTreeMap<_, _>>());
+    doc["automatic_identity_evidence"] = json!({
+        "threshold":0.30, "matches":matches,
+        "album_revisions":comparison["album_revisions"],
+        "model_fingerprint":comparison["model_fingerprint"]
+    });
+    let unassigned: Vec<_> = scoped
+        .tracks
+        .keys()
+        .filter(|id| {
+            let key = id.to_string();
+            !doc["assignments"]
+                .as_object()
+                .is_some_and(|map| map.contains_key(&key))
+                && !doc["automatic_assignments"]
+                    .as_object()
+                    .is_some_and(|map| map.contains_key(&key))
+        })
+        .copied()
+        .collect();
+    let parent = ctx
+        .sidecar
+        .parent()
+        .ok_or_else(|| storage::internal("Link directory missing"))?;
+    versioned_store::write_json_checked(parent, &ctx.sidecar, &doc, MAX_LINKS)
+        .map_err(storage::bad_request)?;
+    let saved = existing(&ctx.sidecar).map_err(storage::bad_request)?;
+    Ok(
+        json!({"automatic_count":chosen.len(),"automatic_assignments":chosen,"unassigned_track_ids":unassigned,"identity_revision":revision(saved.as_deref()),"confirmed":false}),
+    )
 }
 pub async fn read(
     State(state): State<Arc<AppState>>,

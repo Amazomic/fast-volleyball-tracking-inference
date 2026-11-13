@@ -215,6 +215,7 @@ body[data-ui-theme="light"] .analysis-gpu-settings-grid input{background:white;c
 /* New project action on the LEFT of the dependent source selector. */
 .studio-project-picker{display:flex;align-items:center;gap:8px;min-width:0}
 .studio-project-picker select{min-width:0;flex:1}
+.studio-project-picker .analysis-picker{flex:1}
 .studio-project-new{height:39px;width:39px;flex:0 0 39px;padding:0;font-size:25px;line-height:1;display:grid;place-items:center}
 .studio-create-dialog{
   width:min(900px,calc(100vw - 28px));max-width:calc(100vw - 28px);
@@ -584,6 +585,8 @@ body[data-ui-theme="light"] .analysis-run-log-output{background:#101c2a;color:#d
   display:flex;justify-content:space-between;margin-top:6px;
   color:#91a9c7;font-size:11px;font-variant-numeric:tabular-nums;
 }
+#studio-preview-view #studio-timeline-middle{color:#edf5ff;font-size:13px;font-weight:700;font-variant-numeric:tabular-nums;font-feature-settings:"tnum"}
+body[data-ui-theme="light"] #studio-preview-view #studio-timeline-middle{color:#1f3c5e}
 #studio-preview-view .video-timeline-legend{
   display:flex;gap:8px 16px;align-items:center;flex-wrap:wrap;
   margin-top:8px;color:#a0afc4;font-size:10.5px;
@@ -642,10 +645,14 @@ body[data-ui-theme="light"] #studio-preview-view .video-timeline{background:#f2f
 body[data-ui-theme="light"] #studio-preview-view .video-timeline-head strong{color:#203d5e}
 body[data-ui-theme="light"] #studio-preview-view .video-timeline-head span,
 body[data-ui-theme="light"] #studio-preview-view .video-timeline-axis,
-body[data-ui-theme="light"] #studio-preview-view .video-timeline-legend{color:#506883}
+body[data-ui-theme="light"] #studio-preview-view #studio-timeline-middle{color:#edf5ff;font-size:13px;font-weight:700;font-variant-numeric:tabular-nums;font-feature-settings:"tnum"}
+body[data-ui-theme="light"] #studio-preview-view #studio-timeline-middle{color:#1f3c5e}
+#studio-preview-view .video-timeline-legend{color:#506883}
 @media(max-width:600px){
   #studio-preview-view .video-timeline{margin:0;padding:11px 10px}
-  #studio-preview-view .video-timeline-legend{gap:6px 12px}
+  #studio-preview-view #studio-timeline-middle{color:#edf5ff;font-size:13px;font-weight:700;font-variant-numeric:tabular-nums;font-feature-settings:"tnum"}
+body[data-ui-theme="light"] #studio-preview-view #studio-timeline-middle{color:#1f3c5e}
+#studio-preview-view .video-timeline-legend{gap:6px 12px}
 }
 
 /* Preview workspace: keep the video dominant and rallies in a narrow, scrollable right rail. */
@@ -826,9 +833,10 @@ body[data-ui-theme="light"] #studio-preview-view .rallies-panel-head span{color:
 #studio-preview-view .video-overlay{
   position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:1;
 }
+#studio-preview-view .video-overlay-controls{position:absolute;z-index:4;top:10px;right:10px;display:flex;flex-direction:column;align-items:flex-end;gap:5px;max-width:calc(100% - 20px);max-height:70%;overflow:auto}
 #studio-preview-view .video-overlay-toggles{
-  position:absolute;z-index:3;top:10px;right:10px;display:flex;gap:5px;
-  flex-wrap:wrap;justify-content:flex-end;max-width:calc(100% - 20px);
+  display:flex;gap:5px;
+  flex-wrap:wrap;justify-content:flex-end;max-width:100%;
   padding:5px;background:rgba(7,13,25,.78);border:1px solid rgba(134,163,201,.4);
   border-radius:11px;backdrop-filter:blur(8px);
 }
@@ -842,12 +850,59 @@ body[data-ui-theme="light"] #studio-preview-view .rallies-panel-head span{color:
 }
 #studio-preview-view .video-overlay-toggle:hover{border-color:#b8ddff}
 #studio-preview-view .video-overlay-toggle:focus-visible{outline:2px solid #fff;outline-offset:2px}
-#studio-preview-view .video-overlay-raw-controls{position:absolute;top:56px;right:8px;z-index:4;display:grid;gap:5px;padding:8px;background:rgba(9,20,35,.9);color:#fff;border-radius:6px}
-#studio-preview-view .video-overlay-raw-controls.hidden{display:none}
-#studio-preview-view .video-overlay-raw-controls>label{display:grid;grid-template-columns:65px 110px 36px;align-items:center;gap:5px;font-size:12px}
-#studio-preview-view .video-overlay-raw-controls{max-width:300px;max-height:70%;overflow:auto}
-#studio-preview-view .video-overlay-actions{display:grid;grid-template-columns:1fr 1fr;gap:4px;border:0;padding:0;margin:0;font-size:12px}
-#studio-preview-view .video-overlay-actions legend{margin-bottom:4px}
+#studio-preview-view .video-overlay-modes{display:flex;gap:3px;padding:3px;background:#0c1727;border:1px solid #8aaacc;border-radius:11px;box-shadow:0 3px 20px rgba(0,0,0,.4)}
+#studio-preview-view .video-overlay-modes button{padding:8px 14px;border:0;border-radius:8px;background:transparent;color:#a9b9cd;font-size:13px;font-weight:750}
+#studio-preview-view .video-overlay-modes button[aria-selected="true"]{background:#326ba5;color:#fff;box-shadow:0 0 13px rgba(69,160,251,.3)}
+#studio-preview-view .video-overlay-toggles.raw-selected>.video-overlay-toggle{display:none}
+#studio-preview-view .video-overlay-raw-controls{display:flex;align-items:stretch;gap:7px;padding:4px;color:#fff;background:transparent;max-width:100%;flex-wrap:wrap;justify-content:flex-end}
+#studio-preview-view .video-overlay-raw-controls.hidden,#studio-preview-view .video-overlay-actions.hidden{display:none}
+#studio-preview-view .raw-model-control{min-width:164px;display:grid;align-content:start;gap:5px;margin:0;border:1px solid #57748f;border-radius:9px;background:rgba(9,20,35,.94);padding:7px 9px}
+#studio-preview-view .raw-model-control legend{font-size:12px;font-weight:750;color:#e4f4ff;padding:0 4px}
+#studio-preview-view .raw-model-control label{display:flex;align-items:center;gap:5px;justify-content:space-between;font-size:11px;white-space:nowrap}
+#studio-preview-view .raw-model-control label>input[type="range"]{width:74px;accent-color:#61cbff}
+#studio-preview-view .raw-model-control output{font-size:10px;color:#b6d6f5;min-width:30px;text-align:right}
+#studio-preview-view .raw-model-control small{max-width:195px;color:#aab9c9;font-size:10px}
+#studio-preview-view .raw-model-control:has(legend input:not(:checked)){opacity:.58}
+/* In raw mode the three compact model controls and the mode switch share one row. */
+#studio-preview-view .video-overlay-controls:has(.video-overlay-toggles.raw-selected){
+  left:10px;right:10px;max-width:none;max-height:none;overflow:visible;
+  display:grid;grid-template-columns:minmax(0,1fr) max-content;
+  align-items:start;column-gap:8px;row-gap:0;
+}
+#studio-preview-view .video-overlay-controls:has(.video-overlay-toggles.raw-selected) .video-overlay-toggles{
+  grid-column:2;grid-row:1;justify-self:end;
+  flex-wrap:nowrap;max-width:none;
+}
+#studio-preview-view .video-overlay-controls:has(.video-overlay-toggles.raw-selected) .video-overlay-raw-controls{
+  grid-column:1;grid-row:1;min-width:0;width:100%;max-width:none;
+  display:flex;flex-direction:row;flex-wrap:nowrap;align-items:flex-start;
+  gap:6px;padding:0;overflow-x:auto;overflow-y:hidden;justify-content:flex-end;
+}
+#studio-preview-view .video-overlay-controls:has(.video-overlay-toggles.raw-selected) .raw-model-control{
+  flex:0 0 auto;min-width:0;width:175px;max-width:100%;
+  padding:6px 8px;
+}
+#studio-preview-view .video-overlay-controls:has(.video-overlay-toggles.raw-selected) .raw-model-control:nth-child(2){
+  width:211px;
+}
+#studio-preview-view .video-overlay-controls:has(.video-overlay-toggles.raw-selected) .raw-model-control:nth-child(3){
+  width:233px;
+}
+#studio-preview-view .video-overlay-controls:has(.video-overlay-toggles.raw-selected) .raw-model-control label{
+  white-space:normal;
+}
+#studio-preview-view .video-overlay-controls:has(.video-overlay-toggles.raw-selected) .raw-model-control label>input[type="range"]{
+  width:58px;flex:0 0 58px;
+}
+#studio-preview-view .video-overlay-controls:has(.video-overlay-toggles.raw-selected) .raw-model-control small{
+  max-width:none;
+}
+@container (max-width:950px){
+  #studio-preview-view .video-overlay-controls:has(.video-overlay-toggles.raw-selected) .video-overlay-raw-controls{
+    justify-content:flex-start;
+  }
+}
+#studio-preview-view .video-overlay-actions{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:4px 10px;max-width:100%;border:0;padding:6px 8px;margin:0;background:rgba(9,20,35,.9);color:#fff;border-radius:6px;font-size:12px}
 #studio-preview-view .video-overlay-actions label{display:flex;align-items:center;gap:4px;white-space:nowrap}
 #studio-preview-view .action-attack{color:#ff6b6b}
 #studio-preview-view .action-block{color:#c38cff}
@@ -863,6 +918,9 @@ body[data-ui-theme="light"] #studio-preview-view .rallies-panel-head span{color:
 @media(max-width:560px){
   #studio-preview-view .video-overlay-toggles{top:6px;right:6px;gap:3px;padding:3px}
   #studio-preview-view .video-overlay-toggle{font-size:10px;padding:5px}
+}
+@container (max-width: 550px){
+  #studio-preview-view .video-overlay-raw-controls{flex-direction:column;gap:8px}
 }
 
 /* Preview has no instructional/status banner; keep its node for legacy JS updates. */
@@ -1135,7 +1193,8 @@ body[data-ui-theme="light"] #studio-preview-view .rallies-panel-head span{color:
 #studio-players-view .players-side-gallery{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:5px;font-size:11px}
 #studio-players-view .players-side-gallery[hidden]{display:none}
 #studio-players-view .players-side-gallery img{width:58px;height:64px;object-fit:cover;border-radius:5px}
-#studio-players-view .track-view-bar{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin:8px 0;color:#d8e8fb}
+#studio-players-view .track-view-bar{display:flex;align-items:center;justify-content:space-between;gap:6px 12px;flex-wrap:wrap;margin:4px 0;color:#d8e8fb}
+#studio-players-view .track-view-bar:not(:has(>:not([hidden]))){display:none}
 #studio-players-view .players-sidebar-empty,
 #studio-players-view .players-sidebar-loading{
   padding:18px 8px;color:#99aec9;font-size:12px;
@@ -1221,8 +1280,15 @@ body[data-ui-theme="light"] #studio-preview-view .rally-card-techniques{color:#5
 #studio-players-view .track-group-select{display:none}
 #studio-players-view #studio-native-track-panel{border:0;padding:0;margin:0}
 #studio-players-view #studio-native-track-panel>#studio-track-status{display:block}
-#studio-players-view .track-mode-switch{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 18px}
-#studio-players-view .track-mode-button{padding:9px 15px;border:1px solid #344d70;background:#15253c;color:#a8bbd3;border-radius:8px}
+#studio-players-view .track-mode-switch{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:0 0 8px}
+#studio-players-view .track-mode-tabs{display:inline-flex;align-items:center;padding:3px;gap:2px;border:1px solid #344d70;background:#101e31;border-radius:9px}
+#studio-players-view .track-view-label{margin-left:8px;color:#d8e8fb}
+#studio-players-view .track-grouping-controls[hidden]+.track-view-label{margin-left:auto}
+#studio-players-view .track-grouping-controls{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-left:auto}
+#studio-players-view .track-grouping-controls label{display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:12px}
+#studio-players-view .track-grouping-controls input{width:100px}
+#studio-players-view .track-grouping-controls button{padding:7px 11px;font-size:12px}
+#studio-players-view .track-mode-button{padding:6px 12px;border:1px solid transparent;background:transparent;color:#a8bbd3;border-radius:6px;font-size:12px}
 #studio-players-view .track-mode-button[aria-pressed="true"]{background:#24508a;border-color:#467bc3;color:#fff}
 #studio-players-view .track-mode-button:focus-visible{outline:2px solid #b7d4ff;outline-offset:3px}
 #studio-players-view .track-portrait{cursor:pointer}
@@ -1244,6 +1310,7 @@ body[data-ui-theme="light"] #studio-preview-view .rally-card-techniques{color:#5
 .report-player p{margin:5px 0}
 
 .analysis-history{margin:22px 0 0;min-width:0}
+.analysis-history-actions{display:flex;gap:8px;flex-wrap:wrap}
 .analysis-history-tabs{display:flex;gap:6px;flex-wrap:wrap;margin:10px 0}
 .analysis-history-tabs button{border:1px solid #3a5778;background:transparent;color:inherit;border-radius:7px;padding:6px 12px;cursor:pointer}
 .analysis-history-tabs button[aria-selected="true"]{background:#274767;color:#fff}
@@ -1258,7 +1325,22 @@ body[data-ui-theme="light"] #studio-preview-view .rally-card-techniques{color:#5
 body[data-ui-theme="light"] .analysis-history-run{border-color:#bfd4ec}
 body[data-ui-theme="light"] .analysis-history-run summary span{color:#4d6885}
 body[data-ui-theme="light"] .analysis-history-tabs button[aria-selected="true"]{background:#d8eaff;color:#163d66}
-
+#studio-players-view .players-sidebar-heading{display:flex;align-items:center;justify-content:space-between;gap:8px}
+#studio-players-view .players-sidebar-heading h3{margin:0 0 3px 3px;font-size:14px;color:#e3eefe}
+#studio-players-view .players-sidebar-add{width:30px;height:30px;padding:0;border:1px solid #49617c;border-radius:7px;background:#1a2a41;color:#e7f0fd;font-size:22px;line-height:1;cursor:pointer}
+#studio-players-view .players-sidebar-picker{display:grid;gap:4px;margin-bottom:10px}
+#studio-players-view .players-sidebar-picker[hidden]{display:none}
+#studio-players-view .players-sidebar-picker button,#studio-players-view .players-side-menu button{width:100%;padding:8px 10px;border:0;border-radius:5px;background:transparent;color:#e7f0fd;text-align:left;cursor:pointer}
+#studio-players-view .players-sidebar-picker button:hover,#studio-players-view .players-side-menu button:hover{background:#304763}
+#studio-players-view .players-side-menu[open]{position:absolute;right:7px;top:7px;width:190px;padding:7px;background:#1d3049;border:1px solid #49617c;border-radius:9px;box-shadow:0 8px 24px #0007}
+#studio-players-view .players-side-menu summary{text-align:right;padding:0 3px 5px}
+#studio-players-view .player-saved-photos{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,180px));gap:12px}
+#studio-players-view .player-saved-photo{display:grid;gap:8px;padding:8px;border:1px solid #344d70;border-radius:9px;background:#15253c}
+#studio-players-view .player-saved-photo img{width:100%;height:190px;object-fit:cover;border-radius:6px}
+#studio-players-view #studio-native-track-panel[data-track-mode="player"]>.native-track-list,
+#studio-players-view #studio-native-track-panel[data-track-mode="player"]>.track-bottom,
+#studio-players-view #studio-native-track-panel[data-track-mode="player"]>.track-singles-bar{display:none}
+#studio-players-view .track-grouping-controls[hidden]{display:none}
 .analysis-picker { position: relative; min-width: 0; }
 .analysis-picker-native { display: none; }
 .analysis-picker-trigger { width: 100%; height: 39px; padding: 9px 28px 9px 10px; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #eaf0fe; background: #172235; border: 1px solid #31415a; border-radius: 9px; font-size: 12px; }
@@ -1276,3 +1358,19 @@ body[data-ui-theme="light"] .analysis-history-tabs button[aria-selected="true"]{
 .analysis-picker-delete:hover { background: #c73d4c; }
 .analysis-picker-action:focus-visible { outline: 2px solid #9cc6ff; outline-offset: 1px; }
 .analysis-picker-action:disabled { opacity: .4; cursor: wait; }
+
+/* Floating project-player actions: never reflow the player cards. */
+#studio-players-view .players-sidebar-column{overflow:visible}
+#studio-players-view .players-sidebar-list{max-height:calc(100dvh - 245px);overflow-y:auto;scrollbar-width:thin}
+#studio-players-view .players-sidebar-picker:not([hidden]){position:absolute;left:0;right:0;bottom:calc(100% + 12px);z-index:30;max-height:min(340px,55dvh);overflow-y:auto;margin:0;padding:10px;background:#1a2a41;border:1px solid #49617c;border-radius:12px;box-shadow:0 14px 35px #0009;animation:players-picker-in .22s cubic-bezier(.2,.8,.2,1) both}
+@keyframes players-picker-in{from{opacity:0;transform:translateY(12px) scale(.98)}to{opacity:1;transform:translateY(0) scale(1)}}
+@media(prefers-reduced-motion:reduce){#studio-players-view .players-sidebar-picker:not([hidden]){animation:none}}
+#studio-players-view .players-reset-track-links{
+  width:100%;margin-top:14px;padding:10px 12px;
+  border:1px solid #6e4652;border-radius:9px;
+  color:#ffc4cb;background:#38212c;font-weight:600;
+}
+#studio-players-view .players-reset-track-links:hover:not(:disabled){
+  background:#56303d;border-color:#a65a6b;
+}
+#studio-players-view .players-reset-track-links:disabled{opacity:.45;cursor:not-allowed}

@@ -15,7 +15,7 @@
     progress:$("studio-analysis-progress"),profileDelta:$("studio-analysis-profile-delta"),
     logPanel:$("studio-analysis-log-panel"),logOutput:$("studio-analysis-log-output"),
     logCurrent:$("studio-analysis-log-current"),logCount:$("studio-analysis-log-count"),
-    historyList:$("studio-history-list"),historyRefresh:$("studio-history-refresh"),historyMore:$("studio-history-more"),
+    historyList:$("studio-history-list"),historyRefresh:$("studio-history-refresh"),historyMore:$("studio-history-more"),historyClear:$("studio-history-clear"),
     playerForm:$("studio-player-create"),playerName:$("studio-player-name"),
     playerList:$("studio-player-list"),playerCount:$("studio-player-count"),
     playerRefresh:$("studio-player-refresh")
@@ -29,7 +29,7 @@
     logKey:"",logOffset:0,logBusy:false,logLastCall:"",logPending:null,
     historyRows:[],historyFilter:"all",historyEpoch:0,historyOffset:0,
     revision:"absent",players:[],mutating:false,playersLoaded:false,
-    projectMemberIds:new Set(),trackCoverScope:"",trackCovers:new Map()
+    projectMemberIds:new Set(),trackCoverScope:"",trackCovers:new Map(),playerTrackCounts:null
   };
   // Per-project form snapshot: store only deviations from the versioned gold
   // defaults. A changed native default never gets silently overwritten.
@@ -41,13 +41,25 @@
         const raw=localStorage.getItem(prefix+project);
         if(!raw||raw.length>8192)return null;
         const data=JSON.parse(raw);
-        return data&&data.version===1&&typeof data.fields==="object"?data:null;
+        if(!data||![1,2].includes(data.version)||!data.fields||typeof data.fields!=="object")return null;
+        // The calibrated hybrid defaults to optional RTMPose. An override from
+        // the previous form was silently forcing the strict filter to discard
+        // 10 of 11 real-project contacts, resulting in zero rallies.
+        // Migrate only that old field; preserve every other customized value.
+        if(data.version===1){
+          const fields={...data.fields};
+          delete fields["studio-post-require-pose"];
+          const migrated={version:2,video:data.video,fields};
+          localStorage.setItem(prefix+project,JSON.stringify(migrated));
+          return migrated;
+        }
+        return data;
       }catch{return null;}
     };
     const write=(project,video,fields)=>{
       if(!/^[a-f0-9]{12}$/.test(project||""))return;
       try{localStorage.setItem(prefix+project,JSON.stringify({
-        version:1,video,fields
+        version:2,video,fields
       }));}catch{}
     };
     return {read,write};
@@ -120,6 +132,18 @@
     if(state.pipelineTimer!==null)clearInterval(state.pipelineTimer);
     state.pipelineTimer=null;
   };
+  // Keep every media element scoped to its visible workspace. Hidden views
+  // stay mounted for fast navigation but must never keep playing.
+  const views={
+    preview:ui.preview,montage:ui.montage,quick:ui.quick,
+    analysis:ui.analysis,players:ui.players,report:ui.report
+  };
+  const pauseInactiveMedia=(activeTab)=>{
+    const active=views[activeTab];
+    for(const media of document.querySelectorAll("video, audio")){
+      if(!media.paused&&(document.hidden||!active?.contains(media)))media.pause();
+    }
+  };
   const switchTab=(requested)=>{
     const previous=state.tab;
     const next=runtime.navigate(requested);
@@ -131,6 +155,7 @@
     ui.analysis.classList.toggle("hidden",next!=="analysis");
     ui.players.classList.toggle("hidden",next!=="players");
     ui.report.classList.toggle("hidden",next!=="report");
+    pauseInactiveMedia(next);
     window.dispatchEvent(new CustomEvent("volley:tab-change",{detail:{tab:next}}));
     for(const nav of document.querySelectorAll("[data-studio-tab]")){
       const active=nav.dataset.studioTab===next;
@@ -141,6 +166,17 @@
     if(next==="analysis"&&state.formProject!==projectId())loadVideos().catch(failure);
     if(next==="players"&&!state.playersLoaded)loadPlayers().catch(failure);
   };
+  // Browser backgrounding and navigation never preserve active playback.
+  // A capture listener also guards delayed play() calls from hidden panels.
+  document.addEventListener("visibilitychange",()=>{
+    if(document.hidden)pauseInactiveMedia(null);
+  });
+  window.addEventListener("pagehide",()=>pauseInactiveMedia(null));
+  document.addEventListener("play",event=>{
+    const media=event.target;
+    if(media?.tagName!=="VIDEO"&&media?.tagName!=="AUDIO")return;
+    if(document.hidden||!views[state.tab]?.contains(media))media.pause();
+  },true);
   const projectId=()=>ui.project.value;
   const inputValue=(id)=>{
     const input=$(id),raw=input.value.trim(),value=Number(raw);
@@ -170,11 +206,18 @@
       ambiguity_margin:inputValue("studio-post-margin")
     },
     touches:{
+      algorithm:$("studio-post-touch-algorithm").value,
       threshold:inputValue("studio-post-touch-threshold"),
+      min_ball_score:inputValue("studio-post-ball-score"),
       smooth:inputValue("studio-post-smooth"),
       min_gap:inputValue("studio-post-touch-gap"),
       max_reach_ratio:inputValue("studio-post-reach"),
-      min_interval_sec:inputValue("studio-post-interval")
+      min_interval_sec:inputValue("studio-post-interval"),
+      use_ravel_touch:false,
+      require_pose:$("studio-post-require-pose").value==="1",
+      pose_min_confidence:inputValue("studio-post-pose-confidence"),
+      pose_max_distance:inputValue("studio-post-pose-distance"),
+      occluded_min_turn_deg:inputValue("studio-post-occluded-turn")
     },
     rallies:{
       min_ball_score:inputValue("studio-post-ball-score"),
@@ -233,6 +276,10 @@
         "Изменено параметров: "+changed.length+
         ". При изменении GPU создаётся новый анализ; при изменении только CPU — новая постобработка.":
         "Эталонный профиль активен. Совпадающие готовые версии используются повторно.";
+      if($("studio-post-require-pose").value==="1" &&
+          $("studio-post-touch-algorithm").value==="legacy"){
+        ui.profileDelta.textContent+=" Внимание: обязательное подтверждение RTMPose отбрасывает касания без уверенной позы и может оставить розыгрыш без событий.";
+      }
     }
     const running=Boolean(state.pipelineId);
     ui.start.textContent=running?
@@ -402,6 +449,17 @@
     }}
   };
   ui.historyRefresh.addEventListener("click",()=>loadHistory());
+  ui.historyClear.addEventListener("click",async()=>{
+    const project=projectId();
+    if(!project||ui.historyClear.disabled)return;
+    ui.historyClear.disabled=true;
+    state.historyEpoch++;
+    try{
+      await post("/api/studio/pipeline/history",{project_id:project});
+      if(project===projectId())await loadHistory();
+    }catch(error){if(project===projectId())ui.historyList.textContent="Не удалось очистить историю: "+String(error.message||error);}
+    finally{ui.historyClear.disabled=false;}
+  });
   ui.historyMore.addEventListener("click",()=>loadHistory(true));
   for(const button of document.querySelectorAll("[data-history-filter]")){
     button.addEventListener("click",()=>{
@@ -567,9 +625,9 @@
       loadHistory();
       resetLog();ui.logPanel.open=true;
       ui.progress.value=0;state.stopRequested=false;
-      saveMessage(mode==="gpu"?"Запущен отдельный анализ: VballNet → RAVEL → объединение.":
+      saveMessage(mode==="gpu"?"Запущен отдельный анализ: VballNet → RTMDet + RTMPose → объединение.":
         mode==="post"?"Запущена новая CPU-постобработка выбранного GPU-анализа.":
-        "Запущен полный анализ: VballNet → RAVEL → CPU.");
+        "Запущен полный анализ: VballNet → RTMDet + RTMPose → CPU.");
       stopPipelinePolling();
       await pollPipeline();
       if(state.pipelineId)state.pipelineTimer=setInterval(pollPipeline,1800);
@@ -627,7 +685,8 @@
       }else avatar.textContent=player.name.slice(0,1).toUpperCase();
       const meta=make("div","players-side-meta");
       meta.append(make("strong","",player.name),
-        make("small","",count+" сохранённых фото"),
+        make("small","",count+" сохранённых фото"+(state.playerTrackCounts?
+          " · "+(state.playerTrackCounts[player.id]||0)+" привязанных ID":"")),
         make("span","players-side-membership"+
           (state.projectMemberIds.has(player.id)?" is-linked":""),
           state.projectMemberIds.has(player.id)?"В проекте":"В библиотеке"));
@@ -641,44 +700,32 @@
         })));
       const toggle=make("summary","","⋮");
       toggle.ariaLabel="Действия с фотографиями "+player.name;
-      const show=make("button","","Привязанные фото");show.type="button";
-      const attach=make("button","","Привязать фото от Track ID");attach.type="button";
-      attach.title="Выберите один Track ID. Он также будет привязан к этому игроку.";
-      const gallery=make("div","players-side-gallery");gallery.hidden=true;
-      show.addEventListener("click",async()=>{
+      const rename=make("button","","Переименовать");rename.type="button";
+      rename.addEventListener("click",async()=>{
         menu.open=false;
-        if(!gallery.hidden){gallery.hidden=true;return;}
-        gallery.hidden=false;clear(gallery);
-        gallery.append(make("span","","Загрузка фото…"));
-        const project=projectId();
+        const name=window.prompt("Новое имя игрока",player.name);
+        if(name===null||!name.trim()||state.mutating)return;
+        state.mutating=true;
         try{
-          const album=await post("/api/players/native/references",{
-            project_id:project,player_id:player.id,action:"read"
+          const result=await post("/api/players/library/native",{
+            action:"rename",player_id:player.id,name:name.trim(),expected_revision:state.revision
           });
-          if(project!==projectId())return;
-          clear(gallery);
-          const seen=new Set();
-          for(const photo of Array.isArray(album.photos)?album.photos:[]){
-            if(seen.has(photo.image_sha256))continue;
-            seen.add(photo.image_sha256);
-            const img=make("img");img.loading="lazy";
-            img.alt="Фото игрока "+player.name+" · Track ID "+photo.track_id;
-            img.src="/api/players/library/photo?"+new URLSearchParams({
-              player_id:player.id,reference_id:photo.id
-            });
-            gallery.append(img);
-          }
-          if(!seen.size)gallery.append(make("span","","Сохранённых фото пока нет."));
-        }catch(error){clear(gallery);gallery.append(make("span","",String(error.message||error)));}
+          state.revision=String(result.revision);
+          state.players=Array.isArray(result.players)?result.players:[];
+          renderPlayers();window.dispatchEvent(new Event("volley:player-library-updated"));
+        }catch(error){failure(error);await loadPlayers().catch(failure);}
+        finally{state.mutating=false;}
       });
-      attach.addEventListener("click",()=>{
+      const remove=make("button","","Удалить из проекта");remove.type="button";
+      remove.addEventListener("click",()=>{
         menu.open=false;
-        window.dispatchEvent(new CustomEvent("volley:enroll-selected-photo",{
-          detail:{project_id:projectId(),player_id:player.id}
-        }));
+        if(window.confirm("Удалить игрока «"+player.name+"» из проекта?"))
+          window.dispatchEvent(new CustomEvent("volley:remove-project-player",{
+            detail:{project_id:projectId(),player_id:player.id}
+          }));
       });
-      menu.append(toggle,show,attach);
-      card.append(avatar,meta,menu,gallery,selectPlayer);
+      menu.append(toggle,rename,remove);
+      card.append(avatar,meta,menu,selectPlayer);
       sidebar.append(card);
     }
   };
@@ -825,6 +872,8 @@
     const detail=event.detail||{};
     if(detail.project_id!==projectId())return;
     const scope=[detail.project_id,detail.video,detail.replay_id].join("/");
+    state.playerTrackCounts=detail.player_track_counts&&typeof detail.player_track_counts==="object"?
+      detail.player_track_counts:null;
     if(state.trackCoverScope!==scope){
       state.trackCoverScope=scope;
       state.trackCovers.clear();
@@ -854,7 +903,7 @@
   window.addEventListener("volley:project-ready",()=>{
     state.playersLoaded=false;
     state.projectMemberIds=new Set();
-    state.trackCovers.clear();state.trackCoverScope="";
+    state.trackCovers.clear();state.trackCoverScope="";state.playerTrackCounts=null;
     resetLog();
     state.analysisGeneration++;
     if(state.tab==="analysis")loadVideos().catch(failure);

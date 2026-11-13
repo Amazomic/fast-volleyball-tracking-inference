@@ -16,7 +16,6 @@
     projectCancel:$("studio-project-cancel"),projectClose:$("studio-project-close"),
 
     list:$("studio-rallies"),filter:$("studio-filter"),
-    total:$("studio-total"),goldCount:$("studio-gold-count"),
     selectedCount:$("studio-selected-count"),banner:$("studio-banner"),
     video:$("studio-video"),
     emptyVideo:$("studio-video-empty"),videoTime:$("studio-video-time"),
@@ -27,13 +26,15 @@
     render:$("studio-render"),job:$("studio-job"),cancel:$("studio-cancel"),
     download:$("studio-download")
   };
+  const previewIsVisible=()=>!document.hidden&&
+    !$("studio-preview-view").classList.contains("hidden");
   const s = {
     project:"",analysis:"",run:"",video:"",items:[],total:0,offset:0,limit:24,
     projectCatalog:[],projectVideos:[],chain:null,chainEpoch:0,catalogEpoch:0,
     filtered:0,gold:new Set(),revision:"absent",writable:false,marksLoaded:false,selected:new Map(),
     current:"",videoKey:"",seekAt:0,stopAt:null,clipStart:null,clipEnd:null,
     playbackMode:"sequence",generation:0,busy:false,jobId:"",timer:null,
-    loadingMore:false,canLoadMore:true
+    loadingMore:false,canLoadMore:true,pageLoading:false,pageError:""
   };
   // Persist selected source IDs only; restored IDs are validated against each catalog.
   const sourceSelection=(()=>{
@@ -196,6 +197,7 @@
   const pickers=new Map();
   const refreshPicker=select=>pickers.get(select)?.refresh();
   const makeAnalysisPicker=(select,primary)=>{
+    const isProject=primary==="project";
     const host=make("div","analysis-picker");
     const trigger=make("button","analysis-picker-trigger");
     const list=make("div","analysis-picker-list hidden");
@@ -204,7 +206,17 @@
     select.classList.add("analysis-picker-native");
     select.parentNode.insertBefore(host,select.nextSibling);
     host.append(trigger,list);
+    let editing=false;
     const close=()=>{list.classList.add("hidden");trigger.setAttribute("aria-expanded","false");};
+    const animateRemoval=async row=>{
+      if(!row.animate||window.matchMedia?.("(prefers-reduced-motion: reduce)").matches)return;
+      const height=row.getBoundingClientRect().height;
+      const animation=row.animate([
+        {height:height+"px",opacity:1,overflow:"hidden",boxSizing:"border-box"},
+        {height:"0px",opacity:0,paddingTop:"0px",paddingBottom:"0px",borderTopWidth:"0px",overflow:"hidden",boxSizing:"border-box"}
+      ],{duration:220,easing:"ease-in-out",fill:"forwards"});
+      await animation.finished.catch(()=>{});
+    };
     const refresh=()=>{
       trigger.disabled=select.disabled;
       trigger.textContent=select.selectedOptions[0]?.textContent||"Выберите результат";
@@ -222,6 +234,36 @@
           button.title=label+": "+option.textContent;
           button.setAttribute("aria-label",button.title);
           button.addEventListener("click",async()=>{
+            if(editing)return;
+            if(isProject){
+              const name=action==="rename"?window.prompt("Новое название проекта",option.textContent):null;
+              if(action==="rename"&&name===null)return;
+              if(action==="delete"&&!window.confirm("Удалить проект «"+option.textContent+"» и его результаты? Исходные видео сохранятся."))return;
+              editing=true;button.disabled=true;
+              try{
+                if(action==="delete"){
+                  await post("/api/project-delete",{id:option.value});
+                  invalidateCatalog();
+                  await animateRemoval(row);
+                  if(s.project===option.value)await projects();
+                  else{
+                    s.projectCatalog=s.projectCatalog.filter(project=>project.id!==option.value);
+                    option.remove();refresh();
+                  }
+                  message("Проект удалён.","ok");
+                }else{
+                  const result=await post("/api/project-update",{id:option.value,name});
+                  const updated=result.project?.name||name.trim();
+                  option.textContent=updated;
+                  const item=s.projectCatalog.find(project=>project.id===option.value);
+                  if(item)item.name=updated;
+                  invalidateCatalog();refresh();
+                  message("Название сохранено.","ok");
+                }
+              }catch(error){failed(error);}
+              finally{editing=false;button.disabled=false;}
+              return;
+            }
             const source=primary?s.chain?.choices.find(item=>item.value===option.value):s.chain?.choices.find(item=>item.value===s.analysis);
             if(!source)return;
             const id=primary?source.id:option.value,kind=primary?source.kind:"rallies";
@@ -230,22 +272,23 @@
             if(action==="rename"){
               name=window.prompt("Новое название результата",primary?source.display_name:(s.chain?.byAnalysis.get(s.analysis)||[]).find(item=>item.rally_run_id===id)?.display_name||"");
               if(name===null)return;
-            }else if(!window.confirm(primary?"Удалить первичный анализ и все связанные результаты постобработки?":"Удалить результат постобработки?"))return;
-            button.disabled=true;
+            }
+            editing=true;button.disabled=true;
             try{
               await post(action==="rename"?"/api/studio/analysis-rename":"/api/studio/analysis-edit",{project_id:project,video:source.video,kind,id,action,name});
               invalidateCatalog();
               if(project!==s.project)return;
+              if(action==="delete")await animateRemoval(row);
               const deletesActiveAnalysis=action==="delete"&&primary&&s.analysis===option.value;
               const deletesActiveRun=action==="delete"&&!primary&&s.run===id;
               const analysis=deletesActiveAnalysis?"":s.analysis;
               const run=deletesActiveAnalysis||deletesActiveRun?"":s.run;
               // Refresh metadata without resetting the player when editing another version.
-              close();
+              if(action!=="delete")close();
               await loadChain(analysis,run,!deletesActiveAnalysis&&!deletesActiveRun);
               message(action==="rename"?"Название сохранено.":"Результат удалён.","ok");
             }catch(error){failed(error);}
-            finally{button.disabled=false;}
+            finally{editing=false;button.disabled=false;}
           });
           row.append(button);
         }
@@ -265,14 +308,15 @@
     canvas:$("studio-video-overlay"),status:$("studio-overlay-status"),
     rallies:$("studio-overlay-rallies"),touches:$("studio-overlay-touches"),
     trajectory:$("studio-overlay-trajectory"),players:$("studio-overlay-players"),
-    pose:$("studio-overlay-pose"),
-    mode:$("studio-overlay-mode"),rawControls:$("studio-overlay-raw-controls"),
-    rawBall:$("studio-raw-ball"),rawPlayer:$("studio-raw-player"),rawTouch:$("studio-raw-touch"),
+    pose:$("studio-overlay-pose"),court:$("studio-overlay-court"),
+    mode:$("studio-overlay-processed"),rawMode:$("studio-overlay-raw"),rawControls:$("studio-overlay-raw-controls"),actionControls:$("studio-overlay-actions"),
+    rawBall:$("studio-raw-ball"),rawVballVisible:$("studio-raw-vball-visible"),rawPeopleVisible:$("studio-raw-people-visible"),rawPlayer:$("studio-raw-player"),
+    rawPose:$("studio-raw-pose"),rawPoseVisible:$("studio-raw-pose-visible"),
     raw:false,
     actionFlags:{attack:true,block:true,serve:true,overhead_pass:true,dig:true,low_touch:true},
-    source:null,cache:new Map(),
-    fetching:new Set(),failed:new Map(),loop:0,
-    flags:{rallies:true,touches:true,trajectory:true,players:true,pose:false}
+    source:null,cache:new Map(),rawFrames:new Map(),presentedTime:null,
+    fetching:new Set(),controllers:new Map(),failed:new Map(),loop:0,
+    flags:{rallies:true,touches:true,trajectory:true,players:true,pose:false,court:true}
   };
   try {
     const saved=JSON.parse(localStorage.getItem("volley:preview-overlays:v1")||"null");
@@ -281,7 +325,7 @@
         if(typeof saved[k]==="boolean")overlay.flags[k]=saved[k];
   }catch{}
   const updateOverlayToggles=()=>{
-    for(const key of ["rallies","touches","trajectory","players","pose"]){
+    for(const key of ["rallies","touches","trajectory","players","pose","court"]){
       const button=overlay[key];
       button.setAttribute("aria-pressed",String(overlay.flags[key]));
     }
@@ -308,9 +352,67 @@
     const width=vw*scale,height=vh*scale;
     return {ctx,x:(cw-width)/2,y:(ch-height)/2,width,height};
   };
+  const overlayLabels={
+    key:"",names:new Map(),loaded:false,loading:false,failedUntil:0,
+    epoch:0,controller:null
+  };
+  const playerLabelKey=(project,run,video,sha)=>[project,run,video,sha].join(":");
+  const invalidateOverlayLabels=()=>{
+    overlayLabels.epoch++;
+    overlayLabels.controller?.abort();
+    overlayLabels.key="";overlayLabels.names.clear();
+    overlayLabels.loaded=false;overlayLabels.loading=false;
+    overlayLabels.failedUntil=0;overlayLabels.controller=null;
+  };
+  const requestOverlayLabels=(project,run,video,sha)=>{
+    if(typeof sha!=="string"||!/^[a-f0-9]{64}$/.test(sha))return;
+    const key=playerLabelKey(project,run,video,sha);
+    if(overlayLabels.key!==key){
+      invalidateOverlayLabels();
+      overlayLabels.key=key;
+    }
+    if(overlayLabels.loaded||overlayLabels.loading||overlayLabels.failedUntil>Date.now())return;
+    const epoch=overlayLabels.epoch;
+    const controller=typeof AbortController==="function"?new AbortController():null;
+    overlayLabels.loading=true;overlayLabels.controller=controller;
+    request(url("/api/cpu/native/rallies/overlay-player-labels",{
+      project_id:project,rally_run_id:run
+    }),controller?{signal:controller.signal}:{}).then(value=>{
+      if(epoch!==overlayLabels.epoch||key!==overlayLabels.key)return;
+      if(value.schema!=="volley-native-preview-player-labels/1"||
+         value.project_id!==project||value.rally_run_id!==run||
+         value.video!==video||value.source_replay_sha256!==sha||
+         !["manual","manual_and_automatic"].includes(value.identity_source)||
+         !value.names||typeof value.names!=="object"||Array.isArray(value.names)||
+         Object.keys(value.names).length>20000)
+        throw Error("Имена игроков не соответствуют выбранному анализу");
+      const names=new Map();
+      for(const [track,name] of Object.entries(value.names)){
+        if(/^[1-9]\d*$/.test(track)&&
+           typeof name==="string"&&name.trim()&&name.length<=150)
+          names.set(track,name.trim());
+      }
+      overlayLabels.names=names;
+      overlayLabels.loaded=true;
+      if(s.project===project&&s.run===run&&s.video===video)drawOverlay();
+    }).catch(error=>{
+      if(epoch!==overlayLabels.epoch||controller?.signal.aborted||
+         error?.name==="AbortError")return;
+      overlayLabels.failedUntil=Date.now()+5000;
+      if(s.project===project&&s.run===run&&s.video===video)
+        overlayMessage("Имена игроков недоступны: "+error.message);
+    }).finally(()=>{
+      if(epoch===overlayLabels.epoch){
+        overlayLabels.loading=false;overlayLabels.controller=null;
+      }
+    });
+  };
+  const rawFusion=()=>s.chain?.choices.find(row=>row.value===s.analysis&&row.kind==="fusion")||null;
+  const overlaySourceId=()=>overlay.raw?rawFusion()?.id||"":s.run;
   const overlayWindowStart=frame=>Math.max(0,Math.floor(frame/90)*90-60);
   const overlayWindowKey=(project,run,video,start)=>
-    [project,run,video,start,...(overlay.flags.pose?["pose"]:[]),...(overlay.raw?["raw",overlay.rawBall.value,overlay.rawPlayer.value,overlay.rawTouch.value]:[])].join(":");
+    [project,overlay.raw?"gpu":"cpu",run,video,start,...(!overlay.raw&&overlay.flags.pose?["pose"]:[])].join(":");
+  const rawFrameLimit=(project,run,video)=>overlay.rawFrames.get([project,run,video].join(":"));
   // The API returns overlapping 180-frame windows every 90 frames.
   // Keep drawing from a previous window while the next one loads.
   const cachedOverlayForFrame=(project,run,video,frame)=>{
@@ -320,49 +422,211 @@
     }
     return null;
   };
+  // Fail closed: only provenance-labelled VballNet detections or their
+  // bounded interpolation may enter the processed overlay canvas.
+  const processedBallOverlayIsValid=value=>
+    ["vballnet_only_short_gap_interpolation_v1",
+      "vballnet_physical_teleport_repair_player_kink_v3"].includes(value.ball_policy)&&
+    Array.isArray(value.frames)&&value.frames.every((row,index)=>{
+      if(row.frame!==value.start_frame+index)return false;
+      if(row.ball===null)
+        return row.ball_origin===null&&row.ball_interpolated===false;
+      if(!Array.isArray(row.ball)||row.ball.length!==2||
+         row.ball.some(coordinate=>!Number.isFinite(coordinate)||coordinate<0||coordinate>1))
+        return false;
+      return (row.ball_origin==="vballnet"&&row.ball_interpolated===false)||
+        (row.ball_origin==="vballnet_interpolated"&&row.ball_interpolated===true);
+    });
   const requestOverlayWindow=(project,run,video,start)=>{
+    if(overlay.raw&&Number.isSafeInteger(rawFrameLimit(project,run,video))&&
+       start>=rawFrameLimit(project,run,video))return;
     const key=overlayWindowKey(project,run,video,start);
     if(overlay.cache.has(key)||overlay.fetching.has(key)||
        (overlay.failed.get(key)||0)>Date.now())return;
+    // Obsolete seeks must not queue unbounded expensive verified replay reads.
+    if(overlay.fetching.size>=3){
+      const stale=overlay.controllers?.keys().next().value;
+      if(!stale)return;
+      overlay.controllers.get(stale)?.abort();
+      overlay.controllers.delete(stale);
+      overlay.fetching.delete(stale);
+    }
     overlay.failed.delete(key);
+    const controller=typeof AbortController==="function"?new AbortController():null;
+    overlay.controllers?.set(key,controller);
     overlay.fetching.add(key);
-    request(url("/api/cpu/native/rallies/overlays",{
+    const isRaw=overlay.raw;
+    const path=isRaw?url("/api/gpu/native/overlays",{
+      project_id:project,video,fusion_id:run,start_frame:start,count:180
+    }):url("/api/cpu/native/rallies/overlays",{
       project_id:project,rally_run_id:run,start_frame:start,count:180,
-      ...(overlay.flags.pose?{pose:true}:{}),
-      ...(overlay.raw?{raw:true,ball_confidence:overlay.rawBall.value,player_confidence:overlay.rawPlayer.value,touch_confidence:overlay.rawTouch.value}:{})
-    })).then(value=>{
-      if(value.schema!=="volley-native-preview-overlay/1"||
-         value.project_id!==project||value.rally_run_id!==run||
+      ...(overlay.flags.pose?{pose:true}:{})
+    });
+    request(path,controller?{signal:controller.signal}:{}).then(value=>{
+      if(controller?.signal.aborted)return;
+      const selected=timeline.data?.project_id===project&&
+        timeline.data?.rally_run_id===run&&timeline.data?.video===video?
+        timeline.data:null;
+      if(value.schema!==(isRaw?"volley-native-gpu-overlay/1":"volley-native-preview-overlay/1")||
+         (!isRaw&&selected?.source_replay_sha256&&
+          value.replay_sha256!==selected.source_replay_sha256)||
+         value.fps!==fps()||!Number.isSafeInteger(value.width)||value.width<=0||
+         !Number.isSafeInteger(value.height)||value.height<=0||
+         value.project_id!==project||
+         (isRaw?value.fusion_id!==run:value.rally_run_id!==run)||
+         (isRaw?!/^[a-f0-9]{64}$/.test(value.source_fusion_sha256):false)||
          value.video!==video||value.start_frame!==start||
          !Number.isSafeInteger(value.end_frame)||value.end_frame<=start||
-         !Array.isArray(value.frames))
+         (isRaw&&(!Number.isSafeInteger(value.total_frames)||
+           value.total_frames<value.end_frame))||
+         !Array.isArray(value.frames)||value.frames.length!==value.end_frame-start)
         throw Error("Несовместимые кадры предпросмотра");
+      if(!isRaw&&!processedBallOverlayIsValid(value))
+        throw Error("Processed ball source is not VballNet-only");
+      if(s.project!==project||s.video!==video||overlay.raw!==isRaw||
+         overlaySourceId()!==run)return;
+      if(isRaw)overlay.rawFrames.set([project,run,video].join(":"),value.total_frames);
       overlay.cache.set(key,value);
       while(overlay.cache.size>16)overlay.cache.delete(overlay.cache.keys().next().value);
-      if(s.project===project&&s.run===run&&s.video===video){
-        overlayMessage(overlay.flags.pose&&value.poses_available===false?
-          "У выбранного анализа нет сохранённых точек RTMPose. Запустите первичный GPU-анализ с RTMPose.":"");
-        drawOverlay();
-      }
+      overlayMessage((isRaw?overlay.rawPoseVisible.checked:overlay.flags.pose)&&
+        value.poses_available===false?
+          "RTMPose-M: для выбранного GPU-анализа нет сохранённых поз.":"");
+      drawOverlay();
     }).catch(error=>{
+      if(controller?.signal.aborted||error?.name==="AbortError")return;
       // Transient failures must not permanently disable overlays in a window.
       overlay.failed.set(key,Date.now()+5000);
-      if(s.project===project&&s.run===run&&s.video===video)
+      if(s.project===project&&s.video===video&&overlay.raw===isRaw&&overlaySourceId()===run)
         overlayMessage("Разметка недоступна: "+error.message);
-    }).finally(()=>overlay.fetching.delete(key));
+    }).finally(()=>{
+      if(overlay.controllers?.get(key)===controller){
+        overlay.controllers.delete(key);
+        overlay.fetching.delete(key);
+      }
+    });
+  };
+  const prefetchOverlayAtFrame=frame=>{
+    const sourceId=overlaySourceId();
+    if(!s.project||!sourceId||!s.video||!Number.isSafeInteger(frame)||frame<0)return;
+    const total=overlay.raw?rawFrameLimit(s.project,sourceId,s.video):
+      timeline.data?.project_id===s.project&&
+      timeline.data?.rally_run_id===s.run?timeline.data.total_frames:null;
+    const start=overlayWindowStart(frame);
+    if(!Number.isSafeInteger(total)||start<total)
+      requestOverlayWindow(s.project,sourceId,s.video,start);
+    // Two adjacent windows cover seeking and the first seconds of playback.
+    const next=overlayWindowStart((Math.floor(frame/90)+1)*90);
+    if(next!==start&&(!overlay.raw||Number.isSafeInteger(total))&&
+       (!Number.isSafeInteger(total)||next<total))
+      requestOverlayWindow(s.project,sourceId,s.video,next);
+  };
+  const cpuTouchStyle={
+    attack:["#ff6b6b","≈ Атака"],
+    block:["#c38cff","≈ Блок"],
+    serve:["#f29d49","≈ Подача"],
+    overhead_pass:["#55d6ff","≈ Передача"],
+    dig:["#71e49e","≈ Приём"],
+    low_touch:["#e5c55d","≈ Нижнее касание"]
+  };
+  // The timeline belongs to the selected saved CPU postprocessing snapshot.
+  // Raw GPU detections and limited rally-card motion_events are never Touchs.
+  const cpuTouchesForFrame=(project,run,video,sha,frame)=>{
+    const data=timeline.data;
+    if(!data||data.schema!=="volley-native-rally-timeline/1"||
+       data.project_id!==project||data.rally_run_id!==run||
+       data.video!==video||data.source_replay_sha256!==sha||
+       !Array.isArray(data.touch_annotations))return [];
+    const events=data.touch_annotations;
+    let left=0,right=events.length;
+    while(left<right){
+      const mid=(left+right)>>>1;
+      if(events[mid].frame_index<frame-8)left=mid+1;else right=mid;
+    }
+    const near=[];
+    for(let i=left;i<events.length&&events[i].frame_index<=frame+8;i++)
+      near.push(events[i]);
+    return near;
+  };
+  const drawCpuTouches=(ctx,record,project,run,video,frame,x,y,width,height)=>{
+    if(!overlay.flags.touches||!record.width||!record.height)return;
+    const events=cpuTouchesForFrame(project,run,video,record.replay_sha256,frame);
+    for(const event of events){
+      const kind=event.kind;
+      if(kind&&(!Object.hasOwn(cpuTouchStyle,kind)||!overlay.actionFlags[kind]))continue;
+      if(!Array.isArray(event.ball_position_px)||event.ball_position_px.length!==2)continue;
+      const [bx,by]=event.ball_position_px;
+      if(!Number.isFinite(bx)||!Number.isFinite(by)||
+         bx<0||by<0||bx>record.width||by>record.height)continue;
+      const [px,py]=[x+bx/record.width*width,y+by/record.height*height];
+      const [color,label]=cpuTouchStyle[kind]||["#c6bf96","Касание"];
+      ctx.beginPath();ctx.arc(px,py,kind?12:8,0,2*Math.PI);
+      ctx.strokeStyle=color;ctx.lineWidth=kind?3:1.7;ctx.stroke();
+      ctx.font="bold 12px Inter, sans-serif";
+      ctx.textBaseline="bottom";
+      const textWidth=ctx.measureText(label).width;
+      const tx=Math.min(x+width-textWidth-9,Math.max(x+5,px+15));
+      const ty=Math.max(y+17,Math.min(y+height-5,py-6));
+      ctx.fillStyle="rgba(9,20,35,.94)";
+      ctx.fillRect(tx-4,ty-14,textWidth+8,17);
+      ctx.fillStyle=color;ctx.fillText(label,tx,ty);
+    }
+  };
+  const courtPreview={key:"",data:null,loading:false,failed:false};
+  const drawCourtPreview=box=>{
+    if(!overlay.flags.court||!s.project||!s.video)return;
+    const key=s.project+":"+s.video;
+    if(courtPreview.key!==key){
+      courtPreview.key=key;courtPreview.data=null;
+      courtPreview.loading=false;courtPreview.failed=false;
+    }
+    if(!courtPreview.data&&!courtPreview.loading&&!courtPreview.failed){
+      courtPreview.loading=true;
+      request(url("/api/video-edit",{project_id:s.project,video:s.video})).then(data=>{
+        if(courtPreview.key!==key)return;
+        courtPreview.data=data;
+        drawOverlay();
+      }).catch(()=>{
+        if(courtPreview.key===key)courtPreview.failed=true;
+      }).finally(()=>{if(courtPreview.key===key)courtPreview.loading=false;});
+    }
+    const data=courtPreview.data;
+    if(!data)return;
+    const {ctx,x,y,width,height}=box;
+    const position=p=>[x+p[0]*width,y+p[1]*height];
+    if(Array.isArray(data.court)&&data.court.length===4){
+      ctx.beginPath();
+      data.court.forEach((p,i)=>{const [px,py]=position(p);if(i)ctx.lineTo(px,py);else ctx.moveTo(px,py);});
+      ctx.closePath();ctx.strokeStyle="#ffd166";ctx.lineWidth=2.25;ctx.stroke();
+    }
+    if(Array.isArray(data.net)&&data.net.length===2){
+      const [ax,ay]=position(data.net[0]),[bx,by]=position(data.net[1]);
+      ctx.beginPath();ctx.moveTo(ax,ay);ctx.lineTo(bx,by);
+      ctx.strokeStyle="#35e0ef";ctx.lineWidth=2.5;ctx.stroke();
+    }
   };
   const drawOverlay=()=>{
     const box=overlayContext(),source=overlay.source;
-    if(!box||!source||!s.run||!s.video||!ui.video.src)return;
-    if(!overlay.flags.touches&&!overlay.flags.trajectory&&!overlay.flags.players&&!overlay.flags.pose)return;
-    const frame=Math.max(0,Math.floor(ui.video.currentTime*fps()+0.001));
-    const project=s.project,run=s.run,video=s.video;
+    if(box)drawCourtPreview(box);
+    if(!box||!source||(!overlay.raw&&!s.run)||!s.video||!ui.video.src||ui.video.seeking||
+       s.videoKey!==s.project+":"+s.video||
+       (ui.video.readyState!==undefined&&ui.video.readyState<2))return;
+    // Until the next decoded frame arrives, keep the canvas transparent.
+    if(!ui.video.paused&&typeof ui.video.requestVideoFrameCallback==="function"&&
+       !Number.isFinite(overlay.presentedTime))return;
+    if(!overlay.raw&&!overlay.flags.touches&&!overlay.flags.trajectory&&!overlay.flags.players&&!overlay.flags.pose)return;
+    // HTMLVideoElement.currentTime can advance before a frame is decoded.
+    // requestVideoFrameCallback.mediaTime is the actual frame on screen.
+    const shown=Number.isFinite(overlay.presentedTime)?
+      overlay.presentedTime:ui.video.currentTime;
+    const frame=Math.max(0,Math.floor(shown*fps()+0.001));
+    const project=s.project,run=overlaySourceId(),video=s.video;
+    if(!run){if(overlay.raw)overlayMessage("Для просмотра сырых данных выберите объединённый GPU-анализ (fusion).");return;}
     const start=overlayWindowStart(frame);
     const key=overlayWindowKey(project,run,video,start);
     const active=overlay.cache.get(key);
     const record=active&&active.start_frame<=frame&&frame<active.end_frame?
       active:cachedOverlayForFrame(project,run,video,frame);
-    const total=timeline.data?.total_frames;
+    const total=overlay.raw?rawFrameLimit(project,run,video):timeline.data?.total_frames;
     if(!active&&(!Number.isSafeInteger(total)||start<total))
       requestOverlayWindow(project,run,video,start);
     // Prefetch before a 90-frame boundary; do not request past video end.
@@ -372,10 +636,92 @@
       if(nextStart!==start&&(!Number.isSafeInteger(total)||nextStart<total))
         requestOverlayWindow(project,run,video,nextStart);
     }
-    if(!record)return;
+    if(!record){
+      // Saved CPU Touch positions already belong to the validated timeline.
+      // Don't make them wait for the much larger, SHA-indexed player replay.
+      const index=timeline.data;
+      if(!overlay.raw&&index?.project_id===project&&index?.rally_run_id===run&&
+         index?.video===video&&typeof index.source_replay_sha256==="string"){
+        const {ctx,x,y,width,height}=box;
+        drawCpuTouches(ctx,{
+          width:ui.video.videoWidth,height:ui.video.videoHeight,
+          replay_sha256:index.source_replay_sha256
+        },project,run,video,frame,x,y,width,height);
+      }
+      return;
+    }
+    // The timeline and window must describe the same immutable CPU replay.
+    const digest=!overlay.raw&&timeline.data?.project_id===project&&
+      timeline.data?.rally_run_id===run&&timeline.data?.video===video?
+      timeline.data.source_replay_sha256:null;
+    if(digest&&record.replay_sha256!==digest){
+      overlayMessage("Наложение не соответствует выбранной CPU-версии.");
+      return;
+    }
+    if(record.width&&record.height&&ui.video.videoWidth&&ui.video.videoHeight&&
+      Math.abs((ui.video.videoWidth/ui.video.videoHeight)/
+        (record.width/record.height)-1)>0.025){
+      overlayMessage("Размеры видео и наложения несовместимы.");
+      return;
+    }
+    if(!overlay.raw&&overlay.flags.players)
+      requestOverlayLabels(project,run,video,record.replay_sha256);
     const {ctx,x,y,width,height}=box;
     const point=ball=>[x+ball[0]*width,y+ball[1]*height];
     const frames=record.frames;
+    if(overlay.raw){
+      const current=frames.find(row=>row.frame===frame);
+      if(!current?.raw)return;
+      const raw=current.raw;
+      const enough=(score,input)=>Number.isFinite(score)&&score>=Number(input.value)/100;
+      ctx.font="bold 11px Inter, sans-serif";ctx.textBaseline="top";ctx.lineWidth=1.8;
+      for(const ball of raw.balls||[]){
+        if(ball.source!=="vballnet"||!overlay.rawVballVisible.checked||
+          !enough(ball.score,overlay.rawBall)||!Array.isArray(ball.point))continue;
+        const [px,py]=point(ball.point);
+        ctx.beginPath();ctx.arc(px,py,5,0,Math.PI*2);
+        ctx.fillStyle="#47e2ff";ctx.fill();
+        ctx.fillText(Math.round(ball.score*100)+"%",px+7,py-6);
+      }
+      if(overlay.rawPeopleVisible.checked){
+        for(const player of raw.players||[]){
+          if(!Array.isArray(player.box)||player.box.length!==4)continue;
+          const [x1,y1,x2,y2]=player.box,px=x+x1*width,py=y+y1*height;
+          if(enough(player.score,overlay.rawPlayer)){
+            ctx.strokeStyle="#71acff";ctx.strokeRect(px,py,(x2-x1)*width,(y2-y1)*height);
+            ctx.fillStyle="#d9eaff";ctx.fillText(Math.round(player.score*100)+"%",px+2,py+2);
+          }
+        }
+      }
+      if(overlay.rawPoseVisible.checked){
+        const edges=[[5,7],[7,9],[6,8],[8,10],[5,6],[5,11],[6,12],
+          [11,12],[11,13],[13,15],[12,14],[14,16]];
+        const threshold=Number(overlay.rawPose.value)/100;
+        // The original RTMPose observations remain in raw.poses. Only draw
+        // visual-only interpolation when no observation exists on this frame.
+        const interpolated=!raw.poses?.length && Array.isArray(raw.poses_interpolated);
+        const poseRows=interpolated?raw.poses_interpolated:(raw.poses||[]);
+        ctx.globalAlpha=interpolated?0.78:1;
+        for(const person of poseRows){
+          const pose=person.keypoints;
+          if(!Array.isArray(pose)||pose.length!==17)continue;
+          const valid=i=>Array.isArray(pose[i])&&pose[i].length===3&&
+            pose[i].every(Number.isFinite)&&pose[i][2]>=threshold;
+          ctx.strokeStyle="#6af6ae";ctx.fillStyle="#f9d977";ctx.lineWidth=2;
+          for(const [a,b] of edges){
+            if(!valid(a)||!valid(b))continue;
+            const [ax,ay]=point(pose[a]),[bx,by]=point(pose[b]);
+            ctx.beginPath();ctx.moveTo(ax,ay);ctx.lineTo(bx,by);ctx.stroke();
+          }
+          for(let i=0;i<17;i++)if(valid(i)){
+            const [px,py]=point(pose[i]);
+            ctx.beginPath();ctx.arc(px,py,2.5,0,Math.PI*2);ctx.fill();
+          }
+        }
+        ctx.globalAlpha=1;
+      }
+      return;
+    }
     if(overlay.flags.trajectory&&!overlay.raw){
       // Only connect consecutive observed frames; never fabricate a long missing trajectory.
       ctx.beginPath();let previous=-100;
@@ -415,34 +761,8 @@
         }
       }
     }
-    if(overlay.raw){
-      const raw=current?.raw;
-      if(!raw)return;
-      if(overlay.flags.players){
-        ctx.strokeStyle="#71acff";ctx.lineWidth=1.8;
-        for(const player of raw.players||[]){const [x1,y1,x2,y2]=player.box;ctx.strokeRect(x+x1*width,y+y1*height,(x2-x1)*width,(y2-y1)*height);}
-      }
-      if(overlay.flags.trajectory){
-        for(const ball of raw.balls||[]){const [px,py]=point(ball.point);ctx.beginPath();ctx.arc(px,py,5,0,2*Math.PI);ctx.fillStyle=ball.source==="vballnet"?"#47e2ff":"#ff8f55";ctx.fill();}
-      }
-      if(overlay.flags.touches){
-        for(const touch of raw.touches||[]){const [x1,y1,x2,y2]=touch.box;ctx.strokeStyle="#ffd55a";ctx.lineWidth=3;ctx.strokeRect(x+x1*width,y+y1*height,(x2-x1)*width,(y2-y1)*height);}
-        const actions=timeline.data?.estimated_actions||[];
-        const styles={attack:["#ff6b6b","Атака?"],block:["#c38cff","Блок?"],serve:["#f29d49","Подача?"],overhead_pass:["#55d6ff","Передача?"],dig:["#71e49e","Приём?"],low_touch:["#e5c55d","Нижнее касание?"]};
-        let left=0,right=actions.length;
-        while(left<right){const mid=(left+right)>>>1;if(actions[mid].frame_index<frame-5)left=mid+1;else right=mid;}
-        for(let i=left;i<actions.length&&actions[i].frame_index<=frame+5;i++){
-          const action=actions[i],style=styles[action.kind];
-          if(!style||!overlay.actionFlags?.[action.kind]||!Array.isArray(action.ball_position_px)||!record.width||!record.height)continue;
-          const [bx,by]=action.ball_position_px;
-          if(!Number.isFinite(bx)||!Number.isFinite(by))continue;
-          const [px,py]=point([bx/record.width,by/record.height]);
-          ctx.beginPath();ctx.arc(px,py,12,0,2*Math.PI);ctx.strokeStyle=style[0];ctx.lineWidth=3;ctx.stroke();
-          ctx.font="bold 11px Inter, sans-serif";ctx.fillStyle=style[0];ctx.fillText(style[1],px+14,py-5);
-        }
-      }
-      return;
-    }
+    // Only CPU-processed mode may display verified timeline touch annotations.
+    drawCpuTouches(ctx,record,project,run,video,frame,x,y,width,height);
     if(overlay.flags.players&&current){
       ctx.strokeStyle="#71acff";ctx.lineWidth=1.8;
       ctx.font="bold 11px Inter, sans-serif";ctx.textBaseline="top";
@@ -452,10 +772,13 @@
         const px=x+x1*width,py=y+y1*height;
         const rw=(x2-x1)*width,rh=(y2-y1)*height;
         ctx.strokeRect(px,py,rw,rh);
-        const name="ID "+player.id,tw=ctx.measureText(name).width+10;
+        const labelsKey=playerLabelKey(project,run,video,record.replay_sha256);
+        const owner=overlayLabels.loaded&&overlayLabels.key===labelsKey?
+          overlayLabels.names.get(String(player.id)):null;
+        const name=owner||"ID "+player.id,tw=ctx.measureText(name).width+10;
         ctx.fillStyle="rgba(12,47,91,.88)";
-        ctx.fillRect(px,Math.max(y,py-17),tw,16);
-        ctx.fillStyle="#f1f8ff";ctx.fillText(name,px+5,Math.max(y,py-16));
+        ctx.fillRect(px,py+rh,tw,16);
+        ctx.fillStyle="#f1f8ff";ctx.fillText(name,px+5,py+rh+1);
       }
     }
     if(current&&Array.isArray(current.ball)){
@@ -466,28 +789,36 @@
         ctx.strokeStyle="#21b4fc";ctx.lineWidth=2;ctx.stroke();
       }
     }
-    if(overlay.flags.touches){
-      // CPU touch proposals are not verified volleyball actions.
-      for(const e of source.events){
-        if(Math.abs(Number(e.frame_index)-frame)>5||!Array.isArray(e.ball_position_px))continue;
-        const [bx,by]=e.ball_position_px;
-        if(!Number.isFinite(bx)||!Number.isFinite(by))continue;
-        const [px,py]=point([bx/record.width,by/record.height]);
-        ctx.beginPath();ctx.arc(px,py,11,0,2*Math.PI);
-        ctx.fillStyle="rgba(255,200,51,.18)";ctx.fill();
-        ctx.strokeStyle="#ffd55a";ctx.lineWidth=2.5;ctx.stroke();
-        ctx.font="bold 11px Inter, sans-serif";ctx.textBaseline="bottom";
-        ctx.fillStyle="#ffe694";ctx.fillText("Касание?",px+14,py-5);
-      }
-    }
   };
   const setOverlaySource=item=>{
-    overlay.source=item?{events:Array.isArray(item.motion_events)?item.motion_events:[]}:null;
+    overlay.source=item?{events:[]}:null;
     overlayMessage("");
-    if(!item){overlay.cache.clear();overlay.failed.clear();}
+    if(!item){
+      invalidateOverlayLabels();
+      for(const controller of overlay.controllers.values())controller?.abort();
+      overlay.controllers.clear();overlay.fetching.clear();
+      overlay.cache.clear();overlay.rawFrames.clear();overlay.failed.clear();overlay.presentedTime=null;
+    }
     drawOverlay();
   };
-  for(const key of ["rallies","touches","trajectory","players","pose"]){
+  window.addEventListener("volley:court-calibration-updated",event=>{
+    if(courtPreview.key===event.detail?.project_id+":"+event.detail?.video){
+      courtPreview.data=null;courtPreview.failed=false;drawOverlay();
+    }
+  });  window.addEventListener("volley:track-assignments-updated",event=>{
+    const detail=event.detail||{};
+    if(detail.project_id===s.project&&detail.video===s.video){
+      invalidateOverlayLabels();
+      drawOverlay();
+    }
+  });
+  for(const eventName of ["volley:player-library-updated","volley:roster-updated"]){
+    window.addEventListener(eventName,()=>{
+      invalidateOverlayLabels();
+      drawOverlay();
+    });
+  }
+  for(const key of ["rallies","touches","trajectory","players","pose","court"]){
     overlay[key].addEventListener("click",()=>{
       overlay.flags[key]=!overlay.flags[key];
       updateOverlayToggles();
@@ -497,36 +828,69 @@
     });
   }
   if(overlay.mode){
-    overlay.mode.addEventListener("click",()=>{
-      overlay.raw=!overlay.raw;
-      overlay.mode.textContent=overlay.raw?"Сырые данные":"Обработанные";
-      overlay.mode.setAttribute("aria-pressed",String(overlay.raw));
-      overlay.rawControls.classList.toggle("hidden",!overlay.raw);
+    const selectMode=raw=>{
+      if(overlay.raw===raw)return;
+      overlay.raw=raw;
+      overlay.mode.setAttribute("aria-selected",String(!raw));
+      overlay.rawMode.setAttribute("aria-selected",String(raw));
+      overlay.rawControls.classList.toggle("hidden",!raw);
+      overlay.actionControls.classList.toggle("hidden",raw);
+      overlay.mode.closest(".video-overlay-toggles").classList.toggle("raw-selected",raw);
+      setOverlaySource(raw||s.run?{}:null);
+      if(raw&&s.video){ensurePreviewVideo();prefetchOverlayAtFrame(0);}
+      if(raw&&!rawFusion())overlayMessage("У выбранного GPU-источника нет сохранённого объединённого fusion.");
+      if(!raw&&!s.run)overlayMessage("Для обработанного режима выберите CPU-постобработку.");
+      if(raw)timeline.status.textContent="Сырые GPU-данные · без CPU-разметки";
+      else if(!s.run)timeline.status.textContent="Выберите CPU-версию";
+      else if(timeline.data)timeline.status.textContent=
+        timeline.data.rallies.length+" розыгрышей · "+timeline.data.touch_frames.length+" касаний (CPU)";
+      drawTimeline();
       drawOverlay();
-    });
-    let timer=0;
-    for(const [input,value] of [[overlay.rawBall,$("studio-raw-ball-value")],[overlay.rawPlayer,$("studio-raw-player-value")],[overlay.rawTouch,$("studio-raw-touch-value")]]){
-      input.addEventListener("input",()=>{value.textContent=input.value+"%";clearTimeout(timer);timer=setTimeout(drawOverlay,180);});
+    };
+    overlay.mode.addEventListener("click",()=>selectMode(false));
+    overlay.rawMode.addEventListener("click",()=>selectMode(true));
+    for(const [input,value] of [[overlay.rawBall,$("studio-raw-ball-value")],
+      [overlay.rawPlayer,$("studio-raw-player-value")],
+      [overlay.rawPose,$("studio-raw-pose-value")]]){
+      input.addEventListener("input",()=>{value.textContent=input.value+"%";drawOverlay();});
     }
-    for(const input of overlay.rawControls.querySelectorAll("[data-overlay-action]")){
+    for(const input of [overlay.rawVballVisible,overlay.rawPeopleVisible,overlay.rawPoseVisible])
+      input.addEventListener("change",drawOverlay);
+    for(const input of overlay.actionControls.querySelectorAll("[data-overlay-action]")){
       input.addEventListener("change",()=>{overlay.actionFlags[input.dataset.overlayAction]=input.checked;drawOverlay();});
     }
   }
   const startOverlayFrameLoop=()=>{
     const token=++overlay.loop;
     if(typeof ui.video.requestVideoFrameCallback!=="function")return;
-    const tick=()=>{
-      if(token!==overlay.loop)return;
+    const tick=(_now,metadata)=>{
+      if(token!==overlay.loop||ui.video.seeking)return;
+      if(Number.isFinite(metadata?.mediaTime))
+        overlay.presentedTime=metadata.mediaTime;
       drawOverlay();
       if(!ui.video.paused)ui.video.requestVideoFrameCallback(tick);
     };
     ui.video.requestVideoFrameCallback(tick);
   };
   ui.video.addEventListener("playing",startOverlayFrameLoop);
-  ui.video.addEventListener("pause",()=>{overlay.loop++;drawOverlay();});
-  ui.video.addEventListener("seeked",drawOverlay);
-  ui.video.addEventListener("timeupdate",drawOverlay);
-  ui.video.addEventListener("loadedmetadata",drawOverlay);
+  ui.video.addEventListener("pause",()=>{
+    overlay.loop++;overlay.presentedTime=null;drawOverlay();
+  });
+  ui.video.addEventListener("seeking",()=>{
+    overlay.loop++;overlay.presentedTime=null;
+    overlayContext(); // Never leave previous-frame boxes on a pending seek.
+  });
+  ui.video.addEventListener("seeked",()=>{
+    overlay.presentedTime=null;drawOverlay();
+    if(!ui.video.paused)startOverlayFrameLoop();
+  });
+  ui.video.addEventListener("timeupdate",()=>{
+    if(typeof ui.video.requestVideoFrameCallback!=="function"&&!ui.video.seeking)
+      drawOverlay();
+  });
+  ui.video.addEventListener("loadedmetadata",()=>{
+    overlay.presentedTime=null;drawOverlay();
+  });
   window.addEventListener("resize",drawOverlay);
   const wipe=node=>{while(node.firstChild)node.firstChild.remove();};
   const message=(text,mood)=>{
@@ -565,11 +929,14 @@
   };
   const timelineDuration=()=>{
     const data=timeline.data;
-    if(!data)return 0;
     const actual=s.videoKey===s.project+":"+s.video?ui.video.duration:0;
-    return Math.max(Number(data.total_frames)/fps()||0,
-      Number(data.video_duration_sec)||0,
-      Number.isFinite(actual)?actual:0);
+    // The decoded media is authoritative even when no CPU timeline exists.
+    // Otherwise raw-only GPU previews could play but never seek.
+    if(Number.isFinite(actual)&&actual>0)return actual;
+    if(!data)return 0;
+    const source=Number(data.video_duration_sec);
+    return Number.isFinite(source)&&source>0?source:
+      Math.max(0,Number(data.total_frames)/fps()||0);
   };
   const updateTimelineProgress=()=>{
     const duration=timelineDuration();
@@ -577,6 +944,7 @@
       Number.isFinite(ui.video.currentTime)&&s.videoKey===s.project+":"+s.video?
         ui.video.currentTime:s.seekAt));
     timeline.playhead.style.left=duration?(100*position/duration)+"%":"0%";
+    timeline.middle.textContent=timeLabel(Math.floor(position*10+0.5)/10)+"."+String(Math.floor(position*10+0.5)%10);
     timeline.track.setAttribute("aria-valuemax",String(Math.ceil(duration)));
     timeline.track.setAttribute("aria-valuenow",String(Math.floor(position)));
     timeline.track.setAttribute("aria-valuetext",
@@ -595,7 +963,7 @@
     const y=3,bandHeight=Math.max(1,height-6);
     ctx.fillStyle="#192e49";ctx.fillRect(0,y,width,bandHeight);
     const data=timeline.data,duration=timelineDuration();
-    if(data&&duration){
+    if(!overlay.raw&&data&&duration){
       // A single shared seek lane: Touch ticks are overlaid on rally bands.
       if(overlay.flags.rallies){
         for(const rally of data.rallies){
@@ -607,19 +975,21 @@
           ctx.fillRect(x,y,Math.max(1,x2-x),bandHeight);
         }
       }
-      if(overlay.flags.touches){
-        ctx.fillStyle="#ffcb60";
-        let last=-1;
-        for(const frame of data.touch_frames){
-          const x=Math.floor(Number(frame)/fps()/duration*width);
-          if(x===last||x<0||x>=width)continue;
-          ctx.fillRect(x,y,Math.max(2,Math.ceil(dpr)),bandHeight);
-          last=x;
+      if(overlay.flags.touches&&Array.isArray(data.touch_annotations)){
+        for(const classified of [false,true]){
+          for(const touch of data.touch_annotations){
+            const style=cpuTouchStyle[touch.kind];
+            if(Boolean(style)!==classified||style&&!overlay.actionFlags[touch.kind])continue;
+            const x=Math.floor(Number(touch.frame_index)/fps()/duration*width);
+            if(!Number.isFinite(x)||x<0||x>=width)continue;
+            ctx.fillStyle=style?style[0]:"#c6bf96";
+            ctx.fillRect(x,y,Math.max(2,Math.ceil(dpr)),bandHeight);
+          }
         }
       }
     }
-    $("studio-timeline-rally-key").hidden=!overlay.flags.rallies;
-    $("studio-timeline-touch-key").hidden=!overlay.flags.touches;
+    $("studio-timeline-rally-key").hidden=overlay.raw||!overlay.flags.rallies;
+    $("studio-timeline-touch-key").hidden=overlay.raw||!overlay.flags.touches;
     updateTimelineProgress();
   };
   const clearTimeline=()=>{
@@ -643,18 +1013,37 @@
         !Number.isSafeInteger(raw.total_frames)||raw.total_frames<=0||
         !Number.isFinite(raw.video_duration_sec)||raw.video_duration_sec<=0||
         !Array.isArray(raw.rallies)||!Array.isArray(raw.touch_frames)||
+        !Array.isArray(raw.touch_annotations)||
+        raw.touch_annotations.length!==raw.touch_frames.length||
+        !raw.touch_annotations.every((event,index)=>
+          event.frame_index===raw.touch_frames[index]&&
+          (event.kind===null||Object.hasOwn(cpuTouchStyle,event.kind)))||
         raw.authoritative_game_events!==false||
         (s.video&&raw.video!==s.video))
         throw Error("Недостоверный индекс временной шкалы");
       timeline.data=raw;
       s.fps=Number(raw.fps)||0;
       if(!s.video)s.video=raw.video;
+      ensurePreviewVideo();
+      const attacks=raw.touch_annotations.filter(e=>e.kind==="attack").length;
+      const blocks=raw.touch_annotations.filter(e=>e.kind==="block").length;
       timeline.status.textContent=raw.rallies.length+" розыгрышей · "+
-        raw.touch_frames.length+" касаний";
+        raw.touch_frames.length+" касаний (CPU) · "+
+        attacks+" атак · "+blocks+" блоков";
       const duration=timelineDuration();
-      timeline.middle.textContent=timeLabel(duration/2);
+      timeline.middle.textContent="00:00.0";
       timeline.end.textContent=timeLabel(duration);
-      drawTimeline();syncFavoritesSelection();
+      drawTimeline();syncFavoritesSelection();drawOverlay();
+      if(s.current){
+        const selected=s.items.find(item=>item.candidate_id===s.current);
+        if(selected){
+          const start=Number(selected.manual_clip?.start_frame??
+            selected.detected_start_frame??selected.start_frame??0);
+          const end=Number(selected.manual_clip?.end_frame??
+            selected.detected_end_frame??selected.end_frame??0);
+          renderRallyTouches(selected,start,end);
+        }
+      }
     }catch(error){
       if(epoch!==timeline.epoch)return;
       timeline.data=null;drawTimeline();
@@ -671,8 +1060,17 @@
     }
     return left>0&&rows[left-1].end_frame>=frame?rows[left-1]:null;
   };
+  const ensurePreviewVideo=()=>{
+    if(!s.project||!s.video)return;
+    const key=s.project+":"+s.video;
+    if(s.videoKey===key)return;
+    s.videoKey=key;
+    ui.emptyVideo.classList.add("hidden");
+    ui.video.src=url("/api/video-media",{project_id:s.project,video:s.video});
+    ui.video.load();
+  };
   const seekTimeline=seconds=>{
-    if(!timeline.data||!s.video||!s.run)return;
+    if((!overlay.raw&&!timeline.data)||!s.video||(!overlay.raw&&!s.run))return;
     const duration=timelineDuration();
     if(!duration)return;
     const position=Math.max(0,Math.min(Math.max(0,duration-0.05),seconds));
@@ -680,7 +1078,8 @@
     timeline.playhead.style.left=(100*position/duration)+"%";
     if(s.current){s.current="";cards();}
     // Preserve player boxes and trajectory when seeking outside the selected card.
-    if(!overlay.source||overlay.source.events.length)setOverlaySource({motion_events:[]});
+    if(!overlay.source)setOverlaySource({motion_events:[]});
+    prefetchOverlayAtFrame(Math.floor(position*fps()));
     const rally=rallyAtTimelineTime(position);
     ui.viewTitle.textContent=rally?
       "Розыгрыш · "+timeLabel(rally.start_frame/fps())+" – "+
@@ -707,7 +1106,7 @@
       timelineDuration():0;
   };
   timeline.track.addEventListener("pointerdown",event=>{
-    if(event.button!==0||!timeline.data)return;
+    if(event.button!==0||(!timeline.data&&!overlay.raw))return;
     timeline.dragging=true;
     timeline.track.setPointerCapture?.(event.pointerId);
     seekTimeline(timelinePosition(event));
@@ -723,7 +1122,7 @@
     timeline.track.addEventListener(type,()=>{timeline.dragging=false;});
   }
   timeline.track.addEventListener("keydown",event=>{
-    const steps={ArrowLeft:-5,ArrowRight:5,PageDown:-30,PageUp:30};
+    const steps={PageDown:-30,PageUp:30};
     let target;
     if(event.key==="Home")target=0;
     else if(event.key==="End")target=timelineDuration();
@@ -874,10 +1273,9 @@
   };
   const reset=()=>{
     s.generation++;s.run="";s.video="";s.items=[];s.total=0;s.filtered=0;s.offset=0;
-    s.loadingMore=false;s.canLoadMore=true;s.fps=0;
+    s.loadingMore=false;s.canLoadMore=true;s.pageLoading=false;s.pageError="";s.fps=0;
     s.gold=new Set();s.revision="absent";s.writable=false;s.marksLoaded=false;s.selected.clear();
     s.jobId="";stopPoll();clearVideo();clearTimeline();wipe(ui.list);
-    ui.total.textContent="—";ui.goldCount.textContent="—";
     ui.job.textContent="";ui.cancel.classList.add("hidden");
     ui.download.classList.add("hidden");renderSelection();
   };
@@ -894,6 +1292,13 @@
   // source changes. Stale async responses must never reselect a different project.
   const setRuns=async(preferred="")=>{
     reset();
+    const source=s.chain?.choices.find(row=>row.value===s.analysis);
+    if(source?.video){
+      s.video=source.video;
+      s.fps=30;
+      ensurePreviewVideo();
+      if(overlay.raw)setOverlaySource({});
+    }
     const rows=s.chain?.byAnalysis.get(s.analysis)||[];
     options(ui.run,rows,"rally_run_id",row=>
       (window.VolleyStudioChain.stamp(row.created_at)||"CPU "+row.rally_run_id.slice(0,8))+
@@ -905,6 +1310,11 @@
       rows.length===1?rows[0].rally_run_id:"";
     refreshPicker(ui.run);
     s.run=ui.run.value;
+    // Overlay playback follows the selected CPU snapshot, not a rally card.
+    // reset() clears the canvas source; restore it for full-video preview too.
+    setOverlaySource(overlay.raw||s.run?{}:null);
+    if(s.run&&s.video)
+      prefetchOverlayAtFrame(Math.max(0,Math.floor((ui.video.currentTime||0)*fps())));
     if(s.analysis)sourceSelection.save(s.project,s.analysis,s.run);
     window.dispatchEvent(new CustomEvent("volley:postprocessing-change",{
       detail:{project_id:s.project,rally_run_id:s.run}
@@ -916,8 +1326,10 @@
       void loadTimeline().catch(failed);
     }
     else message(!s.analysis?"Выберите первичный GPU-анализ.":
+      overlay.raw&&rawFusion()?"Сырые GPU-данные доступны без CPU-постобработки.":
       rows.length?"Выберите версию постобработки.":
       "У выбранного анализа пока нет связанной CPU-постобработки.");
+    if(overlay.raw&&rawFusion())prefetchOverlayAtFrame(0);
   };
   const setAnalysis=async(preferredRun="")=>{
     s.analysis=ui.analysis.value;
@@ -1042,6 +1454,7 @@
       rows.some(row=>row.id===prev)?prev:
       rows.some(row=>row.id===stored.project)?stored.project:
       rows.length===1?rows[0].id:"";
+    refreshPicker(ui.project);
     s.project=ui.project.value;
     const current=rows.find(row=>row.id===s.project);
     s.projectVideos=Array.isArray(current?.videos)?
@@ -1060,7 +1473,6 @@
     s.gold=new Set((Array.isArray(raw.candidate_ids)?raw.candidate_ids:[]).filter(valid));
     s.revision=typeof raw.revision==="string"?raw.revision:"absent";
     s.writable=raw.writable===true;s.marksLoaded=true;
-    ui.goldCount.textContent=String(s.gold.size);
     syncFavoritesSelection();drawTimeline();
   };
   const rallyListQuery=()=>{
@@ -1073,6 +1485,7 @@
   const loadPage=async()=>{
     if(!s.project||!s.run)return;
     s.offset=0;s.loadingMore=false;s.canLoadMore=true;
+    s.pageLoading=true;s.pageError="";
     const token=++s.generation;
     const path=url("/api/cpu/native/rallies/preview",{
       project_id:s.project,rally_run_id:s.run,offset:s.offset,limit:s.limit,
@@ -1095,25 +1508,30 @@
       if(token!==s.generation)return;
       if(raw.schema!=="volley-native-rally-preview/1"||
         raw.authoritative_game_events!==false||
-        raw.automatic_montage_eligible!==false)
+        raw.automatic_montage_eligible!==false||
+        !Array.isArray(raw.items))
         throw Error("Неподдерживаемая версия предварительного CPU-анализа");
+      s.pageLoading=false;
       s.fps=Number(raw.fps)||0;
       s.items=Array.isArray(raw.items)?raw.items:[];
       s.total=Number(raw.total_candidates)||0;
       s.filtered=Number(raw.filtered_candidates??s.total)||0;
       s.canLoadMore=s.items.length<s.filtered;
       s.video=typeof raw.video==="string"?raw.video:"";
-      ui.total.textContent=String(s.total);
+      ensurePreviewVideo();
+      if(s.items.length&&previewIsVisible()){
+        const first=Number(s.items[0].detected_start_frame);
+        if(Number.isSafeInteger(first)&&first>=0)
+          prefetchOverlayAtFrame(first);
+      }
       syncFavoritesSelection();cards();
       if(!$("studio-preview-view").classList.contains("hidden"))
         message("CPU-данные загружены. Розыгрыши предварительные; проверьте их в видеоплеере.","ok");
     }catch(e){
       if(token!==s.generation)return;
+      s.pageLoading=false;
+      s.pageError=e instanceof Error?e.message:String(e);
       s.items=[];s.total=0;s.canLoadMore=false;cards();
-      const detail=e instanceof Error?e.message:String(e);
-      ui.list.replaceChildren(make("div","empty-state",
-        "Предпросмотр не загружен: "+detail+" · Выбранная CPU-версия не удалена."));
-
       failed(e);
     }
   };
@@ -1136,7 +1554,6 @@
       previewCache.drop(path=>path.startsWith("/api/cpu/native/rallies/marks?"));
       s.gold=new Set((Array.isArray(raw.candidate_ids)?raw.candidate_ids:[]).filter(valid));
       s.revision=String(raw.revision);s.marksLoaded=true;
-      ui.goldCount.textContent=String(s.gold.size);
       syncFavoritesSelection();drawTimeline();
       if(ui.filter.value==="marked"||ui.filter.value==="unmarked"){
         await loadPage();
@@ -1150,19 +1567,59 @@
       failed(e);
     }finally{s.busy=false;renderSelection();cards();}
   };
-  // The entire rally's approximate type breakdown is computed server-side,
-  // independently of the 14-event preview cap. No implied manual verification.
+  // The *complete* server-side counts, not the 14-event card preview,
+  // determine which action types are shown on a rally card.
   const estimatedTypes=item=>{
-    const names={attack:"Атака",block:"Блок",serve:"Подача",
+    const labels={attack:"Атака",block:"Блок",serve:"Подача",
       overhead_pass:"Передача сверху",dig:"Приём снизу",low_touch:"Нижнее касание"};
     const counts=item?.estimated_action_counts;
-    const kinds=(counts&&typeof counts==="object"&&!Array.isArray(counts))
-      ?Object.entries(counts).filter(([key,n])=>Object.hasOwn(names,key)&&Number.isSafeInteger(n)&&n>0)
-      :[];
-    const known=kinds.map(([key,n])=>names[key]+" ×"+n);
+    const known=counts&&typeof counts==="object"&&!Array.isArray(counts)?
+      Object.entries(labels).filter(([kind])=>
+        Number.isSafeInteger(counts[kind])&&counts[kind]>0)
+        .map(([kind,label])=>label+" ×"+counts[kind]):[];
     const unknown=item?.unclassified_action_count;
-    if(Number.isSafeInteger(unknown)&&unknown>0)known.push("Без типа ×"+unknown);
+    if(Number.isSafeInteger(unknown)&&unknown>0)
+      known.push("Без типа ×"+unknown);
     return known.length?"≈ "+known.join(" · "):"Типы не определены";
+  };
+  // Event pills and summary are derived from the same selected postprocessing
+  // timeline as the canvas. The 14-event card sample is never used here.
+  const renderRallyTouches=(item,start,end)=>{
+    const data=timeline.data;
+    const valid=data?.project_id===s.project&&data?.rally_run_id===s.run&&
+      data?.video===s.video&&Array.isArray(data.touch_annotations);
+    wipe(ui.events);
+    if(!valid){
+      ui.viewDescription.textContent=
+        "Загрузка касаний выбранной CPU-постобработки…";
+      return;
+    }
+    const touches=data.touch_annotations.filter(event=>
+      event.frame_index>=start&&event.frame_index<=end);
+    const labels={attack:"Атака",block:"Блок",serve:"Подача",
+      overhead_pass:"Передача сверху",dig:"Приём снизу",low_touch:"Нижнее касание"};
+    const counts=new Map();
+    for(const touch of touches){
+      const kind=touch.kind||"unclassified";
+      counts.set(kind,(counts.get(kind)||0)+1);
+    }
+    const breakdown=Object.entries(labels)
+      .filter(([kind])=>counts.has(kind))
+      .map(([kind,label])=>label+" ×"+counts.get(kind));
+    if(counts.has("unclassified"))
+      breakdown.push("Без типа ×"+counts.get("unclassified"));
+    ui.viewDescription.textContent="Фрагмент "+clock(start)+" – "+clock(end)+
+      ". Касаний из CPU-постобработки: "+touches.length+
+      ". Оценка типов: "+(breakdown.join(" · ")||"нет данных")+
+      ". Классификация автоматическая, не подтверждена вручную.";
+    for(const touch of touches.slice(0,32)){
+      const label=touch.kind&&labels[touch.kind]?"≈ "+labels[touch.kind]:"Касание без типа";
+      const pill=make("span","event-pill",clock(touch.frame_index)+" · "+label);
+      pill.title="Результат выбранной CPU-постобработки. Автоматическая оценка.";
+      if(cpuTouchStyle[touch.kind])
+        pill.style.borderColor=cpuTouchStyle[touch.kind][0];
+      ui.events.append(pill);
+    }
   };
   const view=item=>{
     if(!s.project||!s.video)return;
@@ -1174,32 +1631,12 @@
     s.clipStart=start/fps();s.clipEnd=(end+1)/fps();
     s.stopAt=s.playbackMode==="free"?null:s.clipEnd;
     ui.viewTitle.textContent="Розыгрыш · "+clock(start)+" – "+clock(end);
-    ui.viewDescription.textContent="Фрагмент "+clock(start)+" – "+clock(end)+
-      ". Кандидатов касания: "+(item.motion_event_count||0)+
-      ". Типы (предварительно): "+estimatedTypes(item)+
-      ". Игровые действия и личности игроков не подтверждены.";
     ui.videoTime.textContent=clock(start)+" – "+clock(end);
-    wipe(ui.events);
-    const techniqueNames={attack:"Атака",block:"Блок",serve:"Подача",
-      overhead_pass:"Передача сверху",dig:"Приём снизу",low_touch:"Нижнее касание"};
-    for(const evidence of (Array.isArray(item.motion_events)?item.motion_events:[]).slice(0,14)){
-      const prediction=evidence.action_prediction;
-      const kind=techniqueNames[evidence.rally_context ? evidence.rally_context.estimated_kind : prediction?.kind];
-      const label=kind?"≈ "+kind+" · эвристика":"Тип не определён";
-      const pill=make("span","event-pill",clock(evidence.frame_index)+" · "+label);
-      pill.title=kind?"Автоматический прогноз, не подтверждён человеком":
-        "Найдено физическое касание без достаточно надёжных данных для определения типа";
-      if(evidence.court){
-        const c=evidence.court;
-        const side=c.side==="near"?"ближняя":c.side==="far"?"дальняя":"—";
-        pill.title+=" · Площадка: "+side+" сторона, x="+Number(c.x_m).toFixed(1)+" м, y="+Number(c.y_m).toFixed(1)+" м"+
-          (c.near_net?" · у сетки":"")+(c.in_serve_zone?" · зона подачи":"");
-      }
-      ui.events.append(pill);
-    }
+    renderRallyTouches(item,start,end);
     ui.emptyVideo.classList.add("hidden");
     s.seekAt=s.clipStart;
     setOverlaySource(item);
+    prefetchOverlayAtFrame(start);
     drawTimeline();
     if(s.videoKey!==key){
       s.videoKey=key;
@@ -1208,8 +1645,9 @@
     }else if(ui.video.readyState>=1){
       try{ui.video.currentTime=s.seekAt;}catch{}
     }
-    // A card click starts playback immediately; metadata/seek is restored by loadedmetadata.
-    ui.video.play().catch(error=>
+    // A card click starts playback only while the preview is visible.
+    // Metadata/seek is restored by loadedmetadata without background playback.
+    if(previewIsVisible())ui.video.play().catch(error=>
       message("Воспроизведение недоступно: "+error.message,"error"));
   };
   const cards=()=>{
@@ -1217,8 +1655,19 @@
     wipe(ui.list);
     const visible=s.items;
     if(!visible.length){
-      ui.list.append(make("div","empty-state",
-        "Розыгрыши не найдены. Выберите другую версию CPU-анализа."));
+      const text=s.pageLoading?"Проверка источников и загрузка розыгрышей…":
+        s.pageError?"Предпросмотр не загружен: "+s.pageError+
+          " · Выбранная CPU-версия не удалена.":
+        !s.run?(overlay.raw&&rawFusion()?
+          "Сырые GPU-данные доступны в плеере. Розыгрыши появятся после CPU-постобработки.":
+          "Выберите версию CPU-постобработки.") :
+        ui.filter.value==="marked"&&s.filtered===0?
+          "В этой версии пока нет избранных розыгрышей. Выберите «Все».":
+        ui.filter.value==="unmarked"&&s.filtered===0?
+          "Все розыгрыши этой версии добавлены в избранное. Выберите «Все».":
+        s.total===0?"В выбранной CPU-версии нет обнаруженных розыгрышей.":
+        "Не удалось отобразить карточки этой CPU-версии.";
+      ui.list.append(make("div","empty-state",text));
       return;
     }
     for(const item of visible){
@@ -1607,6 +2056,7 @@
         dialogEpoch++;
         invalidateCatalog();
         await projects(id);
+        document.getElementById("studio-nav-analysis").click();
         message("Проект «"+name+"» создан и выбран.","ok");
       }catch(error){
         alertCreate(error);
@@ -1686,10 +2136,14 @@
     }catch(e){failed(e);}
   });
   ui.video.addEventListener("loadedmetadata",()=>{
-    if(s.videoKey)try{ui.video.currentTime=s.seekAt;}catch{}
+    if(s.videoKey)try{
+      const duration=ui.video.duration;
+      ui.video.currentTime=Number.isFinite(duration)&&duration>0?
+        Math.min(s.seekAt,Math.max(0,duration-0.05)):s.seekAt;
+    }catch{}
     const duration=timelineDuration();
     if(duration){
-      timeline.middle.textContent=timeLabel(duration/2);
+      timeline.middle.textContent="00:00.0";
       timeline.end.textContent=timeLabel(duration);
     }
     drawTimeline();
@@ -1734,6 +2188,9 @@
     if(s.stopAt!==null&&s.playbackMode!=="free")onRallyBoundary();
   });
   ui.video.addEventListener("error",()=>{
+    overlay.presentedTime=null;overlayContext();
+    if(s.videoKey)overlayMessage("Видео не декодируется (код "+
+      (ui.video.error?.code||"?")+"). Нажмите «Воспроизвести» для повторной загрузки.");
     if(s.videoKey)ui.viewDescription.textContent=
       "Видео недоступно для воспроизведения. Проверьте подготовку видео.";
   });
@@ -1761,8 +2218,13 @@
     playback.fullscreen.textContent=document.fullscreenElement?"⛶ Свернуть":"⛶ На весь экран";
   };
   const toggleVideoPlayback=()=>{
-    if(!s.videoKey)return;
+    if(!s.videoKey||!previewIsVisible())return;
     if(ui.video.paused){
+      if(ui.video.error){
+        // A failed byte-range request must not permanently poison this player.
+        overlay.presentedTime=null;
+        ui.video.load();
+      }
       // Replay a completed selection from its beginning, not a fraction past its end.
       if(s.playbackMode!=="free"&&s.clipStart!==null&&s.clipEnd!==null&&
          (ui.video.ended||ui.video.currentTime>=s.clipEnd-0.04)){
@@ -1794,13 +2256,64 @@
     updatePlaybackControls();
   });
   ui.video.addEventListener("click",toggleVideoPlayback);
+  // Left/right arrows scrub the one source-wide timeline, including raw GPU.
+  // Rust/WASM owns the precise 0.5 s tap and exponential hold acceleration.
+  // JS only adapts keyboard events, requestAnimationFrame and media seeking.
+  const arrowScrub={direction:0,startedAt:0,lastSeekAt:0,frame:0};
+  const stopArrowScrub=()=>{
+    arrowScrub.direction=0;
+    if(arrowScrub.frame)cancelAnimationFrame(arrowScrub.frame);
+    arrowScrub.frame=0;
+  };
+  const tickArrowScrub=timestamp=>{
+    arrowScrub.frame=0;
+    if(!arrowScrub.direction)return;
+    if(!previewIsVisible()||s.videoKey!==s.project+":"+s.video||
+       !timelineDuration()){stopArrowScrub();return;}
+    if(timestamp-arrowScrub.lastSeekAt>=85){
+      const delta=window.VolleyballUi.engine.volley_preview_seek_hold_delta(
+        arrowScrub.direction,timestamp-arrowScrub.startedAt,
+        timestamp-arrowScrub.lastSeekAt);
+      if(delta)seekTimeline(s.seekAt+delta);
+      arrowScrub.lastSeekAt=timestamp;
+    }
+    arrowScrub.frame=requestAnimationFrame(tickArrowScrub);
+  };
+  document.addEventListener("keydown",event=>{
+    if(event.key!=="ArrowLeft"&&event.key!=="ArrowRight")return;
+    if(event.altKey||event.ctrlKey||event.metaKey||event.isComposing||
+       ["INPUT","TEXTAREA","SELECT"].includes(event.target?.tagName)||
+       event.target?.isContentEditable||!s.videoKey||!previewIsVisible()||
+       s.videoKey!==s.project+":"+s.video||!timelineDuration())return;
+    event.preventDefault();
+    event.stopPropagation(); // No duplicate seek from the focused timeline slider.
+    const direction=event.key==="ArrowRight"?1:-1;
+    if(arrowScrub.direction===direction)return;
+    stopArrowScrub();
+    arrowScrub.direction=direction;
+    arrowScrub.startedAt=performance.now();
+    arrowScrub.lastSeekAt=arrowScrub.startedAt;
+    const current=Number.isFinite(ui.video.currentTime)?
+      ui.video.currentTime:s.seekAt;
+    seekTimeline(current+window.VolleyballUi.engine.volley_preview_seek_tap(direction));
+    arrowScrub.frame=requestAnimationFrame(tickArrowScrub);
+  },true);
+  document.addEventListener("keyup",event=>{
+    if((event.key==="ArrowLeft"&&arrowScrub.direction===-1)||
+       (event.key==="ArrowRight"&&arrowScrub.direction===1))
+      stopArrowScrub();
+  },true);
+  window.addEventListener("blur",stopArrowScrub);
+  document.addEventListener("visibilitychange",()=>{
+    if(document.hidden)stopArrowScrub();
+  });
   // Space controls the player from anywhere on the page, except editable controls.
   // Capture prevents a focused card/button from also processing the same keypress.
   document.addEventListener("keydown",event=>{
     if(event.code!=="Space"&&event.key!==" ")return;
     if(event.repeat||event.altKey||event.ctrlKey||event.metaKey)return;
     if(["INPUT","TEXTAREA","SELECT"].includes(event.target?.tagName)||
-       event.target?.isContentEditable||!s.videoKey)return;
+       event.target?.isContentEditable||!s.videoKey||!previewIsVisible())return;
     event.preventDefault();
     event.stopPropagation();
     toggleVideoPlayback();
@@ -1837,6 +2350,7 @@
   request("/api/studio/analysis-capabilities").then(value=>{
     if(value.analysis_edit){makeAnalysisPicker(ui.analysis,true);makeAnalysisPicker(ui.run,false);}
   }).catch(()=>{});
+  makeAnalysisPicker(ui.project,"project");
   loadRustSelection().catch(e=>{
     wasmReady=false;
     failed(new Error("Модуль выбора фрагментов недоступен: "+String(e.message||e)));

@@ -157,14 +157,7 @@
             </section>
           </div>
         </section>
-        <div id="studio-preview-view" aria-labelledby="studio-preview-heading">
-        <section class="intro">
-          <div><p id="studio-preview-heading" class="eyebrow">01 / АНАЛИЗ МАТЧА</p></div>
-          <div class="overview">
-            <div><strong id="studio-total">—</strong><span>Розыгрышей</span></div>
-            <div><strong id="studio-gold-count">—</strong><span>В избранном</span></div>
-          </div>
-        </section>
+        <div id="studio-preview-view" aria-label="Предпросмотр матча">
         <div id="studio-banner" class="banner hidden" hidden aria-hidden="true"></div>
         <section class="workspace">
           <div class="viewer-layout">
@@ -173,29 +166,42 @@
               <div class="video-wrap">
                 <video id="studio-video" tabindex="0" preload="metadata" playsinline aria-label="Просмотр исходного видео. Пробел — воспроизведение или пауза"></video>
                 <canvas id="studio-video-overlay" class="video-overlay" aria-hidden="true"></canvas>
+                <div class="video-overlay-controls">
                 <div class="video-overlay-toggles" role="group" aria-label="Визуальные фильтры плеера">
                   <button type="button" id="studio-overlay-rallies" class="video-overlay-toggle" aria-pressed="true" title="Показывать или скрывать блоки розыгрышей на шкале">▰ Розыгрыши</button>
-                  <button type="button" id="studio-overlay-touches" class="video-overlay-toggle" aria-pressed="true" title="Показывать или скрывать касания">● Касания</button>
+                  <button type="button" id="studio-overlay-touches" class="video-overlay-toggle" aria-pressed="true" title="Касания только из выбранной CPU-постобработки">● Касания</button>
                   <button type="button" id="studio-overlay-trajectory" class="video-overlay-toggle" aria-pressed="true" title="Показывать или скрывать траекторию мяча">⌁ Траектория</button>
                   <button type="button" id="studio-overlay-players" class="video-overlay-toggle" aria-pressed="true" title="Показывать или скрывать рамки игроков">▢ Игроки</button>
+                  <button type="button" id="studio-overlay-court" class="video-overlay-toggle" aria-pressed="true" title="Показать сохранённые границы площадки и сетку">▱ Поле и сетка</button>
                   <button type="button" id="studio-overlay-pose" class="video-overlay-toggle" aria-pressed="false" title="Показывать точки суставов и скелеты RTMPose">♧ Скелеты</button>
-                  <button type="button" id="studio-overlay-mode" class="video-overlay-toggle" aria-pressed="false">Обработанные</button>
+                  <div class="video-overlay-modes" role="tablist" aria-label="Режим данных">
+                    <button type="button" id="studio-overlay-processed" role="tab" aria-selected="true">Обработанные</button>
+                    <button type="button" id="studio-overlay-raw" role="tab" aria-selected="false">Сырые</button>
+                  </div>
                 </div>
-                <div id="studio-overlay-raw-controls" class="video-overlay-raw-controls hidden">
-                  <label>Мяч <input id="studio-raw-ball" type="range" min="0" max="100" value="50"><output id="studio-raw-ball-value">50%</output></label>
-                  <label>Игроки <input id="studio-raw-player" type="range" min="0" max="100" value="50"><output id="studio-raw-player-value">50%</output></label>
-                  <label>Касания <input id="studio-raw-touch" type="range" min="0" max="100" value="50"><output id="studio-raw-touch-value">50%</output></label>
-                  <small>Мяч: голубой — VballNet, оранжевый — RAVEL. Жёлтая рамка — вероятность касания.</small>
-                  <fieldset class="video-overlay-actions">
-                    <legend>Виды касаний — оценка CPU</legend>
-                    <label><input type="checkbox" data-overlay-action="attack" checked><span class="action-attack">●</span> Атака</label>
-                    <label><input type="checkbox" data-overlay-action="block" checked><span class="action-block">●</span> Блок</label>
-                    <label><input type="checkbox" data-overlay-action="serve" checked><span class="action-serve">●</span> Подача</label>
-                    <label><input type="checkbox" data-overlay-action="overhead_pass" checked><span class="action-overhead-pass">●</span> Передача сверху</label>
-                    <label><input type="checkbox" data-overlay-action="dig" checked><span class="action-dig">●</span> Приём снизу</label>
-                    <label><input type="checkbox" data-overlay-action="low_touch" checked><span class="action-low-touch">●</span> Нижнее касание</label>
+                <fieldset id="studio-overlay-actions" class="video-overlay-actions" aria-label="Виды касаний — оценка CPU">
+                  <label><input type="checkbox" data-overlay-action="attack" checked><span class="action-attack">●</span> Атака</label>
+                  <label><input type="checkbox" data-overlay-action="block" checked><span class="action-block">●</span> Блок</label>
+                  <label><input type="checkbox" data-overlay-action="serve" checked><span class="action-serve">●</span> Подача</label>
+                  <label><input type="checkbox" data-overlay-action="overhead_pass" checked><span class="action-overhead-pass">●</span> Передача сверху</label>
+                  <label><input type="checkbox" data-overlay-action="dig" checked><span class="action-dig">●</span> Приём снизу</label>
+                  <label><input type="checkbox" data-overlay-action="low_touch" checked><span class="action-low-touch">●</span> Нижнее касание</label>
+                </fieldset>
+                <div id="studio-overlay-raw-controls" class="video-overlay-raw-controls hidden" role="group" aria-label="Сохранённые GPU-данные — настройки каждой модели">
+                  <fieldset class="raw-model-control">
+                    <legend><label><input id="studio-raw-vball-visible" type="checkbox" checked> VballNet</label></legend>
+                    <label>Мяч <input id="studio-raw-ball" type="range" min="0" max="100" value="0"><output id="studio-raw-ball-value">0%</output></label>
                   </fieldset>
-                  <small>Цветные метки — неподтверждённые оценки CPU, а не классы RAVEL. Блок и подача пока не определяются: нужен контекст площадки.</small>
+                  <fieldset class="raw-model-control">
+                    <legend><label><input id="studio-raw-people-visible" type="checkbox" checked> RTMDet + RTMPose</label></legend>
+                    <label>Игроки <input id="studio-raw-player" type="range" min="0" max="100" value="50"><output id="studio-raw-player-value">50%</output></label>
+                  </fieldset>
+                  <fieldset class="raw-model-control">
+                    <legend><label><input id="studio-raw-pose-visible" type="checkbox" checked> RTMPose-M · плавные точки (между измерениями — интерполяция)</label></legend>
+                    <label>Уверенность суставов <input id="studio-raw-pose" type="range" min="0" max="100" value="35"><output id="studio-raw-pose-value">35%</output></label>
+                    <small>Точные измерения раз в несколько кадров; между ними только визуальная интерполяция. Без Track ID.</small>
+                  </fieldset>
+                </div>
                 </div>
                 <span id="studio-overlay-status" class="video-overlay-status hidden" role="status"></span>
                 <span id="studio-video-empty">Выберите розыгрыш справа</span>
@@ -253,7 +259,7 @@
                 </div>
                 <div class="video-timeline-legend">
                   <span id="studio-timeline-rally-key"><i class="rally-key"></i> Розыгрыши</span>
-                  <span id="studio-timeline-touch-key"><i class="touch-key"></i> Касания (предположительные)</span>
+                  <span id="studio-timeline-touch-key"><i class="touch-key"></i> Касания CPU (оценка типов)</span>
                   <span>Клик или перетаскивание — переход</span>
                 </div>
               </div>
@@ -333,7 +339,7 @@
               <div class="analysis-profile-heading">
                 <span class="analysis-profile-number">01</span>
                 <div><h2 id="studio-primary-heading">Первичный анализ</h2>
-                  <p>VballNet · мяч, RAVEL · игроки. Два независимых GPU-запуска и объединение обнаружений.</p></div>
+                  <p>VBallNet · мяч, RTMDet + RTMPose · игроки и скелеты. Детекции игроков преобразуются в рамки из точек тела.</p></div>
                 <button id="studio-analysis-gpu-only" class="primary analysis-stage-launch" type="button" title="Запустить только GPU и создать отдельную версию первичного анализа">▶ Начать анализ</button>
               </div>
               <div class="analysis-profile-fields">
@@ -346,7 +352,7 @@
                 <div><label class="field-label" for="studio-gpu-pose-enabled">RTMPose-M · анализ поз игроков</label>
                   <select id="studio-gpu-pose-enabled" data-default="1"><option value="1">Включён</option><option value="0">Выключен</option></select></div>
                 <div><label class="field-label" for="studio-gpu-pose-stride">RTMPose · шаг кадров (1–9)</label>
-                  <input id="studio-gpu-pose-stride" type="number" min="1" max="9" step="1" value="6" data-default="6"></div>
+                  <input id="studio-gpu-pose-stride" type="number" min="1" max="9" step="1" value="3" data-default="3"></div>
                 <div><label class="field-label" for="studio-gpu-memory">Лимит VRAM, МБ · 0 = без лимита</label>
                   <input id="studio-gpu-memory" type="number" min="0" max="131072" step="1" value="0" data-default="0"></div>
                 <div><label class="field-label" for="studio-gpu-threads">Потоки CPU</label>
@@ -387,6 +393,7 @@
                   <label>Конец, сек<input id="studio-analysis-trim-end" type="number" min="0" step="0.01" value="0"></label>
                 </div>
                 <div class="analysis-editor-actions">
+                  <button type="button" class="secondary" id="studio-analysis-court-auto">Определить поле и сетку</button>
                   <button type="button" class="secondary" id="studio-analysis-court-mode">Разметить поле</button>
                   <div class="analysis-editor-zoom" role="group" aria-label="Масштаб изображения для разметки">
                     <button type="button" class="secondary" id="studio-analysis-zoom-out" aria-label="Уменьшить изображение">−</button>
@@ -417,15 +424,20 @@
               </div></div>
               <div class="analysis-profile-subtitle">Трекинг игроков</div>
               <div class="analysis-profile-fields">
-                <div><label class="field-label" for="studio-post-player-score">Мин. уверенность игрока</label><input id="studio-post-player-score" type="number" min="0.05" max="1" step="0.01" value="0.30" data-default="0.30"></div>
+                <div><label class="field-label" for="studio-post-player-score">Мин. уверенность игрока</label><input id="studio-post-player-score" type="number" min="0.05" max="1" step="0.01" value="0.25" data-default="0.25"></div>
                 <div><label class="field-label" for="studio-post-max-gap">Восстановление Track ID, кадров (90 = 3 сек)</label><input id="studio-post-max-gap" type="number" min="90" max="180" step="1" value="90" data-default="90"></div>
                 <div><label class="field-label" for="studio-post-min-track-frames">Мин. кадров для подтверждения ID</label><input id="studio-post-min-track-frames" type="number" min="6" max="90" step="1" value="12" data-default="12" title="ID с меньшим числом реальных обнаружений удаляется из CPU-результата"></div>
               </div>
               <div class="analysis-profile-subtitle">Касания мяча</div>
               <div class="analysis-profile-fields">
-                <div><label class="field-label" for="studio-post-touch-threshold">Порог экстремумов</label><input id="studio-post-touch-threshold" type="number" min="0" max="1" step="0.01" value="0.50" data-default="0.50"></div>
-                <div><label class="field-label" for="studio-post-touch-gap">Мин. интервал пиков, кадров</label><input id="studio-post-touch-gap" type="number" min="1" max="150" step="1" value="10" data-default="10"></div>
-                <div><label class="field-label" for="studio-post-reach">Дальность касания, доля роста</label><input id="studio-post-reach" type="number" min="0.05" max="1" step="0.01" value="0.35" data-default="0.35"></div>
+                <div><label class="field-label" for="studio-post-touch-algorithm">Алгоритм касаний</label><select id="studio-post-touch-algorithm" data-default="legacy"><option value="pose_motion">Строгий: траектория + точки тела</option><option value="legacy" selected>VBallNet + RTMPose: контакты и изломы ±0,1 с</option></select></div>
+                <div><label class="field-label" for="studio-post-require-pose">Подтверждение точками тела</label><select id="studio-post-require-pose" data-default="0"><option value="0">Не обязательно (рекомендуется)</option><option value="1">Строгая фильтрация (меньше касаний)</option></select></div>
+                <div><label class="field-label" for="studio-post-pose-confidence">Мин. уверенность точки тела</label><input id="studio-post-pose-confidence" type="number" min="0" max="1" step="0.01" value="0.28" data-default="0.28"></div>
+                <div><label class="field-label" for="studio-post-pose-distance">Расстояние до точки, доля роста</label><input id="studio-post-pose-distance" type="number" min="0.01" max="1" step="0.01" value="0.34" data-default="0.34"></div>
+                <div><label class="field-label" for="studio-post-touch-threshold">Мин. уверенность физического касания</label><input id="studio-post-touch-threshold" type="number" min="0" max="1" step="0.01" value="0.48" data-default="0.48"></div>
+                <div><label class="field-label" for="studio-post-occluded-turn">Мин. поворот мяча при пропуске VBallNet, градусы</label><input id="studio-post-occluded-turn" type="number" min="5" max="180" step="1" value="35" data-default="35" title="При восстановлении касания через пропущенные кадры мяч должен действительно изменить направление, а не просто ускоряться под действием гравитации"></div>
+                <div><label class="field-label" for="studio-post-touch-gap">Окно объединения изломов, кадров</label><input id="studio-post-touch-gap" type="number" min="1" max="150" step="1" value="4" data-default="4"></div>
+                <div><label class="field-label" for="studio-post-reach">Дальность касания, доля роста</label><input id="studio-post-reach" type="number" min="0.05" max="1" step="0.01" value="0.75" data-default="0.75"></div>
               </div>
               <div class="analysis-profile-subtitle">Розыгрыши</div>
               <div class="analysis-profile-fields">
@@ -435,18 +447,18 @@
               <details class="analysis-profile-advanced">
                 <summary>Дополнительные параметры CPU</summary>
                 <div class="analysis-profile-fields">
-                  <div><label class="field-label" for="studio-post-nms">NMS IoU</label><input id="studio-post-nms" type="number" min="0.6" max="0.99" step="0.01" value="0.88" data-default="0.88"></div>
-                  <div><label class="field-label" for="studio-post-assignment">Порог назначения Track ID</label><input id="studio-post-assignment" type="number" min="0.2" max="1" step="0.01" value="0.48" data-default="0.48"></div>
+                  <div><label class="field-label" for="studio-post-nms">NMS IoU</label><input id="studio-post-nms" type="number" min="0.6" max="0.99" step="0.01" value="0.72" data-default="0.72"></div>
+                  <div><label class="field-label" for="studio-post-assignment">Порог назначения Track ID</label><input id="studio-post-assignment" type="number" min="0.2" max="1" step="0.01" value="0.43" data-default="0.43"></div>
                   <div><label class="field-label" for="studio-post-margin">Порог неоднозначности</label><input id="studio-post-margin" type="number" min="0" max="0.5" step="0.01" value="0.11" data-default="0.11"></div>
                   <div><label class="field-label" for="studio-post-smooth">Сглаживание экстремумов</label><input id="studio-post-smooth" type="number" min="1" max="31" step="1" value="5" data-default="5"></div>
-                  <div><label class="field-label" for="studio-post-interval">Мин. интервал касаний, сек</label><input id="studio-post-interval" type="number" min="0.10" max="3" step="0.01" value="0.35" data-default="0.35"></div>
+                  <div><label class="field-label" for="studio-post-interval">Мин. интервал касаний, сек</label><input id="studio-post-interval" type="number" min="0.10" max="3" step="0.01" value="0.10" data-default="0.10"></div>
                   <div><label class="field-label" for="studio-post-ball-score">Уверенность мяча</label><input id="studio-post-ball-score" type="number" min="0.01" max="1" step="0.01" value="0.35" data-default="0.35"></div>
-                  <div><label class="field-label" for="studio-post-ball-gap">Разрыв траектории, кадров</label><input id="studio-post-ball-gap" type="number" min="1" max="120" step="1" value="75" data-default="75"></div>
+                  <div><label class="field-label" for="studio-post-ball-gap">Разрыв траектории, кадров</label><input id="studio-post-ball-gap" type="number" min="1" max="120" step="1" value="45" data-default="45"></div>
                   <div><label class="field-label" for="studio-post-idle">Простой мяча, кадров</label><input id="studio-post-idle" type="number" min="15" max="180" step="1" value="60" data-default="60"></div>
                   <div><label class="field-label" for="studio-post-stationary">Порог неподвижности, пикс/кадр</label><input id="studio-post-stationary" type="number" min="0.1" max="15" step="0.1" value="2" data-default="2"></div>
                   <div><label class="field-label" for="studio-post-samples">Мин. отсчётов мяча</label><input id="studio-post-samples" type="number" min="3" max="900" step="1" value="12" data-default="12"></div>
                   <div><label class="field-label" for="studio-post-min-touches">Мин. касаний</label><input id="studio-post-min-touches" type="number" min="1" max="10" step="1" value="2" data-default="2"></div>
-                  <div><label class="field-label" for="studio-post-no-touch">Макс. без касания, кадров</label><input id="studio-post-no-touch" type="number" min="90" max="900" step="1" value="180" data-default="180"></div>
+                  <div><label class="field-label" for="studio-post-no-touch">Максимум без нового касания другого игрока, кадров</label><input id="studio-post-no-touch" type="number" min="90" max="120" step="1" value="120" data-default="120"></div>
                   <div><label class="field-label" for="studio-post-context">Контекст розыгрыша, кадров</label><input id="studio-post-context" type="number" min="0" max="180" step="1" value="45" data-default="45"></div>
                 </div>
               </details>
@@ -470,7 +482,7 @@
             </details>
           </div>
           <section class="analysis-history" aria-labelledby="studio-history-heading">
-            <div class="section-bar"><h2 id="studio-history-heading">История анализов</h2><button id="studio-history-refresh" class="secondary" type="button">↻ Обновить</button></div>
+            <div class="section-bar"><h2 id="studio-history-heading">История анализов</h2><div class="analysis-history-actions"><button id="studio-history-refresh" class="secondary" type="button">↻ Обновить</button><button id="studio-history-clear" class="secondary" type="button" title="Скрыть записи истории текущего проекта; результаты анализа сохранятся">Очистить историю</button></div></div>
             <div class="analysis-history-tabs" role="tablist" aria-label="Тип запусков">
               <button type="button" role="tab" aria-selected="true" data-history-filter="all">Все</button>
               <button type="button" role="tab" aria-selected="false" data-history-filter="gpu">Нейросеть</button>

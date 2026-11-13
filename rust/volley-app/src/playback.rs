@@ -118,7 +118,9 @@ pub(crate) async fn serve_mp4(
         )
         .header(header::ACCEPT_RANGES, "bytes")
         .header(header::CONTENT_LENGTH, bytes.to_string())
-        .header(header::CACHE_CONTROL, "private, max-age=120");
+        // Prepared and original media can be selected under the same URL.
+        // Never reuse stale 206 ranges from a different file incarnation.
+        .header(header::CACHE_CONTROL, "private, no-store");
     if partial {
         response = response.header(header::CONTENT_RANGE, format!("bytes {start}-{end}/{size}"));
     }
@@ -338,5 +340,35 @@ mod tests {
         assert_eq!(range_request(Some("bytes=-3"), 100), Ok((97, 99, true)));
         assert!(range_request(Some("bytes=120-"), 100).is_err());
         assert!(range_request(Some("bytes=0-1,2-4"), 100).is_err());
+    }
+
+    #[tokio::test]
+    async fn byte_ranges_never_cache_an_obsolete_media_file() {
+        use super::serve_mp4;
+        use axum::{
+            body::to_bytes,
+            http::{header, HeaderMap, HeaderValue, StatusCode},
+        };
+
+        let source = std::env::temp_dir().join(format!(
+            "volley-range-test-{}.mp4",
+            uuid::Uuid::new_v4().simple()
+        ));
+        std::fs::write(&source, b"0123456789").unwrap();
+        let mut headers = HeaderMap::new();
+        headers.insert(header::RANGE, HeaderValue::from_static("bytes=2-5"));
+        let response = serve_mp4(source.clone(), &headers).await.unwrap();
+        assert_eq!(response.status(), StatusCode::PARTIAL_CONTENT);
+        assert_eq!(response.headers()[header::CONTENT_RANGE], "bytes 2-5/10");
+        assert_eq!(response.headers()[header::CONTENT_LENGTH], "4");
+        assert_eq!(
+            response.headers()[header::CACHE_CONTROL],
+            "private, no-store"
+        );
+        assert_eq!(
+            to_bytes(response.into_body(), 10).await.unwrap().as_ref(),
+            b"2345"
+        );
+        std::fs::remove_file(source).unwrap();
     }
 }

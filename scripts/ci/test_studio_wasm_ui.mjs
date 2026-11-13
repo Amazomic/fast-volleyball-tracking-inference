@@ -27,7 +27,12 @@ const profileInputs=[...markup.matchAll(/<input[^>]*id="(studio-(?:gpu|post)[^"]
     for(const attr of row[0].matchAll(/([\w-]+)="([^"]*)"/g))attrs[attr[1]]=attr[2];
     return attrs;
   });
-assert.equal(profileInputs.length,24,"GPU + CPU post-processing profile fields");
+assert.equal(profileInputs.length,27,"GPU + CPU post-processing profile fields");
+const profileSelects=[...markup.matchAll(/<select[^>]*id="(studio-(?:gpu|post)[^"]*)"[^>]*>/g)]
+  .map(row=>Object.fromEntries([...row[0].matchAll(/([\w-]+)="([^"]*)"/g)]
+    .map(attr=>[attr[1],attr[2]])));
+assert.deepEqual(profileSelects.map(attrs=>attrs.id).sort(),
+  ["studio-gpu-pose-enabled","studio-post-pose-classify","studio-post-require-pose","studio-post-touch-algorithm"]);
 
 const names=["preview","analysis","players","montage","quick","report"];
 class Node {
@@ -57,7 +62,7 @@ class Node {
   hasAttribute(k){return this.attrs.has(k);}
   removeAttribute(k){this.attrs.delete(k);}
   querySelectorAll(selector){
-    if(selector==="input[data-default]")
+    if(selector==="input[data-default],select[data-default]")
       return this.children.filter(child=>child.dataset.default!==undefined);
     return [];
   }
@@ -83,6 +88,7 @@ const ids=[
   "studio-inference","studio-analysis-reset","studio-analysis-progress",
   "studio-analysis-profile-delta","studio-analysis-log-panel",
   "studio-analysis-log-output","studio-analysis-log-current","studio-analysis-log-count",
+  "studio-history-list","studio-history-refresh","studio-history-more","studio-history-clear",
   "studio-player-create","studio-player-name","studio-player-list","studio-player-count",
   "studio-player-refresh"
 ];
@@ -100,6 +106,12 @@ function createTestEnvironment(initialHash="#preview",flags={}){
     input.value=attrs.value;input.dataset.default=attrs["data-default"];
     nodes.set(attrs.id,input);
     byId("studio-analysis-view").append(input);
+  }
+  for(const attrs of profileSelects){
+    const select=new Node("select");
+    select.id=attrs.id;select.value=attrs["data-default"];select.dataset.default=attrs["data-default"];
+    nodes.set(attrs.id,select);
+    byId("studio-analysis-view").append(select);
   }
   byId("studio-project").value="1234abcdef01";
   byId("studio-analysis-video").value="";
@@ -121,6 +133,7 @@ function createTestEnvironment(initialHash="#preview",flags={}){
     getElementById:byId,createElement:tag=>new Node(tag),
     querySelector:selector=>selector===".brand .volleyball-ball"?brandBall:null,
     createTextNode:text=>({nodeType:3,nodeValue:text}),
+    addEventListener:()=>{},
     querySelectorAll:selector=>selector==="[data-studio-tab]"?
       [...names.filter(name=>name!=="quick").map(name=>byId("studio-nav-"+name)),
         byId("studio-quick-open")]:[],
@@ -177,6 +190,13 @@ function createTestEnvironment(initialHash="#preview",flags={}){
       assert.equal(options.method,"POST");
       return {ok:true,json:async()=>({schema:"volley-studio-pipeline/1",
         id:pipelineId,status:"cancelled"})};
+    }
+    if(path==="/api/studio/pipeline/history"){
+      assert.equal(options.method,"POST");
+      return {ok:true,json:async()=>({project_id:"1234abcdef01",hidden:2})};
+    }
+    if(path.startsWith("/api/studio/pipeline/history?")){
+      return {ok:true,json:async()=>({schema:"volley-studio-pipeline-history/1",project_id:"1234abcdef01",runs:[],next_offset:0,has_more:false})};
     }
     if(path==="/api/players/library/native"){
       assert.equal(options.method,"POST");
@@ -247,6 +267,9 @@ for(let i=0;i<names.length;i++){
   assert.equal(a.location.hash,"#"+name);
 }
 assert.ok(a.requests.some(x=>x.path==="/api/projects"),"Analysis fetched project list");
+ a.nodes.get("studio-history-clear").dispatch("click");
+ await tick();
+ assert.deepEqual(JSON.parse(a.requests.find(x=>x.path==="/api/studio/pipeline/history"&&x.options.method==="POST").options.body),{project_id:"1234abcdef01"});
 assert.ok(a.requests.some(x=>x.path==="/api/players/library/native"),"Players fetched library");
 a.nodes.get("studio-nav-analysis").dispatch("click");
 await tick();
@@ -261,11 +284,14 @@ const golden=JSON.parse(pipelineStarts()[0].options.body);
 assert.equal(golden.project_id,"1234abcdef01");
 assert.equal(golden.video,"rally.mp4");
 assert.equal(golden.mode,"full");
-assert.deepEqual(golden.gpu,{stride:9,gpu_memory_limit_mb:0,cpu_threads:8});
-assert.equal(golden.post.tracking.min_player_score,0.30);
-assert.equal(golden.post.tracking.nms_iou,0.88);
+assert.deepEqual(golden.gpu,{stride:9,gpu_memory_limit_mb:0,cpu_threads:8,pose_enabled:true,pose_stride:3});
+assert.equal(golden.post.pose_classification,true);
+assert.equal(golden.post.tracking.min_player_score,0.28);
+assert.equal(golden.post.tracking.nms_iou,0.72);
 assert.equal(golden.post.tracking.min_track_observations,12);
-assert.equal(golden.post.touches.threshold,0.50);
+assert.equal(golden.post.touches.threshold,0.48);
+assert.equal(golden.post.touches.min_ball_score,0.35);
+assert.equal(golden.post.rallies.min_ball_score,0.35);
 assert.equal(golden.post.rallies.min_rally_frames,45);
 assert.equal(golden.post.rallies.min_touch_candidates,2);
 assert.equal(a.nodes.get("studio-analysis-start").textContent,"▶ Полный анализ",
@@ -281,8 +307,8 @@ a.nodes.get("studio-analysis-start").dispatch("click");
 await tick();
 assert.equal(pipelineStarts().length,2,"Second explicit pipeline launch only");
 const override=JSON.parse(pipelineStarts()[1].options.body);
-assert.deepEqual(override.gpu,{stride:3,gpu_memory_limit_mb:8192,cpu_threads:12});
-assert.equal(override.post.tracking.min_player_score,0.30);
+assert.deepEqual(override.gpu,{stride:3,gpu_memory_limit_mb:8192,cpu_threads:12,pose_enabled:true,pose_stride:3});
+assert.equal(override.post.tracking.min_player_score,0.28);
 a.nodes.get("studio-gpu-memory").value="-1";
 a.nodes.get("studio-gpu-memory").dispatch("input");
 assert.match(a.nodes.get("studio-analysis-profile-delta").textContent,/недопустимое значение/);
@@ -306,7 +332,7 @@ assert.equal(pipelineStarts().length,3,"GPU-only button must launch the pipeline
 const gpuOnly=JSON.parse(pipelineStarts()[2].options.body);
 assert.equal(gpuOnly.mode,"gpu");
 assert.equal(gpuOnly.post,undefined,"GPU-only must not include CPU settings");
-assert.deepEqual(gpuOnly.gpu,{stride:9,gpu_memory_limit_mb:0,cpu_threads:8});
+assert.deepEqual(gpuOnly.gpu,{stride:9,gpu_memory_limit_mb:0,cpu_threads:8,pose_enabled:true,pose_stride:3});
 a.nodes.get("studio-inference").value=JSON.stringify([
   "rally.mp4","fusion","b".repeat(32)]);
 a.window.dispatchEvent({type:"volley:chain-change",

@@ -99,7 +99,8 @@ const options=(target,rows,key,label)=>{
   target.options=rows.map(row=>({value:row[key],textContent:label(row)}));
   target.value="";
 };
-const context={s,ui:{analysis,run:cpu},
+const context={s,ui:{analysis,run:cpu},overlay:{raw:false},
+  ensurePreviewVideo(){},
   window:{VolleyballUi:{ready:Promise.resolve()},
     VolleyStudioChain:{stamp:()=>"",build:()=>refreshed},
     dispatchEvent:()=>counters.events++},

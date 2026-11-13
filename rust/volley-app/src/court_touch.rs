@@ -223,6 +223,9 @@ mod tests {
             }),
             court: None,
             physical_motion_supported: true,
+            body_contact_supported: false,
+            ball_occluded_at_contact: false,
+            inferred_body_reach_supported: false,
             athlete_identity_verified: false,
         }
     }

@@ -1,0 +1,22 @@
+import assert from "node:assert/strict";
+import {readFileSync} from "node:fs";
+import {runInNewContext} from "node:vm";
+
+const js=readFileSync(new URL("../../rust/volley-app/static/studio.js",import.meta.url),"utf8");
+const start=js.indexOf("  const ensurePreviewVideo=");
+const end=js.indexOf("  const seekTimeline=",start);
+assert.ok(start>=0&&end>start,"Preview source initialization must exist");
+const s={project:"project",video:"match.mp4",videoKey:"",seekAt:0};
+const video={src:"",loads:0,load(){this.loads++;}};
+const emptyVideo={classList:{add(){}}};
+const context={s,ui:{video,emptyVideo},url:(path,params)=>path+"?"+new URLSearchParams(params),URLSearchParams};
+runInNewContext(js.slice(start,end)+"\nthis.ensurePreviewVideo=ensurePreviewVideo;",context);
+context.ensurePreviewVideo();
+assert.equal(video.src,"/api/video-media?project_id=project&video=match.mp4");
+assert.equal(s.videoKey,"project:match.mp4");
+assert.equal(video.loads,1);
+context.ensurePreviewVideo();
+assert.equal(video.loads,1,"Repeated data responses must preserve the current playback");
+assert.match(js,/if\(!s\.video\)s\.video=raw\.video;\s*ensurePreviewVideo\(\);/);
+assert.match(js,/s\.video=typeof raw\.video==="string"\?raw\.video:"";\s*ensurePreviewVideo\(\);/);
+console.log("Studio preview initializes selected source: OK");

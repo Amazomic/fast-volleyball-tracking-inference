@@ -10,7 +10,13 @@ const css=readFileSync(join(root,"rust/volley-app/static/studio.css"),"utf8");
 const js=readFileSync(join(root,"rust/volley-app/static/studio.js"),"utf8");
 
 const preview=html.slice(html.indexOf('id="studio-preview-view"'),
-  html.indexOf('id="studio-montage"'));
+  html.indexOf('id="studio-montage-view"'));
+assert.match(preview, /^id="studio-preview-view" aria-label="Предпросмотр матча"/,
+  "Preview must expose an accessible label without a redundant visible header");
+assert.doesNotMatch(preview, /class="intro"|id="studio-preview-heading"|id="studio-total"|id="studio-gold-count"/,
+  "Preview must not render the top heading and statistics panel");
+assert.doesNotMatch(js, /ui\.(?:total|goldCount)\.textContent/,
+  "Removed preview counters must not be updated by JavaScript");
 assert.ok(preview.indexOf('class="viewer-panel"')<preview.indexOf('class="rallies-panel"'),
   "Large player must precede the rally rail on the right");
 assert.equal((preview.match(/id="studio-video"/g)||[]).length,1);

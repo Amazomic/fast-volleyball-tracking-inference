@@ -1,6 +1,6 @@
 "use strict";
-// Native Track ID manual identity-review bridge. No auto-ReID, ownership
-// guessing, photo enrollment, or client-supplied source frame overrides.
+// Native Track ID review bridge. Automatic photo matching uses server-side
+// evidence and preserves manual assignments and co-visible player constraints.
 (() => {
   const get=id=>document.getElementById(id);
   const ui={
@@ -21,8 +21,8 @@
     roster:[],writable:false,busy:false,sourceSha:"",groupRevision:null,
     groups:[],grouped:new Set(),groupLoaded:false,groupShown:24,singleCount:0,
     playerMatches:{},libraryPlayers:[],projectPlayerIds:new Set(),
-    rosterEpoch:0,rosterBusy:false,rosterLoaded:false,tracksLoaded:false,loadingKey:null,
-    photoIndices:new Map(),viewPlayer:"",filteredTotal:0,unassignedIds:new Set(),comparisonIds:new Set()
+    rosterEpoch:0,rosterBusy:false,rosterLoaded:false,tracksLoaded:false,loadingKey:null,grouping:false,
+    photoIndices:new Map(),viewPlayer:"",viewConflicts:false,filteredTotal:0,unassignedIds:new Set(),identityConflictIds:new Set(),comparisonIds:new Set()
   };
   const node=(tag,klass,text)=>{
     const n=document.createElement(tag);if(klass)n.className=klass;
@@ -183,9 +183,31 @@
       }
     }
   };
+  window.addEventListener("volley:remove-project-player",async event=>{
+    const detail=event.detail||{},project=state.project,id=detail.player_id;
+    if(detail.project_id!==project||!state.projectPlayerIds.has(id)||state.rosterBusy)return;
+    state.rosterBusy=true;state.rosterEpoch++;renderRosterBar();
+    try{
+      const catalog=await read("/api/projects");
+      const projectDoc=(Array.isArray(catalog.projects)?catalog.projects:[]).find(row=>row.id===project);
+      if(!projectDoc||!Array.isArray(projectDoc.player_ids))throw Error("Проект недоступен");
+      const response=await post("/api/project-update",{id:project,player_ids:projectDoc.player_ids.filter(value=>value!==id)});
+      if(project!==state.project)return;
+      if(!Array.isArray(response.project?.player_ids)||response.project.player_ids.includes(id))throw Error("Сервер не подтвердил удаление игрока");
+      if(state.viewPlayer===id)viewBack.click();
+      note("Игрок удалён из проекта.");
+    }catch(error){if(project===state.project)note("Не удалось удалить игрока: "+error.message,true);}
+    finally{if(project===state.project){state.rosterBusy=false;void loadLibraryRoster();}}
+  });
   rosterAddAll.addEventListener("click",()=>attachPlayers(
     state.libraryPlayers.filter(p=>!state.projectPlayerIds.has(p.id)).map(p=>p.id)
   ));
+  const updateCardLink=controls=>{
+    const select=controls.querySelector("select");
+    const link=controls.querySelector("button");
+    link.disabled=!state.writable||state.busy||state.rosterBusy||
+      !select.value||Number(controls.dataset.trackCount)>200;
+  };
   const unlock=()=>{
     const selected=state.selected.size>0 && !state.busy && state.writable;
     ui.assign.disabled=!selected||!ui.player.value||state.rosterBusy;
@@ -194,19 +216,23 @@
     ui.restore.disabled=!selected;
     ui.prev.disabled=state.busy||state.offset===0;
     ui.next.disabled=state.busy||state.offset+state.limit>=state.filteredTotal;
+    tracksPanel.querySelectorAll(".track-card-link-actions").forEach(updateCardLink);
+    tracksPanel.querySelectorAll(".track-remove-assignment").forEach(button=>{
+      button.disabled=state.busy||!state.writable;
+    });
     reidUnlock();
   };
   const reset=()=>{
     state.token++;state.selected.clear();state.rallyIds.clear();state.offset=0;state.rows=[];
     state.total=0;state.revision="absent";state.roster=[];state.writable=false;
-    state.tracksLoaded=false;state.loadingKey=null;
+    state.tracksLoaded=false;state.loadingKey=null;state.grouping=false;
     state.photoIndices.clear();
     state.sourceSha="";state.groupRevision=null;state.rallyRun="";state.fallback=false;
     state.groups=[];state.grouped.clear();state.groupLoaded=false;
     state.groupShown=24;state.singleCount=0;state.playerMatches={};
-    state.viewPlayer="";state.filteredTotal=0;state.unassignedIds.clear();
+    state.viewPlayer="";state.viewConflicts=false;state.filteredTotal=0;state.unassignedIds.clear();state.identityConflictIds.clear();
     state.comparisonIds.clear();
-    viewLabel.textContent="Непривязанные Track ID";viewBack.hidden=true;groupsMode.hidden=false;
+    updateUnassignedLabel();viewBack.hidden=true;groupsMode.hidden=false;playerMode.hidden=true;setMode("singles");
     state.rosterEpoch++;state.libraryPlayers=[];state.projectPlayerIds.clear();
     state.rosterLoaded=false;state.rosterBusy=false;
     renderRosterBar();
@@ -277,34 +303,61 @@
     }catch(error){if(token===state.token)note(error.message,true);}
     finally{if(token===state.token)state.loadingKey=null;}
   };
-  const publishTrackCovers=()=>{
+  const publishTrackCovers=playerTrackCounts=>{
     if(!state.project||!state.video||!state.replay)return;
     window.dispatchEvent(new CustomEvent("volley:track-photo-covers",{detail:{
       project_id:state.project,video:state.video,replay_id:state.replay,
+      player_track_counts:playerTrackCounts,
       tracks:state.rows.filter(row=>
         typeof row.assigned_player_id==="string"&&
         Number.isSafeInteger(Number(row.track_id))&&Number(row.track_id)>0
       ).map(row=>({player_id:row.assigned_player_id,track_id:Number(row.track_id)}))
     }}));
   };
-  const loadPage=async()=>{
+  const animateTrackCards=update=>{
+    const cards=()=>[...ui.list.querySelectorAll("[data-track-card-key]"),
+      ...galleryItems.querySelectorAll("[data-track-card-key]")];
+    const previous=new Map(cards().map(card=>[card.dataset.trackCardKey,{
+      rect:card.getBoundingClientRect(),portraits:[...card.querySelectorAll(".track-portrait")]
+    }]));
+    update();
+    const motion=document.body.dataset.uiMotion!=="reduce"&&
+      !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    for(const card of cards()){
+      const old=previous.get(card.dataset.trackCardKey);
+      if(old){
+        const portraits=[...card.querySelectorAll(".track-portrait")];
+        portraits.forEach((portrait,index)=>{
+          if(old.portraits[index]?.title===portrait.title)portrait.replaceWith(old.portraits[index]);
+        });
+      }
+      if(!motion||typeof card.animate!=="function")continue;
+      if(old){
+        const rect=card.getBoundingClientRect();
+        const x=old.rect.left-rect.left,y=old.rect.top-rect.top;
+        if(x||y)card.animate([{transform:`translate(${x}px, ${y}px)`},{transform:"translate(0, 0)"}],
+          {duration:220,easing:"ease-out"});
+      }else card.animate([{opacity:0},{opacity:1}],{duration:160,easing:"ease-out"});
+    }
+  };
+  const loadPage=async({preserveCards=false}={})=>{
     const project=state.project,video=state.video,replay=state.replay;
     if(!project||!video||!replay)return;
     const token=++state.token;
     state.selected.clear();unlock();
-    ui.list.replaceChildren(node("div","empty-state","Проверка SHA-256 и загрузка Track ID…"));
+    if(!preserveCards)ui.list.replaceChildren(node("div","empty-state","Проверка SHA-256 и загрузка Track ID…"));
     note("Проверяем исходный CPU-трекинг, получаем имена игроков…");
     try{
       const result=await read(path("/api/players/native/tracks",{
         project_id:project,video,replay_id:replay,rally_run_id:state.rallyRun,
-        offset:state.offset,limit:state.limit,view:state.viewPlayer?"player":"unassigned",
+        offset:state.offset,limit:state.limit,view:state.viewPlayer?"player":state.viewConflicts?"conflict":"unassigned",
         ...(state.viewPlayer?{view_player_id:state.viewPlayer}:{})
       }));
       if(token!==state.token||project!==state.project||
         video!==state.video||replay!==state.replay)return;
       if(result.schema!=="volley-native-player-track-links/1"||
         result.source_replay_sha256?.length!==64||
-        result.automatic_reid_binding!==false)throw Error("Некорректный источник Track ID");
+        typeof result.automatic_reid_binding!=="boolean")throw Error("Некорректный источник Track ID");
       state.rows=Array.isArray(result.tracks)?result.tracks:[];
       if(!Array.isArray(result.rally_track_ids)||result.rally_track_ids.length>20000)
         throw Error("Сервер не подтвердил ID внутри розыгрышей");
@@ -317,8 +370,12 @@
         throw Error("Сервер не подтвердил фильтр привязок Track ID");
       state.filteredTotal=result.filtered_total;
       state.unassignedIds=new Set(result.unassigned_track_ids.map(Number));
+      state.identityConflictIds=new Set((result.identity_conflict_track_ids||[]).map(Number));
       state.comparisonIds=new Set(result.comparison_track_ids.map(Number));
       state.roster=Array.isArray(result.roster)?result.roster:[];
+      const savedMatches=result.automatic_identity_matches;
+      state.playerMatches=savedMatches&&typeof savedMatches==="object"&&!Array.isArray(savedMatches)?
+        savedMatches:{};
       state.revision=String(result.revision||"absent");
       if(state.sourceSha&&state.sourceSha!==String(result.source_replay_sha256)){
         state.groupRevision=null;state.groupLoaded=false;
@@ -326,18 +383,22 @@
       }
       state.sourceSha=String(result.source_replay_sha256);
       state.tracksLoaded=true;
+      updateUnassignedLabel();
       state.writable=result.writable===true;
       ui.total.textContent=String(state.total);
       ui.assigned.textContent=String(result.assigned_count||0);
       ui.excluded.textContent=String(result.excluded_count||0);
-      publishTrackCovers();
+      publishTrackCovers(result.player_track_counts);
       showPlayerChoices();
-      renderRosterBar();renderRows();renderGroupCards();unlock();
-      if(!state.groupLoaded&&reviewReady())await reviewLoad();
+      if(preserveCards&&reviewReady())await reviewLoad({deferRender:true});
+      if(token!==state.token||project!==state.project||video!==state.video||replay!==state.replay)return;
+      const updateCards=()=>{renderRosterBar();renderRows();renderGroupCards();unlock();};
+      if(preserveCards)animateTrackCards(updateCards);else updateCards();
+      if(!preserveCards&&!state.groupLoaded&&reviewReady())await reviewLoad();
       note(state.roster.length?
         "Track ID получены. Выберите ID и вручную назначьте игрока из состава проекта.":
         "Добавьте игроков в состав проекта через управление проектом, чтобы разрешить ручную привязку.");
-    }catch(error){ui.list.replaceChildren(node("div","empty-state","Не удалось загрузить Track ID."));
+    }catch(error){if(!preserveCards)ui.list.replaceChildren(node("div","empty-state","Не удалось загрузить Track ID."));
       note(error.message,true);}
   };
   const select=(track,yes)=>{
@@ -407,58 +468,35 @@
   const attachSuggestions=(card,ids)=>{
     const panel=node("div","track-link-suggestions");
     const candidates=playerCandidates(ids);
-    const headline=node("div","track-match-headline");
-    if(candidates.length){
-      const best=candidates[0];
-      headline.append(node("span","",ids.length>1?
-        "Ближайший игрок по ID "+best.trackId:"Ближайший игрок"),
-        node("strong","",best.name+" · "+(best.score*100).toFixed(1)+"%"));
-    }else{
-      headline.append(node("span","","Ближайший игрок"),
-        node("strong","track-match-unknown","Сходство не рассчитано"));
-    }
-    panel.append(headline);
-    const list=node("div","track-match-options");
-    const caption=node("small","track-match-caption",
-      "Cosine по образцам · не вероятность личности");
-    if(candidates.length){
-      for(const match of candidates){
-        const option=node("button","track-match-option",
-          match.name+" · "+(match.score*100).toFixed(1)+"%");
-        option.type="button";
-        option.title="Выбрать "+match.name+" · сравнение ID "+match.trackId+" с образцом игрока";
-        option.addEventListener("click",()=>{
-          select.value=match.playerId;
-          updateLink();
-        });
-        list.append(option);
-      }
-    }else{
-      list.append(node("span","track-match-unavailable",
-        state.roster.length?
-          "Пока нет сопоставимых подтверждённых ReID-образцов":
-          "В проект не добавлены игроки для сравнения"));
-    }
-    panel.append(caption,list);
     const controls=node("div","track-card-link-actions");
+    controls.dataset.trackCount=String(ids.length);
     const select=node("select");
     select.setAttribute("aria-label","Назначить игрока для "+ids.map(id=>"ID "+id).join(", "));
-    const empty=node("option","","Выберите игрока");empty.value="";select.append(empty);
+    if(!candidates.length){
+      const empty=node("option","","Выберите игрока");empty.value="";select.append(empty);
+    }
+    for(const match of candidates){
+      const option=node("option","",match.name+" · "+(match.score*100).toFixed(1)+"%");
+      option.value=match.playerId;select.append(option);
+    }
+    const matched=new Set(candidates.map(match=>match.playerId));
     for(const person of state.roster){
+      if(matched.has(person.id))continue;
       const option=node("option","",person.name);option.value=person.id;
       select.append(option);
     }
+    if(candidates.length)select.value=candidates[0].playerId;
+    const similarity=node("small","track-match-score",candidates.length?
+      "Лучшее сходство: "+candidates[0].name+" · "+(candidates[0].score*100).toFixed(1)+"%":
+      "Сходство не рассчитано");
     const link=node("button","primary","Добавить игроку");
     link.type="button";
-    const updateLink=()=>{
-      link.disabled=!state.writable||state.busy||state.rosterBusy||
-        !select.value||ids.length>200;
-    };
+    const updateLink=()=>updateCardLink(controls);
     select.addEventListener("change",updateLink);
     link.addEventListener("click",()=>bindSelected(ids,select.value));
-    updateLink();
     controls.append(select,link);
-    panel.append(controls);
+    updateLink();
+    panel.append(similarity,controls);
     card.append(panel);
   };
   const renderRows=()=>{
@@ -483,6 +521,7 @@
       if(!Number.isSafeInteger(id)||id<=0)continue;
       const card=node("article","native-track-item native-track-photo-card"+
         (row.excluded?" excluded":""));
+      card.dataset.trackCardKey="single:"+id;
       const media=node("div","track-photo-card-media");
       const check=node("input");check.type="checkbox";
       check.checked=state.selected.has(id);
@@ -493,14 +532,26 @@
       const heading=node("div","track-card-title");
       heading.append(node("strong","","ID "+id),
         node("span","track-owner"+(row.assigned_player_name?" assigned":""),
-          row.excluded?"Исключён":row.assigned_player_name||"Не привязан"));
+          row.excluded?"Исключён":row.assigned_player_name?(row.assigned_player_name+(row.identity_source==="automatic_photo"?" · авто":"")):row.identity_conflict?"Конфликт одновременной видимости":"Не привязан"));
       const meta=node("small","track-card-observations",
         (row.observations??0)+" кадров · "+
         (row.first_frame??0)+"–"+(row.last_frame??0)+" · "+
         Math.round((row.best_score??0)*100)+"% детектор");
       info.append(heading,meta);
       card.append(media,info);
-      attachSuggestions(card,[id]);
+      // An assigned ID has one clear action: unlink it from its current player.
+      // Do not offer "Add player" for IDs which already have an owner.
+      if(row.assigned_player_id){
+        const remove=node("button","secondary track-remove-assignment","✕ Снять привязку");
+        remove.type="button";
+        remove.disabled=state.busy||!state.writable;
+        remove.title="Отвязать Track ID "+id+" от игрока "+row.assigned_player_name;
+        remove.setAttribute("aria-label",remove.title);
+        remove.addEventListener("click",()=>void edit("unassign",[id]));
+        card.append(remove);
+      }else{
+        attachSuggestions(card,[id]);
+      }
       ui.list.append(card);
     }
   };
@@ -520,14 +571,15 @@
       const result=await post("/api/players/native/tracks",payload);
       if(project!==state.project||video!==state.video||replay!==state.replay)return;
       state.revision=String(result.revision);
+      window.dispatchEvent(new CustomEvent("volley:track-assignments-updated",{detail:{
+        project_id:project,video,replay_id:replay
+      }}));
       state.selected.clear();
       state.rows=Array.isArray(result.tracks)?result.tracks:[];
-      publishTrackCovers();
       ui.assigned.textContent=String(result.assigned_count||0);
       ui.excluded.textContent=String(result.excluded_count||0);
       state.offset=0;
-      await loadPage();
-      if(reviewReady())await reviewLoad();
+      await loadPage({preserveCards:true});
       note("Привязки обновлены. Исходные GPU/CPU данные не изменены.");
       return true;
     }catch(e){
@@ -544,7 +596,7 @@
       photo_index:state.photoIndices.get(ids[0])||0,expected_source_sha256:state.sourceSha};
     if(!await edit("assign",ids,playerId))return;
     if(scope.project_id!==state.project||scope.replay_id!==state.replay)return;
-    state.busy=true;
+    state.busy=true;unlock();
     try{
       const album=await post("/api/players/native/references",{
         project_id:scope.project_id,player_id:playerId,action:"read"
@@ -564,7 +616,7 @@
     }catch(error){
       if(scope.project_id===state.project&&scope.replay_id===state.replay)
         note("Track ID привязаны, но фото не сохранено: "+error.message,true);
-    }finally{state.busy=false;}
+    }finally{state.busy=false;unlock();}
   };
   // Native appearance matches are only reviewed proposals, never athletes.
   window.addEventListener("volley:enroll-selected-photo",event=>{
@@ -582,7 +634,7 @@
   const reviewText=node("p","hint","Cosine — сходство, не вероятность личности. Привязка к игроку выполняется отдельно.");
   const reviewTools=node("div","native-reid-controls");
   const reviewThreshold=node("input");
-  reviewThreshold.type="number";reviewThreshold.min="1";reviewThreshold.max="99";
+  reviewThreshold.type="range";reviewThreshold.min="1";reviewThreshold.max="99";
   reviewThreshold.step="1";reviewThreshold.value="30";
   reviewThreshold.setAttribute("aria-label","Порог ReID cosine в процентах");
   const reviewRead=node("button","secondary","Обновить группы");
@@ -590,7 +642,7 @@
   const reviewMerge=node("button","secondary","Объединить ID");
   const reviewSplit=node("button","secondary","Разделить ID");
   for(const btn of [reviewRead,reviewExtract,reviewMerge,reviewSplit])btn.type="button";
-  reviewTools.append(node("span","","Cosine %"),reviewThreshold,
+  reviewTools.append(node("span","","Cosine %"),
     reviewRead,reviewExtract,reviewMerge,reviewSplit);
   const reviewStatus=node("p","hint","Выберите обработку CPU, затем получите предложения.");
   const reviewGroups=node("div","native-reid-results");
@@ -615,7 +667,79 @@
     const sidebarCards=node("div","players-sidebar-list");
     sidebarCards.id="studio-players-sidebar-list";
     sidebarCards.append(node("span","players-sidebar-loading","Загрузка игроков…"));
-    sidebar.append(title,sidebarNote,sidebarCards);
+    const heading=node("div","players-sidebar-heading");
+    const add=node("button","players-sidebar-add","+");
+    add.type="button";add.setAttribute("aria-label","Добавить игроков в проект");
+    const picker=node("div","players-sidebar-picker");picker.hidden=true;
+    add.addEventListener("click",()=>{
+      picker.hidden=!picker.hidden;
+      add.setAttribute("aria-expanded",String(!picker.hidden));
+      if(picker.hidden)return;
+      clear(picker);
+      const missing=state.libraryPlayers.filter(p=>!state.projectPlayerIds.has(p.id));
+      if(!missing.length)picker.append(node("span","","Все игроки библиотеки уже в проекте."));
+      for(const player of missing){
+        const choice=node("button","",player.name);choice.type="button";
+        choice.addEventListener("click",async()=>{
+          choice.disabled=true;
+          if(await attachPlayers([player.id])){closePicker();}
+          else choice.disabled=false;
+        });
+        picker.append(choice);
+      }
+      const create=node("button","","Создать игрока");create.type="button";
+      create.addEventListener("click",async()=>{
+        const name=window.prompt("Имя нового игрока");
+        if(name===null||!name.trim())return;
+        create.disabled=true;
+        try{
+          const current=await post("/api/players/library/native",{action:"read"});
+          const before=new Set((Array.isArray(current.players)?current.players:[]).map(p=>p.id));
+          const result=await post("/api/players/library/native",{action:"create",name:name.trim(),expected_revision:current.revision});
+          const players=Array.isArray(result.players)?result.players:[];
+          const created=players.find(p=>!before.has(p.id));
+          if(!created)throw Error("Сервер не подтвердил создание игрока");
+          state.libraryPlayers=players;
+          window.dispatchEvent(new Event("volley:player-library-updated"));
+          window.dispatchEvent(new Event("volley:player-photo-saved"));
+          if(await attachPlayers([created.id]))closePicker();
+          else note("Игрок создан в библиотеке. Добавьте его в проект через +.",true);
+        }catch(error){note("Не удалось создать игрока: "+error.message,true);}
+        finally{create.disabled=false;}
+      });
+      picker.append(create);
+    });
+    heading.append(title,add);
+    const resetLinks=node("button","secondary players-reset-track-links","Сброс привязки ИД");
+    resetLinks.type="button";
+    resetLinks.addEventListener("click",async()=>{
+      if(!state.project||state.busy||state.rosterBusy)return;
+      const project=state.project;
+      if(!window.confirm("Сбросить все привязки Track ID к игрокам в проекте? Игроки и фотографии сохранятся."))return;
+      resetLinks.disabled=true;
+      state.busy=true;unlock();
+      try{
+        const result=await post("/api/players/native/tracks/reset-project",{project_id:project});
+        if(project!==state.project)return;
+        state.playerMatches={};
+        state.selected.clear();
+        window.dispatchEvent(new CustomEvent("volley:track-assignments-updated",{detail:{project_id:project}}));
+        note("Сброшено привязок: "+result.reset_tracks+" · версий: "+result.reset_replays+". Игроки и фотографии сохранены.");
+        await loadPage({preserveCards:true});
+        await loadLibraryRoster();
+      }catch(error){
+        if(project===state.project)note("Не удалось сбросить привязки: "+error.message,true);
+      }finally{
+        resetLinks.disabled=false;state.busy=false;unlock();
+      }
+    });
+    sidebar.append(heading,sidebarNote,picker,sidebarCards,resetLinks);
+    add.setAttribute("aria-expanded","false");
+    const closePicker=()=>{picker.hidden=true;add.setAttribute("aria-expanded","false");};
+    document.addEventListener("pointerdown",event=>{
+      if(!picker.hidden&&!sidebar.contains(event.target))closePicker();
+    });
+    document.addEventListener("keydown",event=>{if(event.key==="Escape")closePicker();});
     main.append(tracksPanel);
     layout.append(main,sidebar);
     playersView.insertBefore(layout,libraryForm);
@@ -640,41 +764,111 @@
   const galleryRepeat=node("button","secondary","Повторить анализ");
   galleryRepeat.type="button";galleryRepeat.disabled=true;
   galleryRepeat.addEventListener("click",()=>repeatPhotoAnalysis());
+  const galleryAuto=node("button","primary","Автопривязать похожие ID");
+  galleryAuto.type="button";galleryAuto.disabled=true;
+  galleryAuto.addEventListener("click",()=>autoAssignSimilar());
   const galleryMore=node("button","secondary track-group-more","Показать ещё группы");
   galleryMore.type="button";galleryMore.hidden=true;
-  groupGallery.append(groupTitle,galleryStatus,galleryRepeat,galleryExtract,galleryItems,galleryMore);
+  groupGallery.append(groupTitle,galleryStatus,galleryRepeat,galleryAuto,galleryExtract,galleryItems,galleryMore);
   const modeSwitch=node("div","track-mode-switch");
-  modeSwitch.setAttribute("role","group");
-  modeSwitch.setAttribute("aria-label","Вид Track ID");
-  const singlesMode=node("button","track-mode-button","Отдельные ID");
-  const groupsMode=node("button","track-mode-button","Сгруппированные ID");
+  const modeTabs=node("div","track-mode-tabs");
+  modeTabs.setAttribute("role","group");
+  modeTabs.setAttribute("aria-label","Вид Track ID");
+  const singlesMode=node("button","track-mode-button","ID");
+  const groupsMode=node("button","track-mode-button","Группы ID");
   for(const button of [singlesMode,groupsMode])button.type="button";
+  const playerMode=node("button","track-mode-button","Игрок");
+  playerMode.type="button";playerMode.hidden=true;
+  const playerGallery=node("section","player-saved-gallery");playerGallery.hidden=true;
+  const playerPhotos=node("div","player-saved-photos");
+  const playerStatus=node("p","hint");
+  playerGallery.append(playerStatus,playerPhotos);
+  const loadAlbum=async()=>{
+    const project=state.project,player=state.viewPlayer;
+    clear(playerPhotos);playerStatus.textContent="Загрузка фотографий…";
+    try{
+      const album=await post("/api/players/native/references",{project_id:project,player_id:player,action:"read"});
+      if(project!==state.project||player!==state.viewPlayer)return;
+      const photos=Array.isArray(album.photos)?album.photos:[];
+      playerStatus.textContent=photos.length?"Сохранённые фотографии":"Сохранённых фотографий пока нет.";
+      for(const photo of photos){
+        const card=node("article","player-saved-photo");
+        const img=node("img");img.loading="lazy";img.alt="Сохранённое фото игрока";
+        img.src=path("/api/players/library/photo",{player_id:player,reference_id:photo.id});
+        const remove=node("button","secondary","Удалить фото");remove.type="button";
+        remove.disabled=!album.writable;
+        remove.addEventListener("click",async()=>{
+          if(!window.confirm("Удалить эту фотографию из альбома игрока?"))return;
+          remove.disabled=true;
+          try{
+            await post("/api/players/native/references",{project_id:project,player_id:player,
+              action:"undo",reference_id:photo.id,expected_revision:album.revision});
+            if(project!==state.project||player!==state.viewPlayer)return;
+            window.dispatchEvent(new Event("volley:player-photo-saved"));
+            await loadAlbum();
+          }catch(error){playerStatus.textContent="Не удалось удалить фото: "+error.message;remove.disabled=false;}
+        });
+        card.append(img,remove);playerPhotos.append(card);
+      }
+    }catch(error){if(project===state.project&&player===state.viewPlayer)playerStatus.textContent="Не удалось загрузить фото: "+error.message;}
+  };
   const setMode=mode=>{
     tracksPanel.dataset.trackMode=mode;
     singlesMode.setAttribute("aria-pressed",String(mode==="singles"));
     groupsMode.setAttribute("aria-pressed",String(mode==="groups"));
+    playerMode.setAttribute("aria-pressed",String(mode==="player"));
+    playerGallery.hidden=mode!=="player";
+    groupingControls.hidden=mode!=="groups";
   };
   singlesMode.addEventListener("click",()=>setMode("singles"));
   groupsMode.addEventListener("click",()=>setMode("groups"));
-  modeSwitch.append(singlesMode,groupsMode);
+  playerMode.addEventListener("click",()=>{setMode("player");void loadAlbum();});
+  modeTabs.append(singlesMode,groupsMode,playerMode);
+  modeSwitch.append(modeTabs);
+  const groupingControls=node("div","track-grouping-controls");
+  const thresholdLabel=node("label","","Сходство ID: ");
+  const thresholdValue=node("output","","30%");
+  thresholdLabel.append(thresholdValue,reviewThreshold);
+  reviewThreshold.addEventListener("input",()=>{thresholdValue.textContent=reviewThreshold.value+"%";});
+  const groupButton=node("button","primary","Сгруппировать ID");
+  groupButton.type="button";groupButton.disabled=true;
+  groupingControls.append(thresholdLabel,groupButton);
   const viewBar=node("div","track-view-bar");
-  const viewLabel=node("strong","","Непривязанные Track ID");
-  const viewBack=node("button","secondary","Все непривязанные ID");
+  const viewLabel=node("strong","track-view-label","Непривязанные Track ID");
+  const updateUnassignedLabel=()=>{
+    if(!state.viewPlayer)viewLabel.textContent=state.viewConflicts?
+      "Конфликты одновременной видимости · "+state.identityConflictIds.size:
+      "Непривязанные Track ID · "+state.unassignedIds.size;
+    if(typeof conflictToggle!=="undefined"){
+      conflictToggle.hidden=Boolean(state.viewPlayer);
+      conflictToggle.textContent=state.viewConflicts?
+        "Показать непривязанные · "+state.unassignedIds.size:
+        "Конфликты · "+state.identityConflictIds.size;
+    }
+  };  const viewBack=node("button","secondary","Все непривязанные ID");
   viewBack.type="button";viewBack.hidden=true;
   viewBack.addEventListener("click",()=>{
-    state.viewPlayer="";state.offset=0;viewLabel.textContent="Непривязанные Track ID";
-    viewBack.hidden=true;groupsMode.hidden=false;void loadPage();
+    state.viewPlayer="";state.viewConflicts=false;state.offset=0;updateUnassignedLabel();
+    viewBack.hidden=true;groupsMode.hidden=false;playerMode.hidden=true;setMode("singles");void loadPage();
   });
   window.addEventListener("volley:player-gallery-select",event=>{
     const detail=event.detail||{};
     if(detail.project_id!==state.project||!state.projectPlayerIds.has(detail.player_id))return;
     state.viewPlayer=detail.player_id;state.offset=0;
-    viewLabel.textContent="Track ID игрока "+String(detail.name||"")+" · выбранная обработка";
-    viewBack.hidden=false;groupsMode.hidden=true;setMode("singles");void loadPage();
+    viewLabel.textContent=String(detail.name||"");
+    viewBack.hidden=false;groupsMode.hidden=true;playerMode.hidden=false;setMode("player");void loadAlbum();void loadPage();
   });
-  viewBar.append(viewLabel,viewBack);
+  const conflictToggle=node("button","secondary","Конфликты");
+  conflictToggle.type="button";
+  conflictToggle.addEventListener("click",()=>{
+    state.viewConflicts=!state.viewConflicts;state.offset=0;
+    state.selected.clear();updateUnassignedLabel();void loadPage();
+  });  viewBar.append(viewBack);
+  viewBar.append(conflictToggle);
+  modeSwitch.append(groupingControls,viewLabel);
   ui.list.before(viewBar);
   ui.list.before(modeSwitch);
+  ui.list.before(playerGallery);
   setMode("singles");
   ui.list.before(groupGallery);
   const singlesBar=node("div","track-singles-bar");
@@ -686,6 +880,11 @@
   ui.list.before(singlesBar);
   const renderGroupCards=()=>{
     clear(galleryItems);
+    if(state.grouping){
+      galleryItems.append(node("div","empty-state","Идёт группировка похожих ID…"));
+      galleryMore.hidden=true;
+      return;
+    }
     if(!state.groups.length&&!state.groupLoaded){
       galleryItems.append(node("div","empty-state",
         "Загрузка сохранённых и предложенных ReID-групп…"));
@@ -693,22 +892,22 @@
     if(!state.groups.length&&state.groupLoaded){
       galleryItems.append(node("div","empty-state","Сгруппированных ID пока нет."));
     }
-    const visibleGroups=state.groups.map(group=>({...group,
+    const visibleGroups=state.groups.map(group=>({...group,originalCount:group.ids.length,
       ids:group.ids.filter(id=>state.unassignedIds.has(id))})).filter(group=>group.ids.length>=2);
     if(state.groups.length&&!visibleGroups.length&&state.groupLoaded)
       galleryItems.append(node("div","empty-state","Нет групп с непривязанными Track ID."));
     for(const group of visibleGroups.slice(0,state.groupShown)){
       const ids=group.ids;
       const item=node("article","native-track-group-card native-track-photo-card");
+      item.dataset.trackCardKey="group:"+ids.join(",");
       const mosaics=node("div","track-group-photo-mosaic");
       for(const id of ids.slice(0,3))mosaics.append(portrait(id,"track-group-portrait"));
       const meta=node("div","native-track-group-meta");
       const name=node("strong","",group.source==="manual"?"Ручная группа":
         "ReID-группа");
-      const similarity=Number.isFinite(group.similarity)?
-        " · "+(group.similarity*100).toFixed(1)+"% сходство ID":
-        "";
-      const label=node("small","",ids.length+" Track ID"+similarity);
+      const average=ids.length===group.originalCount&&Number.isFinite(group.averageSimilarity)?
+        (group.averageSimilarity*100).toFixed(1)+"%":"не рассчитано";
+      const label=node("small","",ids.length+" Track ID · Среднее сходство ID: "+average);
       const members=node("span","native-track-group-members",
         ids.map(id=>"ID "+id).join(" · "));
       meta.append(name,label,members);
@@ -763,7 +962,7 @@
   const continuityOutput=node("div","native-reid-results");
   reviewPanel.append(continuityControls,continuityOutput);
   const reviewScope=()=>({
-    project_id:state.project,video:state.video,replay_id:state.replay,
+    project_id:state.project,video:state.video,replay_id:state.replay,rally_run_id:state.rallyRun,
     expected_source_sha256:state.sourceSha,threshold_percent:Number(reviewThreshold.value)
   });
   const reviewReady=()=>Boolean(state.project&&state.video&&state.replay)&&
@@ -776,13 +975,39 @@
   };
   const reidUnlock=()=>{
     const ready=reviewReady()&&!state.busy;
+    reviewThreshold.disabled=state.busy;
+    groupButton.disabled=!ready||!state.writable||!state.unassignedIds.size||Boolean(state.viewPlayer);
     reviewRead.disabled=!ready;
     reviewExtract.disabled=!ready||state.selected.size<1||state.selected.size>8;
     galleryExtract.disabled=reviewExtract.disabled;
     galleryRepeat.disabled=!ready||!state.comparisonIds.size;
+    galleryAuto.disabled=!ready||!state.writable||!state.comparisonIds.size||!state.roster.length;
     singlesExtract.disabled=reviewExtract.disabled;
     reviewMerge.disabled=!ready||!state.writable||!state.groupRevision||state.selected.size<2;
     reviewSplit.disabled=!ready||!state.writable||!state.groupRevision||state.selected.size<1;
+  };
+  const autoAssignSimilar=async()=>{
+    if(!reviewReady()||state.busy||!state.writable||!state.comparisonIds.size)return;
+    const scope=reviewScope(),token=state.token;
+    state.busy=true;unlock();reidUnlock();
+    galleryStatus.textContent="Сопоставляем похожие ID с фотографиями игроков…";
+    try{
+      const result=await post("/api/players/native/reid-review",{...scope,action:"auto_assign"});
+      if(token!==state.token||scope.replay_id!==state.replay)return;
+      if(!Number.isSafeInteger(result.automatic_count)||result.automatic_count<0 ||
+         !result.automatic_assignments||typeof result.automatic_assignments!=="object")
+        throw Error("Сервер вернул некорректные автоматические привязки");
+      // Keep suggestions until the refreshed track page supplies saved scores.
+      window.dispatchEvent(new CustomEvent("volley:track-assignments-updated",{detail:{
+        project_id:scope.project_id,video:scope.video,replay_id:scope.replay_id
+      }}));
+      await loadPage();
+      galleryStatus.textContent="Автоматически привязано ID: "+result.automatic_count;
+      reviewNote("Автопривязка выполнена: "+result.automatic_count+
+        ". Ручные назначения сохранены; одновременные ID одного игрока не объединяются.");
+    }catch(error){galleryStatus.textContent="Ошибка автопривязки: "+String(error.message||error);
+      reviewNote(String(error.message||error),true);}
+    finally{state.busy=false;unlock();reidUnlock();}
   };
   const repeatPhotoAnalysis=async()=>{
     if(!reviewReady()||state.busy)return;
@@ -809,7 +1034,7 @@
       reviewNote(String(error.message||error),true);}
     finally{state.busy=false;unlock();reidUnlock();}
   };
-  const reviewRender=record=>{
+  const reviewRender=(record,{deferRender=false}={})=>{
     if(record.schema!=="volley-native-reid-group-review/1"||
       record.confirmed!==false||record.auto_assign_enabled!==false||
       record.source_replay_sha256!==state.sourceSha||
@@ -827,42 +1052,76 @@
         throw Error("Пересекающиеся ReID-группы");
       if(scoped.length<2)continue;
       scoped.forEach(id=>used.add(id));
-      groups.push({ids:scoped,source:group.source,similarity:group.similarity});
+      groups.push({ids:scoped,source:group.source,similarity:group.similarity,
+        averageSimilarity:scoped.length===ids.length?group.average_similarity:null});
     }
-    groups.sort((a,b)=>
-      (Number.isFinite(b.similarity)?b.similarity:-1)-
-      (Number.isFinite(a.similarity)?a.similarity:-1)||
-      b.ids.length-a.ids.length||a.ids[0]-b.ids[0]);
     state.groups=groups;state.grouped=used;state.groupLoaded=true;
-    state.playerMatches=record.player_matches &&
-      typeof record.player_matches==="object"&&!Array.isArray(record.player_matches)?
-      record.player_matches:{};
+    // Grouping evidence must not override player-photo identity scores.
     state.singleCount=state.rallyIds.size-used.size;
     galleryStatus.textContent="";
-    renderGroupCards();renderRows();
+    if(!deferRender){renderGroupCards();renderRows();}
     reviewNote("Групп: "+groups.length+" · признаков: "+record.embedded_count+
       " · отклонено: совместно в кадре "+(record.co_visible_veto_count||0)+
       ", разные подтверждённые игроки "+(record.confirmed_owner_veto_count||0)+
       ", визуальная неоднозначность "+(record.ambiguous_lookalike_veto_count||0)+
       ". Для новых групп выберите ID и извлеките признаки.");
   };
-  const reviewLoad=async()=>{
+  const reviewLoad=async({deferRender=false}={})=>{
     if(!reviewReady()){reviewNote("Выберите CPU-версию и порог 1–99%.",true);return;}
     const scope=reviewScope(),token=state.token;
     reviewNote("Проверяем исходный SHA и ReID-кэш…");
     try{
       const record=await post("/api/players/native/reid-review",{...scope,action:"read"});
       if(token!==state.token||scope.replay_id!==state.replay)return;
-      state.groupRevision=String(record.revision);reviewRender(record);
+      state.groupRevision=String(record.revision);reviewRender(record,{deferRender});
+      return true;
     }catch(e){
       if(token!==state.token||scope.replay_id!==state.replay)return;
       state.groupRevision=null;state.groupLoaded=true;
       state.groups=[];state.grouped.clear();state.singleCount=state.total;
-      state.playerMatches={};
+      // Preserve persisted photo scores when group loading fails.
       galleryStatus.textContent="Не удалось загрузить группы: "+e.message;
-      renderGroupCards();renderRows();reviewNote(e.message,true);
+      if(!deferRender){renderGroupCards();renderRows();}reviewNote(e.message,true);
     }finally{reidUnlock();}
   };
+  groupButton.addEventListener("click",async()=>{
+    if(!reviewReady()||state.busy||!state.writable)return;
+    const ids=[...state.unassignedIds],scope=reviewScope(),token=state.token;
+    if(ids.length>2500){note("Для группировки доступно не более 2500 ID за одну обработку.",true);return;}
+    state.busy=true;state.grouping=true;unlock();reidUnlock();renderGroupCards();
+    window.VolleyballTasks?.set("track-grouping",{
+      label:"Группировка ID",stage:"Подготовка признаков: 0 / "+ids.length,progress:0
+    });
+    try{
+      for(let offset=0;offset<ids.length;offset+=8){
+        if(token!==state.token)return;
+        note("Подготовка признаков: "+Math.min(offset+8,ids.length)+" / "+ids.length);
+        const result=await post("/api/players/native/embeddings",{
+          project_id:scope.project_id,video:scope.video,replay_id:scope.replay_id,
+          rally_run_id:state.rallyRun,expected_source_sha256:scope.expected_source_sha256,
+          track_ids:ids.slice(offset,offset+8)
+        });
+        if(token!==state.token)return;
+        if(result.computed_count>0&&!result.cache_persisted)throw Error("Не удалось сохранить признаки для группировки");
+        const done=Math.min(offset+8,ids.length);
+        window.VolleyballTasks?.set("track-grouping",{
+          label:"Группировка ID",stage:"Подготовка признаков: "+done+" / "+ids.length,
+          progress:ids.length?done/ids.length*100:0
+        });
+      }
+      if(token!==state.token)return;
+      window.VolleyballTasks?.set("track-grouping",{label:"Группировка ID",stage:"Группировка похожих ID",progress:null});
+      if(!await reviewLoad())throw Error("Не удалось получить группы");
+      if(token!==state.token)return;
+      setMode("groups");
+      note("Группировка завершена. Проверьте предложения перед привязкой к игроку.");
+    }catch(error){if(token===state.token)note("Группировка не завершена: "+String(error.message||error),true);}
+    finally{
+      window.VolleyballTasks?.clear("track-grouping");
+      state.busy=false;state.grouping=false;unlock();reidUnlock();
+      if(token===state.token)renderGroupCards();
+    }
+  });
   const reviewEdit=async action=>{
     if(!reviewReady()||state.busy||!state.groupRevision)return;
     const ids=[...state.selected];

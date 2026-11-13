@@ -763,7 +763,7 @@ fn default_analysis() -> Value {
         "schema":"volley-quick-reel-defaults/1",
         "inference_cache_reuse":false,
         "model_ball":"VballNetV4c",
-        "model_players":"RAVEL-VB-013-9f",
+        "model_players":"RTMDet-Nano-Person + RTMPose-M-Body7",
         "ball_backend":"onnx",
         "player_backend":"onnx-cuda",
         "player_device":"GPU",
@@ -936,7 +936,7 @@ fn planned_request(run: &PreparedRun) -> Value {
         "inference_cache_reuse":false,
         "analysis_cache_salt":run.id,
         "state":"preparing",
-        "note":"Preparation only may reuse media; fresh CUDA VballNet and RAVEL, CPU fusion, tracking, Touch, rally and montage follow per run."
+        "note":"Preparation only may reuse media; fresh CUDA VBallNet, RTMDet and RTMPose, CPU fusion, tracking, Touch, rally and montage follow per run."
     })
 }
 fn latest(state: &AppState) -> Result<Option<String>, ApiError> {

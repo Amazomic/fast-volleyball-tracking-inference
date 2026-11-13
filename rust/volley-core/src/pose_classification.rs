@@ -33,6 +33,45 @@ fn distance(a: [f64; 2], b: [f64; 2]) -> f64 {
     (a[0] - b[0]).hypot(a[1] - b[1])
 }
 
+pub fn contact_distance(e: &PoseEvidence, min_confidence: f64) -> Option<f64> {
+    if !min_confidence.is_finite()
+        || !(0.0..=1.0).contains(&min_confidence)
+        || !e.video_width.is_finite()
+        || !e.video_height.is_finite()
+        || e.video_width < 64.0
+        || e.video_height < 64.0
+        || !e.ball_x_norm.is_finite()
+        || !e.ball_y_norm.is_finite()
+        || !(0.0..=1.0).contains(&e.ball_x_norm)
+        || !(0.0..=1.0).contains(&e.ball_y_norm)
+    {
+        return None;
+    }
+    let height = (e.player_bbox_norm[3] - e.player_bbox_norm[1]) * e.video_height;
+    if !height.is_finite() || height < 26.0 {
+        return None;
+    }
+    let ball = [
+        e.ball_x_norm * e.video_width,
+        e.ball_y_norm * e.video_height,
+    ];
+    (0..17)
+        .filter_map(|i| {
+            let [x, y, confidence] = e.keypoints[i];
+            if !x.is_finite()
+                || !y.is_finite()
+                || !confidence.is_finite()
+                || !(0.0..=1.0).contains(&x)
+                || !(0.0..=1.0).contains(&y)
+                || !(min_confidence..=1.0).contains(&confidence)
+            {
+                return None;
+            }
+            Some(distance([x * e.video_width, y * e.video_height], ball) / height)
+        })
+        .min_by(f64::total_cmp)
+}
+
 /// Use wrists, elbows and shoulders; when anything is ambiguous, keep
 /// the older, source-backed contact geometry classification unchanged.
 #[must_use]
@@ -170,6 +209,18 @@ mod tests {
             player_bbox_norm: [0.35, 0.17, 0.65, 0.90],
         }
     }
+    #[test]
+    fn contact_distance_requires_confident_nearby_body_evidence() {
+        let mut evidence = data();
+        assert!(contact_distance(&evidence, 0.35).unwrap() < 0.1);
+        evidence.ball_x_norm = 0.95;
+        assert!(contact_distance(&evidence, 0.35).unwrap() > 0.3);
+        for point in &mut evidence.keypoints {
+            point[2] = 0.0;
+        }
+        assert!(contact_distance(&evidence, 0.35).is_none());
+    }
+
     #[test]
     fn distinguishes_two_hand_set_from_single_arm_attack() {
         let mut d = data();

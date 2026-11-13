@@ -3,6 +3,7 @@
 //! exactly 24 ASCII bytes through a fixed per-thread WASM memory buffer.
 //! The backend remains authoritative for source ownership and clip safety.
 mod domain;
+mod preview_scrub;
 use std::cell::{Cell, RefCell};
 
 const ID_BYTES: usize = 24;

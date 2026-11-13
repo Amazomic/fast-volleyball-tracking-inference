@@ -155,7 +155,8 @@ doctor(){
   done
   for model in \
     models/VballNetV4c_seq9_grayscale_20260908_213829.onnx \
-    models/RAVEL-VB-013-9f.onnx \
+    models/RTMDet-Nano-Person.onnx \
+    models/RTMPose-M-Body7.onnx \
     models/openvino/person-reidentification-retail-0287.xml;do
     if [[ ! -s "$repo/$model" ]];then
       echo "Missing model: $model" >&2;return 1

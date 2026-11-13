@@ -34,7 +34,7 @@ const SOURCE_FILE: &str = "detections.jsonl";
 pub struct FuseRequest {
     pub(crate) project_id: String,
     pub(crate) video: String,
-    pub(crate) ravel_job_id: String,
+    pub(crate) person_job_id: String,
     pub(crate) vball_job_id: String,
 }
 
@@ -208,7 +208,6 @@ struct FusedTotals {
     players: u64,
     ball_candidates: u64,
     selected_vball: u64,
-    selected_ravel: u64,
 }
 
 fn write_fused(
@@ -247,11 +246,10 @@ fn write_fused(
             totals.players += frame.player_candidates.len() as u64;
             totals.ball_candidates += frame.ball_candidates.len() as u64;
             if let Some(best) = &frame.selected_ball {
-                match best.source_model {
-                    "vballnet" => totals.selected_vball += 1,
-                    "ravel" => totals.selected_ravel += 1,
-                    _ => return Err("Unknown ball source".into()),
+                if best.source_model != "vballnet" {
+                    return Err("Only VballNet may supply the selected ball".into());
                 }
+                totals.selected_vball += 1;
             }
             let mut line = serde_json::to_vec(&frame)
                 .map_err(|e| format!("Serialize fused model frame: {e}"))?;
@@ -285,9 +283,9 @@ pub(crate) fn do_fusion(state: &AppState, request: &FuseRequest) -> Result<Value
     }
     storage::project_id(&request.project_id)?;
     storage::video_name(&request.video)?;
-    if !opaque_id(&request.ravel_job_id)
+    if !opaque_id(&request.person_job_id)
         || !opaque_id(&request.vball_job_id)
-        || request.ravel_job_id == request.vball_job_id
+        || request.person_job_id == request.vball_job_id
     {
         return Err(storage::bad_request("Invalid or duplicate GPU job IDs"));
     }
@@ -310,7 +308,7 @@ pub(crate) fn do_fusion(state: &AppState, request: &FuseRequest) -> Result<Value
     let root = project_root.join("native_gpu_runs");
     let ravel = open_evidence(
         &root,
-        &request.ravel_job_id,
+        &request.person_job_id,
         &request.project_id,
         &request.video,
         "players",
@@ -359,7 +357,7 @@ pub(crate) fn do_fusion(state: &AppState, request: &FuseRequest) -> Result<Value
             "video":request.video,
             "state":"raw_candidates_fused",
             "sources":{
-                "ravel":{"job_id":ravel.job_id,"sha256":ravel.sha256},
+                "person_pose":{"job_id":ravel.job_id,"sha256":ravel.sha256},
                 "vballnet":{"job_id":ball.job_id,"sha256":ball.sha256},
             },
             "source_identity":identity,
@@ -370,8 +368,8 @@ pub(crate) fn do_fusion(state: &AppState, request: &FuseRequest) -> Result<Value
             "player_proposals":totals.players,
             "ball_candidates":totals.ball_candidates,
             "selected_ball_vballnet":totals.selected_vball,
-            "selected_ball_ravel_fallback":totals.selected_ravel,
-            "ball_policy":"prefer_vballnet_then_ravel",
+            "ball_policy":"vballnet_only",
+            "ball_gap_policy":"short_interpolation_in_processed_preview_only",
             "file":OUTPUT_FILE,
             "sha256":digest,
             "player_track_ids_confirmed":false,
@@ -510,6 +508,7 @@ mod tests {
                 vec![
                     candidate(0, "player", Some(3), 0.9),
                     candidate(0, "ball", None, 0.99),
+                    candidate(1, "ball", None, 0.96),
                 ],
                 vec![candidate(9, "player", Some(2), 0.7)],
             ],
@@ -541,6 +540,11 @@ mod tests {
         assert_eq!(counts.selected_vball, 2);
         assert_eq!(rows[0]["selected_ball"]["source_model"], "vballnet");
         assert_eq!(rows[0]["ball_candidates"].as_array().unwrap().len(), 2);
+        assert!(
+            rows[1]["selected_ball"].is_null(),
+            "RAVEL cannot fill a VballNet hole"
+        );
+        assert_eq!(rows[1]["ball_candidates"][0]["source_model"], "ravel");
         assert_eq!(rows[0]["player_candidates"][0]["touch_probability"], 0.8);
         assert_eq!(rows[9]["frame_index"], 9);
         assert_eq!(rows[0]["touches_confirmed"], false);
@@ -664,7 +668,7 @@ mod tests {
         let request = FuseRequest {
             project_id: project_id.into(),
             video: video.into(),
-            ravel_job_id: rid.into(),
+            person_job_id: rid.into(),
             vball_job_id: bid.into(),
         };
         let result = do_fusion(&state, &request).unwrap();

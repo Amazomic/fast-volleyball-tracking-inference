@@ -154,6 +154,166 @@ fn replay_frames(
     result
 }
 
+/// The CPU replay contains confirmed *observations*, plus bounded
+/// inferred positions marked explicitly as such. The raw GPU proposals
+/// remain byte-for-byte intact. Missing IDs may be filled only between two
+/// real observations of that same confirmed Track ID, at most 3 seconds apart.
+fn fill_confirmed_track_gaps(
+    source: &Path,
+    expected_sha: &str,
+    frame_count: u64,
+) -> Result<(String, u64), String> {
+    use std::collections::{BTreeMap, VecDeque};
+
+    let tmp = source.with_extension("continuity.partial");
+    let mut input = BoundedReader::open(source)?;
+    let file = OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(&tmp)
+        .map_err(|e| format!("Create bounded tracking interpolation: {e}"))?;
+    let mut output = BufWriter::new(file);
+    let mut digest = Sha256::new();
+    let mut queued: VecDeque<Value> = VecDeque::with_capacity(91);
+    let mut anchors: BTreeMap<u64, (u64, Candidate)> = BTreeMap::new();
+    let mut inferred = 0_u64;
+    let write_one =
+        |record: Value, writer: &mut BufWriter<File>, hash: &mut Sha256| -> Result<(), String> {
+            let mut bytes = serde_json::to_vec(&record).map_err(|e| e.to_string())?;
+            bytes.push(b'\n');
+            if bytes.len() > MAX_ROW_BYTES {
+                return Err("Interpolated tracking frame exceeds 512 KiB".into());
+            }
+            writer.write_all(&bytes).map_err(|e| e.to_string())?;
+            hash.update(&bytes);
+            Ok(())
+        };
+    let iou = |a: [f64; 4], b: [f64; 4]| {
+        let dx = (a[2].min(b[2]) - a[0].max(b[0])).max(0.0);
+        let dy = (a[3].min(b[3]) - a[1].max(b[1])).max(0.0);
+        let s = |b: [f64; 4]| (b[2] - b[0]) * (b[3] - b[1]);
+        dx * dy / (s(a) + s(b) - dx * dy).max(1e-9)
+    };
+    for current in 0..frame_count {
+        let bytes = input.line()?.ok_or("Confirmed tracking is truncated")?;
+        let row: Value = serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
+        if row["frame_index"].as_u64() != Some(current) {
+            return Err("Confirmed tracking frames out of order".into());
+        }
+        let observations: Vec<(u64, Candidate)> = row["tracked_players"]
+            .as_array()
+            .ok_or("Missing confirmed tracks")?
+            .iter()
+            .map(|entry| {
+                Ok((
+                    entry["track_id"]
+                        .as_u64()
+                        .ok_or("Invalid confirmed Track ID")?,
+                    serde_json::from_value::<Candidate>(entry["detection"].clone())
+                        .map_err(|e| format!("Confirmed Track candidate: {e}"))?,
+                ))
+            })
+            .collect::<Result<_, String>>()?;
+        queued.push_back(row);
+        anchors.retain(|_, (last, _)| current.saturating_sub(*last) <= 90);
+        for (track_id, observation) in observations {
+            if let Some((left, prior)) = anchors.get(&track_id) {
+                let duration = current - left;
+                if (2..=90).contains(&duration) && prior.score.min(observation.score) >= 0.35 {
+                    let a = prior.bbox_xyxy_norm;
+                    let b = observation.bbox_xyxy_norm;
+                    let aw = a[2] - a[0];
+                    let bw = b[2] - b[0];
+                    let ah = a[3] - a[1];
+                    let bh = b[3] - b[1];
+                    let center = |r: [f64; 4]| [(r[0] + r[2]) * 0.5, (r[1] + r[3]) * 0.5];
+                    let ca = center(a);
+                    let cb = center(b);
+                    let drift = (ca[0] - cb[0]).hypot(ca[1] - cb[1]);
+                    if aw.min(bw) >= 0.005
+                        && ah.min(bh) >= 0.02
+                        && aw.max(bw) / aw.min(bw) <= 1.8
+                        && ah.max(bh) / ah.min(bh) <= 1.8
+                        && drift <= (0.035 + (duration - 1) as f64 * 0.003).min(0.15)
+                    {
+                        for entry in queued.iter_mut().filter(|v| {
+                            let f = v["frame_index"].as_u64().unwrap_or(u64::MAX);
+                            f > *left && f < current
+                        }) {
+                            let at = entry["frame_index"].as_u64().unwrap();
+                            let t = (at - left) as f64 / duration as f64;
+                            let interpolated_box =
+                                std::array::from_fn(|i| a[i] * (1.0 - t) + b[i] * t);
+                            let mut estimate = prior.clone();
+                            estimate.frame_index = at;
+                            estimate.bbox_xyxy_norm = interpolated_box;
+                            estimate.score = prior.score.min(observation.score) * 0.80;
+                            estimate.query_index = Some(0);
+                            estimate.touch_probability = None;
+                            estimate.head_point_norm = prior
+                                .head_point_norm
+                                .zip(observation.head_point_norm)
+                                .map(|(a, b)| std::array::from_fn(|i| a[i] * (1.0 - t) + b[i] * t));
+                            estimate.validate(at - at % 9, "players")?;
+                            let rows = entry["tracked_players"]
+                                .as_array_mut()
+                                .ok_or("Invalid queued tracking frame")?;
+                            if rows.len() >= 128
+                                || rows.iter().any(|v| {
+                                    v["track_id"].as_u64() == Some(track_id)
+                                        || serde_json::from_value::<Candidate>(
+                                            v["detection"].clone(),
+                                        )
+                                        .is_ok_and(|present| {
+                                            iou(present.bbox_xyxy_norm, interpolated_box) > 0.65
+                                                || volley_core::tracker::same_head_body_duplicate(
+                                                    &present, &estimate,
+                                                )
+                                                || volley_core::tracker::same_partial_body_duplicate(
+                                                    &present, &estimate,
+                                                )
+                                        })
+                                })
+                            {
+                                continue;
+                            }
+                            rows.push(json!({
+                                "track_id":track_id,
+                                "detection":estimate,
+                                "is_verified_athlete":false
+                            }));
+                            if entry["interpolated_track_ids"].is_null() {
+                                entry["interpolated_track_ids"] = json!([]);
+                            }
+                            entry["interpolated_track_ids"]
+                                .as_array_mut()
+                                .unwrap()
+                                .push(json!(track_id));
+                            inferred += 1;
+                        }
+                    }
+                }
+            }
+            anchors.insert(track_id, (current, observation));
+        }
+        while queued.len() > 90 {
+            write_one(queued.pop_front().unwrap(), &mut output, &mut digest)?;
+        }
+    }
+    for record in queued {
+        write_one(record, &mut output, &mut digest)?;
+    }
+    if input.line()?.is_some() || input.finish() != expected_sha {
+        return Err("Confirmed tracking changed during interpolation".into());
+    }
+    output.flush().map_err(|e| e.to_string())?;
+    output.get_ref().sync_all().map_err(|e| e.to_string())?;
+    drop(output);
+    // Atomic on the repository's existing filesystem.
+    fs::rename(&tmp, source).map_err(|e| format!("Commit confirmed tracking: {e}"))?;
+    Ok((format!("{:x}", digest.finalize()), inferred))
+}
+
 fn replay_frames_verified(
     source: &Path,
     tentative: &Path,
@@ -189,7 +349,10 @@ fn replay_frames_verified(
         totals.frames += 1;
         totals.rejected += tracking.rejected_boxes as u64;
         totals.ambiguous += tracking.ambiguous_detections as u64;
-        if frame.selected_ball.is_some() {
+        let selected_ball = frame
+            .selected_ball
+            .filter(|ball| ball["source_model"] == "vballnet");
+        if selected_ball.is_some() {
             totals.frames_with_ball += 1;
         }
         let mut bytes = serde_json::to_vec(&json!({
@@ -197,7 +360,7 @@ fn replay_frames_verified(
             "tracked_players":tracking.tracks,
             "raw_player_candidates":frame.player_candidates,
             "ball_candidates":frame.ball_candidates,
-            "selected_ball":frame.selected_ball,
+            "selected_ball":selected_ball,
             "ambiguous_detections":tracking.ambiguous_detections,
             "track_ids_provisional":true,
             "confirmed_athlete_identities":false,
@@ -298,11 +461,11 @@ fn replay_frames_verified(
         .get_ref()
         .sync_all()
         .map_err(|e| format!("Sync confirmed CPU frames: {e}"))?;
-    Ok((
-        format!("{:x}", sha.finalize()),
-        totals,
-        summary.confirmed_tracks,
-    ))
+    drop(writer);
+    let observed_sha = format!("{:x}", sha.finalize());
+    let (continuous_sha, _inferred_positions) =
+        fill_confirmed_track_gaps(output, &observed_sha, count)?;
+    Ok((continuous_sha, totals, summary.confirmed_tracks))
 }
 
 pub(crate) fn process(state: &AppState, req: &ReplayRequest) -> Result<Value, ApiError> {
@@ -410,11 +573,13 @@ pub(crate) fn process(state: &AppState, req: &ReplayRequest) -> Result<Value, Ap
         let record = json!({
             "schema":"volley-native-cpu-tracking/1",
             "state":"provisional_tracklets_rebuilt",
+            "interpolated_positions_version":"bounded_same_track_3s_v1",
             "project_id":req.project_id,
             "video":req.video,
             "replay_id":replay_id,
             "source_fusion_id":req.fusion_id,
             "source_fusion_sha256":expected,
+            "ball_selection_policy":"vballnet_only_v1",
             "source_identity":{"bytes":size,"mtime_ns":mtime},
             "fps":30,
             "settings":settings,
@@ -518,8 +683,8 @@ mod tests {
                 "player_candidates":if i<12 {
                     vec![example(i,0.2+i as f64*0.002,i as usize % 2)]
                 }else{vec![]},
-                "ball_candidates":[],
-                "selected_ball":null,
+                "ball_candidates":if i==0 { vec![json!({"source_model":"ravel","detection":{"frame_index":0,"class_name":"ball","score":0.9,"bbox_xyxy_norm":[0.2,0.2,0.3,0.3]}})] } else { Vec::<Value>::new() },
+                "selected_ball":if i==0 { json!({"source_model":"ravel","detection":{"frame_index":0,"class_name":"ball","score":0.9,"bbox_xyxy_norm":[0.2,0.2,0.3,0.3]}}) } else { Value::Null },
                 "player_track_ids_confirmed":false,
                 "touches_confirmed":false,
             });
@@ -552,6 +717,8 @@ mod tests {
             .map(|v| serde_json::from_str::<Value>(v).unwrap())
             .collect::<Vec<_>>();
         assert_eq!(frames[0]["tracked_players"][0]["track_id"], 1);
+        assert!(frames[0]["selected_ball"].is_null());
+        assert_eq!(frames[0]["ball_candidates"][0]["source_model"], "ravel");
         assert_eq!(frames[1]["tracked_players"][0]["track_id"], 1);
         assert_eq!(
             frames[1]["tracked_players"][0]["detection"]["query_index"],
@@ -574,6 +741,48 @@ mod tests {
         assert!(!root.join("bad.jsonl").exists());
         assert!(!root.join("bad.unconfirmed").exists());
         fs::remove_dir_all(&root).unwrap();
+    }
+    #[test]
+    fn real_player_detection_blocks_duplicate_interpolated_id() {
+        let root = std::env::temp_dir().join(format!("volley-duplicate-gap-{}", Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let source = root.join("tracked.jsonl");
+        let mut bytes = Vec::new();
+        for frame in 0..6_u64 {
+            let mut tracked = Vec::new();
+            if frame == 0 || frame == 5 {
+                let mut full = example(frame, 0.50, 0);
+                full.bbox_xyxy_norm = [0.50, 0.40, 0.54, 0.55];
+                full.head_point_norm = Some([0.52, 0.41]);
+                full.score = 0.80;
+                tracked.push(json!({"track_id":1,"detection":full,"is_verified_athlete":false}));
+            }
+            if (1..=4).contains(&frame) {
+                let mut crop = example(frame, 0.502, 1);
+                crop.bbox_xyxy_norm = [0.502, 0.40, 0.538, 0.48];
+                crop.head_point_norm = Some([0.521, 0.41]);
+                crop.score = 0.70;
+                tracked.push(json!({"track_id":2,"detection":crop,"is_verified_athlete":false}));
+            }
+            bytes.extend(serde_json::to_vec(&json!({
+                "frame_index":frame,"tracked_players":tracked,
+                "track_ids_provisional":true,"confirmed_athlete_identities":false,
+                "touches_confirmed":false
+            })).unwrap());
+            bytes.push(b'\n');
+        }
+        fs::write(&source, &bytes).unwrap();
+        let sha = format!("{:x}", Sha256::digest(&bytes));
+        let (written, inferred) = fill_confirmed_track_gaps(&source, &sha, 6).unwrap();
+        assert_eq!(inferred, 0);
+        assert_eq!(written, format!("{:x}", Sha256::digest(fs::read(&source).unwrap())));
+        for (frame, line) in fs::read_to_string(&source).unwrap().lines().enumerate() {
+            let row: Value = serde_json::from_str(line).unwrap();
+            let tracks = row["tracked_players"].as_array().unwrap();
+            assert_eq!(tracks.len(), 1, "duplicate on frame {frame}");
+            assert_eq!(tracks[0]["track_id"], if frame == 0 || frame == 5 {1} else {2});
+        }
+        fs::remove_dir_all(root).unwrap();
     }
     #[test]
     fn cpu_discards_short_ids_from_every_frame_but_preserves_raw_candidates() {
@@ -633,7 +842,20 @@ mod tests {
             frames[5]["raw_player_candidates"].as_array().unwrap().len(),
             2
         );
-        assert!(frames[13]["tracked_players"].as_array().unwrap().is_empty());
+        assert_eq!(frames[13]["tracked_players"][0]["track_id"], 1);
+        assert_eq!(frames[13]["interpolated_track_ids"][0], 1);
+        assert!(frames[13]["raw_player_candidates"]
+            .as_array()
+            .unwrap()
+            .is_empty());
+        assert!(
+            frames[13]["tracked_players"][0]["detection"]["score"]
+                .as_f64()
+                .unwrap()
+                < frames[15]["tracked_players"][0]["detection"]["score"]
+                    .as_f64()
+                    .unwrap()
+        );
         assert_eq!(
             frames[15]["tracked_players"][0]["track_id"], 1,
             "3-frame occlusion must not fragment the persistent athlete"

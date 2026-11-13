@@ -34,6 +34,7 @@ pub struct ReidGroup {
     pub id: String,
     pub track_ids: Vec<String>,
     pub similarity: Option<f64>,
+    pub average_similarity: Option<f64>,
     pub source: &'static str,
 }
 
@@ -159,6 +160,31 @@ fn cosine(a: &[f32], b: &[f32]) -> f32 {
         .map(|(x, y)| (*x as f64) * (*y as f64))
         .sum::<f64>()
         .clamp(-1.0, 1.0) as f32
+}
+
+pub fn average_similarity(vectors: &[&[f32]]) -> Option<f64> {
+    if vectors.len() < 2 {
+        return None;
+    }
+    let normalized = vectors
+        .iter()
+        .map(|vector| normalized(vector))
+        .collect::<Option<Vec<_>>>()?;
+    if normalized
+        .iter()
+        .any(|vector| vector.len() != normalized[0].len())
+    {
+        return None;
+    }
+    let mut sum = 0.0;
+    let mut count = 0_u64;
+    for (index, a) in normalized.iter().enumerate() {
+        for b in normalized.iter().skip(index + 1) {
+            sum += f64::from(cosine(a, b));
+            count += 1;
+        }
+    }
+    Some((sum / count as f64 * 10_000.0).round() / 10_000.0)
 }
 
 fn rounded(x: f32) -> f64 {
@@ -394,15 +420,20 @@ pub fn build_groups(
         let mut member_ids = entries.iter().map(|i| visual_ids[*i]).collect::<Vec<_>>();
         member_ids.sort_unstable();
         let mut minimum = 1_f32;
+        let mut sum = 0_f64;
+        let mut count = 0_u32;
         for (index, a) in entries.iter().enumerate() {
             for b in entries.iter().skip(index + 1) {
                 minimum = minimum.min(matrix[*a * n + *b]);
+                sum += f64::from(matrix[*a * n + *b]);
+                count += 1;
             }
         }
         groups.push(ReidGroup {
             id: format!("group-{}", member_ids[0]),
             track_ids: member_ids.iter().map(ToString::to_string).collect(),
             similarity: Some(rounded(minimum)),
+            average_similarity: Some((sum / f64::from(count) * 10_000.0).round() / 10_000.0),
             source: "automatic",
         });
     }
@@ -496,6 +527,27 @@ mod tests {
             id,
             vector: v.to_vec(),
         }
+    }
+    #[test]
+    fn group_reports_average_of_all_pairwise_similarities() {
+        let tracks = vec![track(1, 0, 10), track(2, 20, 30), track(3, 40, 50)];
+        let features = vec![
+            feat(1, &[1.0, 0.0]),
+            feat(2, &[0.8, 0.6]),
+            feat(3, &[0.6, 0.8]),
+        ];
+        let report = build_groups(
+            &features,
+            &tracks,
+            &HashMap::new(),
+            &HashSet::new(),
+            FeatureMode::OpenVino,
+            50,
+        )
+        .unwrap();
+        let group = serde_json::to_value(&report.groups[0]).unwrap();
+        assert_eq!(group["average_similarity"], 0.7867);
+        assert_eq!(group["similarity"], 0.6);
     }
     #[test]
     fn groups_only_tracks_above_the_thirty_percent_threshold() {

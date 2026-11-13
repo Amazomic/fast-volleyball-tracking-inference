@@ -296,6 +296,7 @@ fn vetted_manual_groups(
             id: id.expect("checked manual group ID").to_owned(),
             track_ids: ids.iter().map(ToString::to_string).collect(),
             similarity: None,
+            average_similarity: None,
             source: "manual",
         });
     }

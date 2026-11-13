@@ -50,7 +50,9 @@ fn safe_file(path: &Path, max: u64) -> Result<(), String> {
 }
 
 fn bbox(candidate: &Value) -> Option<[f64; 4]> {
-    if candidate["class_name"] != "player" || candidate["score"].as_f64()? < 0.45 {
+    // Smaller far-court players get weaker detection scores. Keep them as
+    // pose proposals while retaining the existing geometry and IoU guards.
+    if candidate["class_name"] != "player" || candidate["score"].as_f64()? < 0.35 {
         return None;
     }
     let values = candidate["bbox_xyxy_norm"].as_array()?;
@@ -206,19 +208,19 @@ pub fn process(
                         return Err("Pose fusion frame index mismatch".into());
                     }
                     let mut poses = Vec::new();
-                    // Avoid identifying spectators/players while the ball is absent.
-                    if !frame["selected_ball"].is_null() {
-                        let bytes = 640 * 360 * 3;
-                        let rgb = window
-                            .data
-                            .get(..bytes)
-                            .ok_or("Pose decoder RGB frame too short")?;
-                        for bb in boxes(&frame) {
-                            let points = engine.infer(rgb, bb)?;
-                            let keypoints =
-                                points.map(|p| [p.x as f64, p.y as f64, p.score as f64]);
-                            poses.push(json!({"box":bb,"keypoints":keypoints}));
-                        }
+                    // Ball detection is independent of player pose. A missed ball
+                    // must not erase a hitter's skeleton (or contact evidence).
+                    // Candidate boxes remain bounded and deduplicated.
+                    let bytes = 640 * 360 * 3;
+                    let rgb = window
+                        .data
+                        .get(..bytes)
+                        .ok_or("Pose decoder RGB frame too short")?;
+                    for bb in boxes(&frame) {
+                        let points = engine.infer(rgb, bb)?;
+                        let keypoints =
+                            points.map(|p| [p.x as f64, p.y as f64, p.score as f64]);
+                        poses.push(json!({"box":bb,"keypoints":keypoints}));
                     }
                     players += poses.len() as u64;
                     samples += 1;
@@ -287,7 +289,13 @@ mod tests {
             {"class_name":"player","score":0.9,"bbox_xyxy_norm":[0.1,0.1,0.3,0.8]},
             {"class_name":"player","score":0.8,"bbox_xyxy_norm":[0.1,0.1,0.3,0.8]},
             {"class_name":"player","score":0.4,"bbox_xyxy_norm":[0.6,0.1,0.8,0.8]}]});
-        assert_eq!(boxes(&f).len(), 1);
+        assert_eq!(boxes(&f).len(), 2);
+        // Missing ball evidence must not remove valid player proposals.
+        let without_ball = json!({"player_candidates":f["player_candidates"],"selected_ball":null});
+        assert_eq!(boxes(&without_ball).len(), 2);
+        assert!(bbox(
+            &json!({"class_name":"player","score":0.34,"bbox_xyxy_norm":[0.6,0.1,0.8,0.8]})
+        ).is_none());
         assert!(bbox(
             &json!({"class_name":"player","score":0.9,"bbox_xyxy_norm":[0.1,0.1,0.101,0.102]})
         )

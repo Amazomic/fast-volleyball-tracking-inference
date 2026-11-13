@@ -68,6 +68,9 @@ pub(super) fn extract_native_ball_trajectory(
                 "ball"
             },
         )?;
+        if ball.source_model != "vballnet" {
+            continue;
+        }
         let bbox = ball.detection.bbox_xyxy_norm;
         if source_model
             .as_ref()

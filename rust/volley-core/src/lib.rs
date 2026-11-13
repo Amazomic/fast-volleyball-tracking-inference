@@ -1,7 +1,9 @@
 pub mod action_prediction;
 pub mod action_review;
+pub mod ball_interpolation;
 pub mod continuity;
 pub mod contracts;
+pub mod court_detection;
 pub mod court_geometry;
 pub mod event_evidence;
 pub mod evidence_source;
@@ -64,3 +66,4 @@ mod tests {
 }
 
 pub mod pose_classification;
+pub mod pose_contact;

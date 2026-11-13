@@ -27,7 +27,8 @@ use std::{
 use tokio::sync::Mutex;
 use uuid::Uuid;
 use volley_inference::{
-    decode::{decode_ravel, decode_vball, DecodeConfig, RawDetection},
+    decode::{decode_vball, RawDetection},
+    person::PersonEngine,
     Config, Device, Engine, ModelKind,
 };
 use volley_media::{
@@ -265,7 +266,7 @@ struct JobContext {
 
 fn window_error(model: ModelKind, first_frame: u64, failure: &str) -> String {
     let model_name = if model == ModelKind::Players {
-        "RAVEL-013"
+        "RTMDet-nano + RTMPose"
     } else {
         "VballNetV4c"
     };
@@ -281,7 +282,22 @@ fn run_model(context: &JobContext) -> Result<DecodeSummary, String> {
         return Err("cancelled".into());
     }
     let before = inference_stream::source_stamp(&context.source)?;
-    let mut engine = Engine::load(&context.repo, &context.config)?;
+    // The player path never constructs or runs a RAVEL session.
+    let mut ball_engine = if context.config.model == ModelKind::Ball {
+        Some(Engine::load(&context.repo, &context.config)?)
+    } else {
+        None
+    };
+    let mut person_engine = if context.config.model == ModelKind::Players {
+        Some(PersonEngine::load(
+            &context.repo,
+            context.config.device,
+            context.config.cpu_threads,
+            context.config.gpu_memory_limit_mb,
+        )?)
+    } else {
+        None
+    };
     let pixels = match context.config.model {
         ModelKind::Ball => ModelPixels::BallGray,
         ModelKind::Players => ModelPixels::PlayersRgb,
@@ -298,13 +314,36 @@ fn run_model(context: &JobContext) -> Result<DecodeSummary, String> {
             if context.cancelled.load(Ordering::Acquire) {
                 return Err("cancelled".into());
             }
-            let input = normalized_model_window(&window.data, w, h, channels)?;
-            let tensors = engine
-                .infer_clip(input)
-                .map_err(|error| window_error(context.config.model, window.first_frame, &error))?;
-            let records = if context.config.model == ModelKind::Players {
-                decode_ravel(&tensors, window.first_frame, DecodeConfig::default())?
+            let records = if let Some(engine) = person_engine.as_mut() {
+                let rgb_frame_bytes = w * h * 3;
+                let mut detections = Vec::new();
+                for offset in 0..9 {
+                    let first = offset * rgb_frame_bytes;
+                    let rgb = window
+                        .data
+                        .get(first..first + rgb_frame_bytes)
+                        .ok_or("Incomplete RGB window for player pose inference")?;
+                    for (index, pose) in engine.detect(rgb)?.into_iter().enumerate() {
+                        detections.push(RawDetection {
+                            frame_index: window.first_frame + offset as u64,
+                            class_name: "player",
+                            score: pose.score,
+                            bbox_xyxy_norm: pose.bbox.map(|v| v as f32),
+                            query_index: Some(index),
+                            touch_probability: None,
+                            head_point_norm: pose.head.map(|p| p.map(|v| v as f32)),
+                        });
+                    }
+                }
+                detections
             } else {
+                let input = normalized_model_window(&window.data, w, h, channels)?;
+                let engine = ball_engine
+                    .as_mut()
+                    .ok_or("Missing VBallNet inference session")?;
+                let tensors = engine.infer_clip(input).map_err(|error| {
+                    window_error(context.config.model, window.first_frame, &error)
+                })?;
                 decode_vball(&tensors, window.first_frame, 0.05)?
             };
             sink.push(window.first_frame, &records)?;
@@ -341,6 +380,7 @@ fn run_model(context: &JobContext) -> Result<DecodeSummary, String> {
         "project_id":context.project_id,
         "video":context.video,
         "model":context.config.model,
+        "person_pipeline":if context.config.model == ModelKind::Players { Some("rtmdet_nano_tiled_rtmpose_m_coco17_v3") } else { None },
         "provider":context.config.device,
         "source_identity":{"bytes":before.0,"mtime_ns":before.1},
         "fps":30,
@@ -628,7 +668,7 @@ mod tests {
     #[test]
     fn long_cuda_errors_name_model_and_exact_window() {
         let error = window_error(ModelKind::Players, 39240, "CUDA failure 999");
-        assert!(error.contains("RAVEL-013"));
+        assert!(error.contains("RTMDet-nano + RTMPose"));
         assert!(error.contains("39240..39248"));
         assert!(error.contains("CUDA failure 999"));
         let ball = window_error(ModelKind::Ball, 9, "device unavailable");
@@ -965,7 +1005,7 @@ mod tests {
                 project_id: id.into(),
                 video: video.into(),
                 vball_job_id: completed_jobs[0].clone(),
-                ravel_job_id: completed_jobs[1].clone(),
+                person_job_id: completed_jobs[1].clone(),
             },
         )
         .unwrap();

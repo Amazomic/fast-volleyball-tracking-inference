@@ -2,30 +2,28 @@ import {readFileSync} from "node:fs";
 import {runInNewContext} from "node:vm";
 import assert from "node:assert/strict";
 
-const source=readFileSync(new URL("../../rust/volley-app/static/studio_tabs.js",import.meta.url),"utf8");
-const start=source.indexOf("  const renderSidebarPlayers=()=>{");
-const end=source.indexOf("  const renderPlayers=()=>{",start);
-const element=(tag,klass,text)=>({tag,klass,text,children:[],events:{},
-  append(...items){this.children.push(...items);},
-  addEventListener(name,fn){this.events[name]=fn;},setAttribute(){}});
-const sidebar=element("div");
-const state={players:[{id:"a",name:"Анна"}],projectMemberIds:new Set(["a"]),trackCovers:new Map()};
-const calls=[];
-const window={dispatchEvent:event=>calls.push(event),CustomEvent:class{constructor(type,options){this.type=type;this.detail=options.detail;}}};
-const context={state,$:()=>sidebar,clear:node=>{node.children=[];},make:element,URLSearchParams,window,
-  projectId:()=>"project",post:async()=>({photos:[
-    {id:"1",image_sha256:"same"},{id:"2",image_sha256:"same"},{id:"3",image_sha256:"other"}]}),
-  CustomEvent:window.CustomEvent};
-runInNewContext(source.slice(start,end)+"\nthis.renderSidebarPlayers=renderSidebarPlayers;",context);
-context.renderSidebarPlayers();
-const card=sidebar.children[0];
-const menu=card.children.find(item=>item.tag==="details");
-assert.ok(menu,"project player has an actions menu");
-const show=menu.children.find(item=>item.tag==="button"&&item.text.includes("фото"));
-await show.events.click();
-const gallery=card.children.find(item=>item.klass==="players-side-gallery");
-assert.equal(gallery.children.filter(item=>item.tag==="img").length,2);
-const attach=menu.children.find(item=>item.tag==="button"&&item.text.includes("Track ID"));
-attach.events.click();
-assert.equal(calls[0].detail.player_id,"a");
-console.log("Project player album actions and exact duplicate filtering: OK");
+const source=readFileSync(new URL("../../rust/volley-app/static/studio_tracks.js",import.meta.url),"utf8");
+const start=source.indexOf("  const loadAlbum=async()=>{");
+const end=source.indexOf("  const setMode=mode=>{",start);
+const node=(tag,klass,text)=>({tag,klass,text,children:[],events:{},
+  append(...items){this.children.push(...items);},addEventListener(name,fn){this.events[name]=fn;}});
+const playerPhotos=node("div"),playerStatus=node("p"),calls=[],events=[];
+const state={project:"project",viewPlayer:"player"};
+const context={state,node,playerPhotos,playerStatus,clear:element=>{element.children=[];},
+  path:(base,args)=>base+"?"+new URLSearchParams(args),
+  post:async(url,body)=>{calls.push({url,body});return body.action==="read"?
+    {writable:true,revision:"r1",photos:calls.length===1?[{id:"photo1"}]:[]}:{revision:"r2"};},
+  window:{confirm:()=>true,dispatchEvent:event=>events.push(event.type)},Event:class{constructor(type){this.type=type;}}};
+runInNewContext(source.slice(start,end)+"\nthis.loadAlbum=loadAlbum;",context);
+await context.loadAlbum();
+assert.equal(playerPhotos.children.length,1);
+const card=playerPhotos.children[0];
+assert.match(card.children[0].src,/player_id=player&reference_id=photo1/);
+await card.children[1].events.click();
+assert.equal(calls[1].body.action,"undo");
+assert.equal(calls[1].body.reference_id,"photo1");
+assert.equal(calls[1].body.expected_revision,"r1");
+assert.equal(calls[1].body.project_id,"project");
+assert.equal(playerPhotos.children.length,0);
+assert.deepEqual(events,["volley:player-photo-saved"]);
+console.log("Player album displays and removes a selected saved photo: OK");

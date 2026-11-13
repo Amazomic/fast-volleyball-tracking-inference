@@ -55,11 +55,19 @@ impl CourtHistory {
             return None;
         }
         let mut events = Vec::new();
+        let mut last_track_id = None;
         for contact in self
             .contacts
             .iter()
             .filter(|c| (start..=end).contains(&c.frame))
         {
+            let Some(track_id) = contact.track_id else {
+                continue;
+            };
+            if last_track_id == Some(track_id) {
+                continue;
+            }
+            last_track_id = Some(track_id);
             if events.len() == MAX_CONTEXT_CONTACTS {
                 // Never publish a misleading partial analysis.
                 return None;

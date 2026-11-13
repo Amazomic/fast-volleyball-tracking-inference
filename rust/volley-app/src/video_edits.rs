@@ -22,8 +22,18 @@ pub struct VideoEdit {
     trim_start_sec: f64,
     trim_end_sec: Option<f64>,
     court: Vec<[f64; 2]>,
+    #[serde(default)]
+    net: Option<[[f64; 2]; 2]>,
 }
 
+pub(crate) fn calibration_source(
+    state: &AppState,
+    project_id: &str,
+    video: &str,
+) -> Result<PathBuf, storage::ApiError> {
+    let _ = edit_path(state, project_id, video)?;
+    projects::canonical_source(state, video)
+}
 fn edit_path(
     state: &AppState,
     project_id: &str,
@@ -102,7 +112,7 @@ pub async fn get(
     Ok(Json(with_revision(
         &state,
         json!({"schema":"volley-video-edit/1","project_id":project_id,"video":video,
-        "trim_start_sec":0.0,"trim_end_sec":null,"court":[]}),
+        "trim_start_sec":0.0,"trim_end_sec":null,"court":[],"net":null}),
     )?))
 }
 
@@ -136,6 +146,7 @@ pub async fn set(
             .trim_end_sec
             .is_some_and(|end| !end.is_finite() || end <= edit.trim_start_sec)
         || !court_is_valid(&edit.court)
+        || edit.net.is_some_and(|line| line.iter().flatten().any(|v| !v.is_finite() || !(-0.5..=1.5).contains(v)))
     {
         return Err(storage::bad_request(
             "Invalid trim interval or court corners",
@@ -155,7 +166,7 @@ pub async fn set(
     }
     let record = json!({"schema":"volley-video-edit/1","project_id":edit.project_id,
         "video":edit.video,"trim_start_sec":edit.trim_start_sec,
-        "trim_end_sec":edit.trim_end_sec,"court":edit.court});
+        "trim_end_sec":edit.trim_end_sec,"court":edit.court,"net":edit.net});
     storage::write_json_atomic(&path, &record)?;
     Ok(Json(with_revision(&state, record)?))
 }

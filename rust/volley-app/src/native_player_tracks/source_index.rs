@@ -130,7 +130,17 @@ fn observe_track(
         best_score: 0.0,
         best_box: [0.0; 4],
         photo_samples: Vec::new(),
+        visible_spans: Vec::new(),
     });
+    if let Some((_, end)) = record.visible_spans.last_mut() {
+        if *end == frame_idx || end.saturating_add(1) == frame_idx {
+            *end = frame_idx;
+        } else {
+            record.visible_spans.push((frame_idx, frame_idx));
+        }
+    } else {
+        record.visible_spans.push((frame_idx, frame_idx));
+    }
     record.last = frame_idx;
     record.observed += 1;
     if record.photo_samples.is_empty() || frame_idx.is_multiple_of(6) {

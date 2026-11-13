@@ -129,9 +129,11 @@ pub fn fuse_window(
                 .cmp(&(b.source_model != "vballnet"))
                 .then_with(|| b.detection.score.total_cmp(&a.detection.score))
         });
-        // VballNet preferred whenever it has a candidate. RAVEL is only a
-        // fallback; neither candidate becomes a confirmed physical track.
-        frame.selected_ball = frame.ball_candidates.first().cloned();
+        frame.selected_ball = frame
+            .ball_candidates
+            .iter()
+            .find(|ball| ball.source_model == "vballnet")
+            .cloned();
     }
     Ok(frames)
 }
@@ -185,12 +187,10 @@ mod tests {
         assert!(frames[1].selected_ball.is_none());
     }
     #[test]
-    fn falls_back_only_if_preferred_ball_missing() {
+    fn ravel_ball_remains_raw_when_vballnet_is_missing() {
         let frames = fuse_window(0, vec![ball(2, 0.65)], vec![]).unwrap();
-        assert_eq!(
-            frames[2].selected_ball.as_ref().unwrap().source_model,
-            "ravel"
-        );
+        assert!(frames[2].selected_ball.is_none());
+        assert_eq!(frames[2].ball_candidates[0].source_model, "ravel");
     }
     #[test]
     fn rejects_cross_window_invalid_boxes_and_fabricated_ids() {

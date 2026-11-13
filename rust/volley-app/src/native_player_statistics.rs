@@ -504,6 +504,7 @@ mod tests {
             context: 45,
             expected_rallies: 1,
             expected_touches: 5,
+            min_ball_score: 0.35,
         };
         let owner = NativeReviewedOwners {
             source_sha: sha,

@@ -15,6 +15,13 @@ pub(crate) struct InstanceGuard {
     #[cfg(test)]
     pub(crate) path: PathBuf,
 }
+impl Drop for InstanceGuard {
+    fn drop(&mut self) {
+        // Explicit unlock is necessary on filesystems such as WSL/DrvFs:
+        // dropping a handle alone may not release the advisory lock promptly.
+        let _ = FileExt::unlock(&self._file);
+    }
+}
 
 pub(crate) fn lock_path(repository: &Path) -> io::Result<PathBuf> {
     let root = repository.canonicalize()?;

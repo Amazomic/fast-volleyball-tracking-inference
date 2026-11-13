@@ -4,6 +4,7 @@ mod analysis_runs;
 #[cfg(test)]
 mod api_http_tests;
 mod catalog;
+mod court_detection;
 mod court_touch;
 mod cpu_rallies;
 mod cpu_retrack;
@@ -118,6 +119,11 @@ fn app_with_gate(state: Arc<AppState>, gate: Arc<runtime::ShutdownGate>) -> Rout
             "/api/cpu/native/rallies/overlays",
             get(native_preview_overlay::get),
         )
+        .route("/api/gpu/native/overlays", get(native_preview_overlay::gpu))
+        .route(
+            "/api/cpu/native/rallies/overlay-player-labels",
+            get(native_preview_overlay::player_labels),
+        )
         .route("/api/studio/analysis-overview", get(studio_analysis::get))
         .route(
             "/api/studio/analysis-capabilities",
@@ -136,7 +142,7 @@ fn app_with_gate(state: Arc<AppState>, gate: Arc<runtime::ShutdownGate>) -> Rout
         .route("/api/studio/pipeline/log", get(studio_pipeline::log))
         .route(
             "/api/studio/pipeline/history",
-            get(studio_pipeline::history),
+            get(studio_pipeline::history).post(studio_pipeline::clear_history),
         )
         .route("/api/studio/pipeline/cancel", post(studio_pipeline::cancel))
         .route("/api/studio/restart", post(studio_restart::restart))
@@ -161,6 +167,7 @@ fn app_with_gate(state: Arc<AppState>, gate: Arc<runtime::ShutdownGate>) -> Rout
             "/api/video-edit",
             get(video_edits::get).post(video_edits::set),
         )
+        .route("/api/video-court/detect", post(court_detection::detect))
         .route("/api/video-view", get(playback::video_view))
         .route("/api/video-media", get(playback::video_media))
         .route("/api/video-preview", get(playback::video_preview))
@@ -169,7 +176,8 @@ fn app_with_gate(state: Arc<AppState>, gate: Arc<runtime::ShutdownGate>) -> Rout
         .route("/api/analysis-history", get(history::get_history))
         .route("/api/analysis-runs", get(analysis_runs::get_runs))
         .route("/api/players/library", get(catalog::get_library))
-        .route("/api/players/library/native", post(player_catalog::edit))
+        .route("/api/players/library/native", post(player_catalog::edit))
+        .route("/api/players/native/tracks/reset-project", post(native_player_tracks::reset_project))
         .route(
             "/api/players/native/tracks",
             get(native_player_tracks::read).post(native_player_tracks::edit),
@@ -220,6 +228,7 @@ fn app_with_gate(state: Arc<AppState>, gate: Arc<runtime::ShutdownGate>) -> Rout
         )
         .route("/api/project-create", post(projects::create_project))
         .route("/api/project-update", post(projects::update_project))
+        .route("/api/project-delete", post(projects::delete_project))
         .route(
             "/api/montage/native/start",
             post(montage::start_native_montage),

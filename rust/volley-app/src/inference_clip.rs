@@ -13,7 +13,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use std::{path::PathBuf, process::Stdio, sync::Arc, time::Duration};
 use tokio::{io::AsyncReadExt, process::Command};
-use volley_inference::{Config, Device, Engine, ModelKind, Output};
+use volley_inference::{person::PersonEngine, Config, Device, Engine, ModelKind, Output};
 const CLIP: usize = 9;
 
 #[derive(Clone, Debug, Deserialize)]
@@ -49,7 +49,7 @@ fn normalize_pixels(bytes: &[u8], kind: ModelKind) -> Result<Vec<f32>, String> {
     let (width, height, channels, _) = pixel_params(kind);
     volley_media::frame_windows::normalized_model_window(bytes, width, height, channels)
 }
-async fn decode_nine(prepared: PathBuf, request: &ClipRequest) -> Result<Vec<f32>, ApiError> {
+async fn decode_nine(prepared: PathBuf, request: &ClipRequest) -> Result<Vec<u8>, ApiError> {
     let (w, h, _, format) = pixel_params(request.model);
     let seek = request.first_frame as f64 / 30.0;
     // FFmpeg 30-fps frame indices refer to this exact prepared proxy. Output
@@ -129,7 +129,7 @@ async fn decode_nine(prepared: PathBuf, request: &ClipRequest) -> Result<Vec<f32
                     .collect::<String>()
             ));
         }
-        normalize_pixels(&frames, request.model)
+        Ok(frames)
     })
     .await;
     match result {
@@ -166,52 +166,6 @@ pub(crate) fn ball_peaks(output: &Output, start: u64) -> Result<Value, String> {
         }));
     }
     Ok(json!(peaks))
-}
-pub(crate) fn touch_peaks(output: &Output, start: u64) -> Result<Value, String> {
-    if output.name != "action_logits" {
-        return Ok(Value::Null);
-    }
-    let dimensions = &output.dimensions;
-    if dimensions.len() != 4
-        || dimensions[0] != 1
-        || dimensions[1] != 9
-        || dimensions[3] != 2
-        || !(1..=1024).contains(&dimensions[2])
-    {
-        return Err(format!(
-            "Unexpected RAVEL Touch logits dimensions: {dimensions:?}"
-        ));
-    }
-    let queries = usize::try_from(dimensions[2]).map_err(|_| "Invalid RAVEL Touch query count")?;
-    if output.data.len() != 9 * queries * 2 {
-        return Err("RAVEL Touch logits incomplete".into());
-    }
-    let mut per_frame = Vec::new();
-    for frame in 0..CLIP {
-        let mut best = 0.0_f32;
-        let mut query = 0_usize;
-        for i in 0..queries {
-            let index = (frame * queries + i) * 2;
-            let touch = output.data[index];
-            let none = output.data[index + 1];
-            if !touch.is_finite() || !none.is_finite() {
-                continue;
-            }
-            let delta = (none - touch).clamp(-80.0, 80.0);
-            let p = 1.0 / (1.0 + delta.exp());
-            if p > best {
-                best = p;
-                query = i;
-            }
-        }
-        per_frame.push(json!({
-            "frame":start+frame as u64,
-            "max_touch_probability":best,
-            "query_index":query,
-            "status":"raw_ravel_touch_proposal_not_confirmed_contact",
-        }));
-    }
-    Ok(json!(per_frame))
 }
 pub async fn clip_preview(
     State(state): State<Arc<AppState>>,
@@ -264,37 +218,56 @@ pub async fn clip_preview(
     let inputs = decode_nine(file, &request).await?;
     let model = request.model;
     let root = state.repository_root.clone();
-    let result=tokio::task::spawn_blocking(move ||{
-        let mut engine=Engine::load(&root,&cfg)?;
-        let tensors=engine.infer_clip(inputs)?;
-        let mut layouts=Vec::new();
-        let mut proposals=Value::Null;
-        for tensor in tensors{
-            if model==ModelKind::Ball&&tensor.name=="heatmaps"{
-                proposals=ball_peaks(&tensor,request.first_frame)?;
-            }else if model==ModelKind::Players&&tensor.name=="action_logits"{
-                proposals=touch_peaks(&tensor,request.first_frame)?;
+    let result = tokio::task::spawn_blocking(move || {
+        let (layouts, proposals) = if model == ModelKind::Players {
+            let mut engine =
+                PersonEngine::load(&root, cfg.device, cfg.cpu_threads, cfg.gpu_memory_limit_mb)?;
+            let mut frames = Vec::new();
+            for (offset, rgb) in inputs.chunks_exact(640 * 360 * 3).enumerate() {
+                let players = engine.detect(rgb)?;
+                frames.push(json!({
+                    "frame": request.first_frame + offset as u64,
+                    "players": players.iter().map(|p| json!({
+                        "bbox":p.bbox,"head":p.head,"score":p.score,
+                        "keypoints":p.keypoints,
+                    })).collect::<Vec<_>>()
+                }));
             }
-            layouts.push(json!({
-                "name":tensor.name,
-                "dimensions":tensor.dimensions,
-                "values":tensor.data.len(),
-            }));
-        }
-        Ok::<_,String>(json!({
+            (
+                vec![json!({"name":"rtmdet_dets + rtmpose_simcc",
+                "description":"Person rectangles are derived from body keypoints"})],
+                json!(frames),
+            )
+        } else {
+            let mut engine = Engine::load(&root, &cfg)?;
+            let tensors = engine.infer_clip(normalize_pixels(&inputs, model)?)?;
+            let mut layouts = Vec::new();
+            let mut proposals = Value::Null;
+            for tensor in tensors {
+                if tensor.name == "heatmaps" {
+                    proposals = ball_peaks(&tensor, request.first_frame)?;
+                }
+                layouts.push(json!({
+                    "name":tensor.name,
+                    "dimensions":tensor.dimensions,
+                    "values":tensor.data.len(),
+                }));
+            }
+            (layouts, proposals)
+        };
+        Ok::<_, String>(json!({
             "schema":"volley-native-inference-clip/1",
             "project_id":request.project_id,"video":request.video,
             "model":model,"first_frame":request.first_frame,
-            "inferred_frames":9,
-            "raw_outputs":layouts,
-            "proposals":proposals,
-            "identity_confirmed":false,
-            "full_gpu_run_complete":false,
+            "inferred_frames":9,"raw_outputs":layouts,"proposals":proposals,
+            "identity_confirmed":false,"full_gpu_run_complete":false,
             "cpu_processing_complete":false,
-            "notes":"One real ONNX window, not the full inference stream. FFmpeg bilinear resize may differ from Python OpenCV; final frame parity testing is pending.",
+            "notes":"One real nine-frame clip. Person boxes come from COCO17 keypoints.",
         }))
-    }).await.map_err(|e|storage::internal(format!("Native model task failed: {e}")))?
-        .map_err(storage::bad_request)?;
+    })
+    .await
+    .map_err(|e| storage::internal(format!("Native model task failed: {e}")))?
+    .map_err(storage::bad_request)?;
     Ok(Json(result))
 }
 #[cfg(test)]

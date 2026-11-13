@@ -185,9 +185,31 @@ pub fn ball_motion_extrema(
     if observations.len() < 5 {
         return Ok(Vec::new());
     }
+    let filtered: Vec<_> = observations
+        .iter()
+        .enumerate()
+        .filter_map(|(index, point)| {
+            if index < 2 || index + 2 >= observations.len() {
+                return Some(*point);
+            }
+            let segment = &observations[index - 2..=index + 2];
+            if segment
+                .windows(2)
+                .any(|pair| pair[1].frame - pair[0].frame != 1)
+            {
+                return Some(*point);
+            }
+            let distance = |a: BallObservation, b: BallObservation| (a.x - b.x).hypot(a.y - b.y);
+            let normal_step =
+                distance(segment[0], segment[1]).max(distance(segment[3], segment[4]));
+            let deviation = (point.x - (segment[1].x + segment[3].x) * 0.5)
+                .hypot(point.y - (segment[1].y + segment[3].y) * 0.5);
+            (deviation <= 16.0_f64.max(4.0 * normal_step)).then_some(*point)
+        })
+        .collect();
     let mut ranked = Vec::new();
-    for item in observations {
-        if let Some(e) = ball_motion_change(observations, item.frame, 0, TOUCH_MOTION_CONFIG) {
+    for item in &filtered {
+        if let Some(e) = ball_motion_change(&filtered, item.frame, 0, TOUCH_MOTION_CONFIG) {
             ranked.push((item.frame, item.x, item.y, e));
         }
     }
@@ -439,6 +461,12 @@ mod tests {
         }];
         assert!(ball_motion_extrema(&a, 8).is_err());
         assert!(ball_motion_extrema(&[], 2).is_err());
+    }
+    #[test]
+    fn extrema_ignore_an_isolated_false_ball_detection() {
+        let mut flight = trajectory(|frame| (100.0 + 5.0 * frame as f64, 180.0));
+        flight[15].x = 1100.0;
+        assert!(ball_motion_extrema(&flight, 8).unwrap().is_empty());
     }
     #[test]
     fn sparse_frames_do_not_establish_touch() {

@@ -1,5 +1,215 @@
 use super::*;
 use sha2::{Digest, Sha256};
+#[test]
+fn photo_rebuild_does_not_inherit_previous_manual_or_automatic_owners() {
+    let (root, _, sha) = fixture();
+    let tracks = index_replay(&root.join("tracked_frames.jsonl"), &sha, 18).unwrap();
+    let ctx = context(&root, sha, tracks);
+    let mut previous = base_document(&ctx);
+    previous["assignments"] = json!({"7":"abcdef012345"});
+    previous["automatic_assignments"] = json!({"7":"abcdef012345"});
+    let mut rebuilt = previous;
+    rebuilt["assignments"] = json!({});
+    rebuilt["automatic_assignments"] = json!({});
+    rebuilt["excluded_ids"] = json!([]);
+    rebuilt["automatic_suppressed_ids"] = json!([]);
+    let empty = json!({});
+    assert!(choose_automatic_photo_links(&ctx, &rebuilt, &empty).unwrap().is_empty());
+    let matches = json!({"7":[{"player_id":"abcdef012345","cosine_similarity":0.88}]});
+    assert_eq!(choose_automatic_photo_links(&ctx, &rebuilt, &matches).unwrap()[&7], "abcdef012345");
+    fs::remove_dir_all(root).unwrap();
+}#[test]
+fn conflict_ids_are_not_mislabeled_as_no_photo_match() {
+    let (root, _, sha) = fixture();
+    let tracks = index_replay(&root.join("tracked_frames.jsonl"), &sha, 18).unwrap();
+    let mut ctx = context(&root, sha, tracks);
+    ctx.tracks.insert(8, ctx.tracks[&7].clone());
+    ctx.known = VerifiedTrackSet::new(ctx.evidence.clone(), [7, 8]).unwrap();
+    let mut doc = base_document(&ctx);
+    doc["automatic_assignments"] = json!({"7":"abcdef012345"});
+    doc["automatic_identity_evidence"] = json!({
+        "matches":{"8":[{"player_id":"abcdef012345","cosine_similarity":0.81}]}
+    });
+    let unmatched = filtered_page(&ctx, &doc, "rev", 0, 10, Some("unassigned"), None).unwrap();
+    assert_eq!(unmatched["unassigned_track_ids"], json!([]));
+    assert_eq!(unmatched["filtered_total"], 0);
+    assert_eq!(unmatched["identity_conflict_track_ids"], json!([8]));
+    let conflicts = filtered_page(&ctx, &doc, "rev", 0, 10, Some("conflict"), None).unwrap();
+    assert_eq!(conflicts["filtered_total"], 1);
+    assert_eq!(conflicts["tracks"][0]["track_id"], 8);
+    assert_eq!(conflicts["tracks"][0]["identity_conflict"], true);
+    fs::remove_dir_all(root).unwrap();
+}#[test]
+fn photo_links_join_lost_tracks_without_real_co_visibility() {
+    let (root, _, sha) = fixture();
+    let tracks = index_replay(&root.join("tracked_frames.jsonl"), &sha, 18).unwrap();
+    let mut ctx = context(&root, sha, tracks);
+    let mut intermittent = ctx.tracks[&7].clone();
+    intermittent.first = 3;
+    intermittent.last = 14;
+    intermittent.visible_spans = vec![(3, 5), (10, 14)];
+    ctx.tracks.get_mut(&7).unwrap().visible_spans = vec![(1, 2), (6, 9)];
+    ctx.tracks.insert(8, intermittent);
+    ctx.known = VerifiedTrackSet::new(ctx.evidence.clone(), [7, 8]).unwrap();
+    assert!(ctx.tracks[&7].first <= ctx.tracks[&8].last);
+    assert!(!tracks_co_visible(&ctx.tracks[&7], &ctx.tracks[&8]));
+    let matches = json!({
+        "7":[{"player_id":"abcdef012345","cosine_similarity":0.88}],
+        "8":[{"player_id":"abcdef012345","cosine_similarity":0.93}]
+    });
+    let assigned = choose_automatic_photo_links(&ctx, &base_document(&ctx), &matches).unwrap();
+    assert_eq!(assigned.len(), 2);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn overlapping_people_try_next_photo_match_above_threshold() {
+    let (root, _, sha) = fixture();
+    let tracks = index_replay(&root.join("tracked_frames.jsonl"), &sha, 18).unwrap();
+    let mut ctx = context(&root, sha, tracks);
+    ctx.roster.insert("123456abcdef".into(), "Player B".into());
+    ctx.tracks.insert(8, ctx.tracks[&7].clone());
+    ctx.known = VerifiedTrackSet::new(ctx.evidence.clone(), [7, 8]).unwrap();
+    assert!(tracks_co_visible(&ctx.tracks[&7], &ctx.tracks[&8]));
+    let matches = json!({
+        "7":[{"player_id":"abcdef012345","cosine_similarity":0.95}],
+        "8":[
+            {"player_id":"abcdef012345","cosine_similarity":0.89},
+            {"player_id":"123456abcdef","cosine_similarity":0.76}
+        ]
+    });
+    let assigned = choose_automatic_photo_links(&ctx, &base_document(&ctx), &matches).unwrap();
+    assert_eq!(assigned.len(), 2);
+    assert_eq!(assigned[&7], "abcdef012345");
+    assert_eq!(assigned[&8], "123456abcdef");
+    fs::remove_dir_all(root).unwrap();
+}#[test]
+fn automatic_photo_link_picks_the_highest_similarity_for_one_track() {
+    let (root, _, sha) = fixture();
+    let tracks = index_replay(&root.join("tracked_frames.jsonl"), &sha, 18).unwrap();
+    let mut ctx = context(&root, sha, tracks);
+    ctx.roster.insert("123456abcdef".into(), "Player B".into());
+    let matches = json!({"7":[{"player_id":"abcdef012345","cosine_similarity":0.54},{"player_id":"123456abcdef","cosine_similarity":0.68}]});
+    let chosen = choose_automatic_photo_links(&ctx, &base_document(&ctx), &matches).unwrap();
+    assert_eq!(chosen[&7], "123456abcdef");
+    fs::remove_dir_all(root).unwrap();
+}
+#[test]
+fn strongest_long_lived_track_wins_overlapping_assignment() {
+    let (root, _, sha) = fixture();
+    let tracks = index_replay(&root.join("tracked_frames.jsonl"), &sha, 18).unwrap();
+    let mut ctx = context(&root, sha, tracks);
+    let mut short = ctx.tracks[&7].clone();
+    short.observed = 12;
+    ctx.tracks.insert(8, short);
+    ctx.tracks.get_mut(&7).unwrap().observed = 300;
+    ctx.known = VerifiedTrackSet::new(ctx.evidence.clone(), [7, 8]).unwrap();
+    let matches = json!({
+        "7":[{"player_id":"abcdef012345","cosine_similarity":0.81}],
+        "8":[{"player_id":"abcdef012345","cosine_similarity":0.99}]
+    });
+    let chosen = choose_automatic_photo_links(&ctx, &base_document(&ctx), &matches).unwrap();
+    assert_eq!(chosen.len(), 1);
+    assert_eq!(chosen[&8], "abcdef012345");
+    fs::remove_dir_all(root).unwrap();
+}
+#[test]
+fn nearly_equal_strong_reid_prefers_sustained_track() {
+    let (root, _, sha) = fixture();
+    let tracks = index_replay(&root.join("tracked_frames.jsonl"), &sha, 18).unwrap();
+    let mut ctx = context(&root, sha, tracks);
+    let mut fragment = ctx.tracks[&7].clone();
+    fragment.observed = 162;
+    ctx.tracks.insert(8, fragment);
+    ctx.tracks.get_mut(&7).unwrap().observed = 562;
+    ctx.known = VerifiedTrackSet::new(ctx.evidence.clone(), [7, 8]).unwrap();
+    let matches = json!({
+        "7":[{"player_id":"abcdef012345","cosine_similarity":0.972}],
+        "8":[{"player_id":"abcdef012345","cosine_similarity":0.997}]
+    });
+    let chosen = choose_automatic_photo_links(&ctx, &base_document(&ctx), &matches).unwrap();
+    assert_eq!(chosen.len(), 1);
+    assert_eq!(chosen[&7], "abcdef012345");
+    fs::remove_dir_all(root).unwrap();
+}
+#[test]
+fn strongly_matched_player_is_not_stolen_by_weaker_track() {
+    let (root, _, sha) = fixture();
+    let tracks = index_replay(&root.join("tracked_frames.jsonl"), &sha, 18).unwrap();
+    let mut ctx = context(&root, sha, tracks);
+    ctx.roster.insert("123456abcdef".into(), "Player B".into());
+    ctx.tracks.insert(8, ctx.tracks[&7].clone());
+    ctx.known = VerifiedTrackSet::new(ctx.evidence.clone(), [7, 8]).unwrap();
+    let matches = json!({
+        "7":[
+            {"player_id":"abcdef012345","cosine_similarity":0.972},
+            {"player_id":"123456abcdef","cosine_similarity":0.39}
+        ],
+        "8":[{"player_id":"abcdef012345","cosine_similarity":0.634}]
+    });
+    let chosen = choose_automatic_photo_links(&ctx, &base_document(&ctx), &matches).unwrap();
+    assert_eq!(chosen[&7], "abcdef012345");
+    assert!(!chosen.contains_key(&8));
+    fs::remove_dir_all(root).unwrap();
+}
+#[test]
+fn automatic_photo_links_enforce_threshold_and_conflicting_tracks() {
+    let (root, _, sha) = fixture();
+    let tracks = index_replay(&root.join("tracked_frames.jsonl"), &sha, 18).unwrap();
+    let mut ctx = context(&root, sha, tracks);
+    let mut other = ctx.tracks[&7].clone();
+    other.first = 4;
+    other.last = 14;
+    ctx.tracks.insert(8, other);
+    ctx.known = VerifiedTrackSet::new(ctx.evidence.clone(), [7, 8]).unwrap();
+    let mut doc = base_document(&ctx);
+    let matches = json!({"7":[{"player_id":"abcdef012345","cosine_similarity":0.80}],"8":[{"player_id":"abcdef012345","cosine_similarity":0.70}]});
+    let chosen = choose_automatic_photo_links(&ctx, &doc, &matches).unwrap();
+    assert_eq!(chosen.len(), 1);
+    assert_eq!(chosen[&7], "abcdef012345");
+    doc["excluded_ids"] = json!([7]);
+    let below = json!({"7":[{"player_id":"abcdef012345","cosine_similarity":0.99}],"8":[{"player_id":"abcdef012345","cosine_similarity":0.30}]});
+    assert!(choose_automatic_photo_links(&ctx, &doc, &below)
+        .unwrap()
+        .is_empty());
+    let above = json!({"8":[{"player_id":"abcdef012345","cosine_similarity":0.30001}]});
+    assert_eq!(
+        choose_automatic_photo_links(&ctx, &doc, &above)
+            .unwrap()
+            .len(),
+        1
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+#[test]
+fn automatic_links_do_not_fall_back_to_the_wrong_player() {
+    let (root, _, sha) = fixture();
+    let tracks = index_replay(&root.join("tracked_frames.jsonl"), &sha, 18).unwrap();
+    let mut ctx = context(&root, sha, tracks);
+    ctx.roster.insert("123456abcdef".into(), "Player B".into());
+    ctx.tracks.insert(8, ctx.tracks[&7].clone());
+    ctx.known = VerifiedTrackSet::new(ctx.evidence.clone(), [7, 8]).unwrap();
+    let matches = json!({"7":[{"player_id":"abcdef012345","cosine_similarity":0.90},{"player_id":"123456abcdef","cosine_similarity":0.80}],"8":[{"player_id":"abcdef012345","cosine_similarity":0.85},{"player_id":"123456abcdef","cosine_similarity":0.30}]});
+    let chosen = choose_automatic_photo_links(&ctx, &base_document(&ctx), &matches).unwrap();
+    assert_eq!(chosen.len(), 1);
+    assert_eq!(chosen[&7], "abcdef012345");
+    assert!(!chosen.contains_key(&8));
+    fs::remove_dir_all(root).unwrap();
+}
+#[test]
+fn automatic_photo_link_appears_as_provisional_and_not_reviewed() {
+    let (root, _, sha) = fixture();
+    let tracks = index_replay(&root.join("tracked_frames.jsonl"), &sha, 18).unwrap();
+    let ctx = context(&root, sha, tracks);
+    let mut doc = base_document(&ctx);
+    doc["automatic_assignments"] = json!({"7":"abcdef012345"});
+    let response = page(&ctx, &doc, "rev", 0, 40).unwrap();
+    assert_eq!(response["assigned_count"], 1);
+    assert_eq!(response["tracks"][0]["identity_source"], "automatic_photo");
+    assert_eq!(response["tracks"][0]["assigned_player_id"], "abcdef012345");
+    assert_eq!(response["unassigned_track_ids"], json!([]));
+    fs::remove_dir_all(root).unwrap();
+}
 fn fixture() -> (PathBuf, Vec<u8>, String) {
     let root = std::env::temp_dir().join(format!("native-ids-{}", uuid::Uuid::new_v4()));
     fs::create_dir_all(&root).unwrap();
@@ -92,6 +302,7 @@ fn review_preview_displays_manual_groups_without_claiming_athlete_identity() {
     assert_eq!(current["groups"].as_array().unwrap().len(), 1);
     assert_eq!(current["groups"][0]["source"], "manual");
     assert!(current["groups"][0]["similarity"].is_null());
+    assert!(current["groups"][0]["average_similarity"].is_number());
     assert_eq!(current["auto_assign_enabled"], false);
     assert_eq!(current["confirmed"], false);
     let without_embeddings = review_response(
@@ -120,6 +331,46 @@ fn review_preview_displays_manual_groups_without_claiming_athlete_identity() {
     fs::remove_dir_all(root).unwrap();
 }
 #[test]
+fn review_scope_excludes_other_rallies_and_orders_groups_by_remaining_size() {
+    let mut review = json!({"groups":[
+        {"id":"a","track_ids":["1","2","3","4"],"average_similarity":0.2},
+        {"id":"b","track_ids":["5","6","7"],"average_similarity":0.2}
+    ]});
+    let mut vector = vec![0_f32; 256];
+    vector[0] = 1.0;
+    let vectors = (1..=7).map(|id| (id, vector.clone())).collect();
+    let scope = [1, 2, 5, 6, 7].into_iter().collect();
+    scope_review_groups(&mut review, &scope, &vectors).unwrap();
+    assert_eq!(review["groups"][0]["track_ids"], json!(["5", "6", "7"]));
+    assert_eq!(review["groups"][1]["track_ids"], json!(["1", "2"]));
+    assert_eq!(review["groups"][1]["average_similarity"], 1.0);
+}
+#[test]
+fn reviewed_group_counts_only_unassigned_tracks_and_recomputes_average() {
+    let (root, _, sha) = fixture();
+    let tracks = index_replay(&root.join("tracked_frames.jsonl"), &sha, 18).unwrap();
+    let mut ctx = context(&root, sha, tracks);
+    for id in [8, 9] {
+        let mut track = ctx.tracks[&7].clone();
+        track.first = id * 20;
+        track.last = id * 20 + 10;
+        ctx.tracks.insert(id, track);
+    }
+    ctx.known = VerifiedTrackSet::new(ctx.evidence.clone(), [7, 8, 9]).unwrap();
+    let mut identity = base_document(&ctx);
+    identity["assignments"]["7"] = json!("abcdef012345");
+    let mut review = ReidReviewDoc::new(&ctx, &"a".repeat(64));
+    review.groups = vec![vec![7, 8, 9]];
+    let mut vector = vec![0_f32; 256];
+    vector[0] = 1.0;
+    let vectors = BTreeMap::from([(7, vector.clone()), (8, vector.clone()), (9, vector)]);
+    let result =
+        review_response(&ctx, &identity, &vectors, &review, "rev".into(), true, 85).unwrap();
+    assert_eq!(result["groups"][0]["track_ids"], json!(["8", "9"]));
+    assert_eq!(result["groups"][0]["average_similarity"], 1.0);
+    fs::remove_dir_all(root).unwrap();
+}
+#[test]
 fn photo_reference_matches_skip_assigned_excluded_and_overlapping_tracks() {
     let (root, _, sha) = fixture();
     let tracks = index_replay(&root.join("tracked_frames.jsonl"), &sha, 18).unwrap();
@@ -127,6 +378,7 @@ fn photo_reference_matches_skip_assigned_excluded_and_overlapping_tracks() {
     let mut second = ctx.tracks[&7].clone();
     second.first = 20;
     second.last = 30;
+    second.visible_spans = vec![(20, 30)];
     ctx.tracks.insert(8, second.clone());
     ctx.tracks.insert(9, second);
     ctx.known = VerifiedTrackSet::new(ctx.evidence.clone(), [7, 8, 9]).unwrap();
@@ -154,6 +406,7 @@ fn photo_reference_matches_skip_assigned_excluded_and_overlapping_tracks() {
     assert!(result.get("7").is_none());
     assert!(result.get("9").is_none());
     ctx.tracks.get_mut(&8).unwrap().first = 10;
+    ctx.tracks.get_mut(&8).unwrap().visible_spans = vec![(10, 30)];
     assert_eq!(
         photo_match_candidates(&ctx, &identity, &vectors, &references).unwrap(),
         json!({})
@@ -296,6 +549,9 @@ fn native_reid_cached_features_are_proposals_with_hard_identity_and_overlap_gate
     );
     assert_eq!(report["groups"][0]["track_ids"], json!(["7", "8"]));
     assert_eq!(report["embedded_count"], 2);
+    doc["assignments"]["7"] = json!("abcdef012345");
+    let assigned = native_reid_report(&ctx, &doc, &features, 85).unwrap();
+    assert!(assigned["groups"].as_array().unwrap().is_empty());
     ctx.roster
         .insert("fedcba654321".into(), "Second athlete".into());
     doc["assignments"]["7"] = json!("abcdef012345");
@@ -1017,12 +1273,14 @@ fn track_gallery_filters_owners_before_pagination() {
     let sample = ctx.tracks.get(&7).unwrap().clone();
     ctx.tracks.insert(8, sample.clone());
     ctx.tracks.insert(9, sample);
+    ctx.known = VerifiedTrackSet::new(ctx.evidence.clone(), [7, 8, 9]).unwrap();
     let mut doc = base_document(&ctx);
     doc["assignments"]["7"] = json!("abcdef012345");
+    doc["assignments"]["8"] = json!("abcdef012345");
     let unassigned = filtered_page(&ctx, &doc, "revision", 1, 1, Some("unassigned"), None).unwrap();
-    assert_eq!(unassigned["filtered_total"], 2);
-    assert_eq!(unassigned["unassigned_track_ids"], json!([8, 9]));
-    assert_eq!(unassigned["tracks"][0]["track_id"], 9);
+    assert_eq!(unassigned["player_track_counts"]["abcdef012345"], 2);
+    assert_eq!(unassigned["filtered_total"], 1);
+    assert_eq!(unassigned["unassigned_track_ids"], json!([9]));
     let player = filtered_page(
         &ctx,
         &doc,
@@ -1033,7 +1291,7 @@ fn track_gallery_filters_owners_before_pagination() {
         Some("abcdef012345"),
     )
     .unwrap();
-    assert_eq!(player["filtered_total"], 1);
+    assert_eq!(player["filtered_total"], 2);
     assert_eq!(player["tracks"][0]["track_id"], 7);
     assert!(filtered_page(
         &ctx,

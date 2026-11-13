@@ -1,15 +1,26 @@
-//! Streaming-friendly CPU interpretation of RAVEL Touch proposals against
-//! actual, continuous selected-ball motion and provisional RAVEL Track IDs.
-//! Detection is intentionally not a verified athlete identity or action label.
+//! VBallNet motion-first Touch proposals associated with observed player Tracks.
+//! RAVEL Touch logits may corroborate a physical candidate but never create one.
+//! Detection remains an unverified hypothesis, not a confirmed game action.
+mod ball_continuity;
 mod geometry;
+mod player_gap;
+mod pose_motion;
+pub use ball_continuity::{
+    exclude_ball_teleports, flag_ball_teleports, repair_vballnet_trajectory,
+    repair_vballnet_trajectory_with_players,
+};
+pub use player_gap::reconstruct as reconstruct_track_gaps;
+pub use pose_motion::{evaluate_pose_block, pose_contact_at_frame, PoseFrame, PosePlayer};
+
+/// Maximum time between a real observed VBallNet anchor and a predicted
+/// impact inside the bounded (at most ten-frame) missing-ball island.
+/// The touch itself must still reference a real same-frame ball and player.
+pub const MAX_OBSERVED_TOUCH_OFFSET_FRAMES: u64 = 9;
 
 use crate::{
     action_prediction::{self, ActionPrediction, CourtContext, PositionEvidence},
     motion::BallObservation,
-    touch::{
-        associate_touch_players, confirm_ravel_contacts, select_touch_peaks, PeakConfig,
-        TouchCandidate, TouchContact, TrackedPlayer,
-    },
+    touch::PeakConfig,
 };
 use serde::{Deserialize, Serialize};
 
@@ -38,22 +49,49 @@ pub struct TouchFrame {
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
+#[serde(default, deny_unknown_fields)]
 pub struct TouchSettings {
+    pub algorithm: TouchAlgorithm,
     pub threshold: f64,
+    /// Minimum raw VBallNet probability accepted as a physical ball observation.
+    /// Low-confidence raw evidence stays immutable for future CPU-only replays.
+    pub min_ball_score: f64,
     pub smooth: usize,
     pub min_gap: usize,
     pub max_reach_ratio: f64,
     pub min_interval_sec: f64,
+    pub use_ravel_touch: bool,
+    pub require_pose: bool,
+    pub pose_min_confidence: f64,
+    pub pose_max_distance: f64,
+    /// Minimum change in direction when inferring impact across missing ball
+    /// observations. Ordinary ballistic acceleration is not a body contact.
+    pub occluded_min_turn_deg: f64,
+}
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TouchAlgorithm {
+    #[default]
+    Legacy,
+    PoseMotion,
 }
 impl Default for TouchSettings {
     fn default() -> Self {
         Self {
-            threshold: 0.50,
+            algorithm: TouchAlgorithm::Legacy,
+            threshold: 0.48,
+            min_ball_score: 0.35,
             smooth: 5,
-            min_gap: 10,
-            max_reach_ratio: 0.35,
-            min_interval_sec: 0.35,
+            min_gap: 4,
+            max_reach_ratio: 0.75,
+            min_interval_sec: 0.10,
+            use_ravel_touch: false,
+            require_pose: false,
+            // Keep moderately occluded far-court wrists available to the
+            // geometry intersection; motion evidence is still mandatory.
+            pose_min_confidence: 0.28,
+            pose_max_distance: 0.34,
+            occluded_min_turn_deg: 35.0,
         }
     }
 }
@@ -66,10 +104,18 @@ impl TouchSettings {
         }
         .validate()
         .map_err(str::to_owned)?;
-        if !self.max_reach_ratio.is_finite()
+        if !self.min_ball_score.is_finite()
+            || !(0.01..=1.0).contains(&self.min_ball_score)
+            || !self.max_reach_ratio.is_finite()
             || !(0.05..=1.0).contains(&self.max_reach_ratio)
             || !self.min_interval_sec.is_finite()
             || !(0.10..=3.0).contains(&self.min_interval_sec)
+            || !self.pose_min_confidence.is_finite()
+            || !(0.0..=1.0).contains(&self.pose_min_confidence)
+            || !self.pose_max_distance.is_finite()
+            || !(0.01..=1.0).contains(&self.pose_max_distance)
+            || !self.occluded_min_turn_deg.is_finite()
+            || !(5.0..=180.0).contains(&self.occluded_min_turn_deg)
         {
             return Err("Invalid ball reach or contact separation".into());
         }
@@ -97,6 +143,15 @@ pub struct PhysicalTouchCandidate {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub court: Option<crate::court_geometry::CourtContactEvidence>,
     pub physical_motion_supported: bool,
+    /// A same-Track-ID COCO17 joint or body segment independently corroborates the hit.
+    /// False means a motion-supported, tracked but unconfirmed proposal.
+    pub body_contact_supported: bool,
+    /// Impact frame had no observed VBallNet ball: position inferred from
+    /// independently observed flights on both sides of an occlusion.
+    pub ball_occluded_at_contact: bool,
+    /// The observed flights converge within a stable tracked player's
+    /// extended reach, but no COCO17 body-joint intersection was verified.
+    pub inferred_body_reach_supported: bool,
     pub athlete_identity_verified: bool,
 }
 fn valid_bbox(b: [f64; 4]) -> bool {
@@ -172,8 +227,6 @@ pub fn evaluate_block(
         return Err("Invalid touch emission frame range".into());
     }
     let (w, h) = (width as f64, height as f64);
-    let mut proposals = Vec::new();
-    let mut tracks = Vec::new();
     let mut balls = Vec::new();
     for (index, frame) in frames.iter().enumerate() {
         if frame.frame_index != first + index as u64 || frame.players.len() > 128 {
@@ -190,21 +243,7 @@ pub fn evaluate_block(
                     .touch_probability
                     .is_some_and(|p| !p.is_finite() || !(0.0..=1.0).contains(&p))
             {
-                return Err("Invalid tracked RAVEL player evidence".into());
-            }
-            let bbox = pixel_bbox(player.bbox_xyxy_norm, w, h);
-            tracks.push(TrackedPlayer {
-                frame: relative,
-                track_id: player.track_id as i64,
-                score: player.score,
-                bbox,
-            });
-            if let Some(probability) = player.touch_probability.filter(|p| *p > 0.0) {
-                proposals.push(TouchCandidate {
-                    frame: relative,
-                    probability,
-                    bbox,
-                });
+                return Err("Invalid tracked player evidence".into());
             }
         }
         if let Some(ball) = &frame.selected_ball {
@@ -215,132 +254,29 @@ pub fn evaluate_block(
             {
                 return Err("Invalid selected-ball evidence".into());
             }
-            let point = center(ball.bbox_xyxy_norm);
-            balls.push(BallObservation {
-                frame: relative as i64,
-                x: point[0] * w,
-                y: point[1] * h,
-            });
+            // Ignore RAVEL ball boxes entirely: only VBallNet can drive a Touch.
+            if ball.source_model == "vballnet" {
+                let point = center(ball.bbox_xyxy_norm);
+                balls.push(BallObservation {
+                    frame: relative as i64,
+                    x: point[0] * w,
+                    y: point[1] * h,
+                });
+            }
         }
     }
     if balls.len() < 5 {
         return Ok(Vec::new());
     }
-    let mut peaks = if proposals.is_empty() {
-        Vec::new()
-    } else {
-        select_touch_peaks(
-            &proposals,
-            PeakConfig {
-                threshold: settings.threshold,
-                smooth: settings.smooth,
-                min_gap: settings.min_gap,
-            },
-        )
-        .map_err(str::to_owned)?
-    };
-    associate_touch_players(&mut peaks, &tracks);
-    // False ball-source transitions can look like impacts. A contact must
-    // have a uniform selected source on a short motion window around the peak,
-    // with ball samples on both sides; otherwise retain it unconfirmed.
-    peaks.retain(|peak| {
-        let f = peak.frame_index as i64;
-        let (mut before, mut after) = (0usize, 0usize);
-        let mut source = None;
-        let mut mixed = false;
-        for other in frames {
-            let delta = other.frame_index as i64 - first as i64 - f;
-            if delta.abs() > 8 {
-                continue;
-            }
-            if let Some(ball) = &other.selected_ball {
-                if delta < 0 {
-                    before += 1;
-                } else if delta > 0 {
-                    after += 1;
-                }
-                match source {
-                    None => source = Some(ball.source_model.as_str()),
-                    Some(current) if current != ball.source_model.as_str() => mixed = true,
-                    _ => {}
-                }
-            }
-        }
-        !mixed
-            && before >= 3
-            && after >= 3
-            && !geometry::motion_window_has_outlier(frames, peak.frame_index as usize, w, h)
-    });
-    let geometry = geometry::detect(frames, &balls, w, h, settings.max_reach_ratio);
-    let confirmed: Vec<TouchContact> = confirm_ravel_contacts(
-        &peaks,
-        &balls,
-        0,
-        (frames.len() - 1) as i64,
-        settings.threshold,
+    let mut geometry = geometry::detect(frames, &balls, w, h, settings.max_reach_ratio);
+    geometry.extend(geometry::detect_observed_vertical_rebounds(frames, w, h));
+    geometry.extend(geometry::detect_gap_rebounds(
+        frames,
+        w,
+        h,
         settings.max_reach_ratio,
-        settings.min_interval_sec,
-    );
-    let mut result = Vec::with_capacity(confirmed.len() + geometry.len());
-    for touch in confirmed {
-        let frame = first + touch.frame as u64;
-        if frame < emit_start || frame >= emit_end {
-            continue;
-        }
-        // Peak association allows a +/-2 frame gap, but native CPU rallies
-        // accept only an observed player and selected ball on the EXACT
-        // contact frame. A nearby Track ID is a suggestion, not same-frame
-        // evidence: preserve the physical Touch as unknown-player instead
-        // of publishing an invalid foreign-frame reference.
-        let Some(source) = frames.get(touch.frame as usize) else {
-            continue;
-        };
-        if source.selected_ball.is_none() {
-            continue;
-        }
-        let same_frame_track = touch.player_track_id.and_then(|id| {
-            u64::try_from(id)
-                .ok()
-                .filter(|&id| source.players.iter().any(|player| player.track_id == id))
-        });
-        let action_prediction = same_frame_track.and_then(|track_id| {
-            let player = source
-                .players
-                .iter()
-                .find(|player| player.track_id == track_id)?;
-            let ball = source.selected_ball.as_ref()?;
-            let bbox = pixel_bbox(player.bbox_xyxy_norm, w, h);
-            let radius = ((ball.bbox_xyxy_norm[2] - ball.bbox_xyxy_norm[0]) * w
-                + (ball.bbox_xyxy_norm[3] - ball.bbox_xyxy_norm[1]) * h)
-                * 0.25;
-            action_prediction::predict(PositionEvidence {
-                ball_y_px: touch.ball_y,
-                ball_radius_px: radius,
-                player_bbox_px: bbox,
-                standing_height_px: standing_height(frames, touch.frame as usize, track_id, h)?,
-                touch_score: touch.confidence,
-                track_score: player.score,
-                context: CourtContext::Unavailable,
-            })
-        });
-        result.push(PhysicalTouchCandidate {
-            frame_index: frame,
-            provisional_track_id: same_frame_track,
-            probability: touch.confidence,
-            ball_x_px: touch.ball_x,
-            ball_y_px: touch.ball_y,
-            motion_frame_index: first + touch.motion_frame as u64,
-            direction_change_deg: touch.direction_change_deg,
-            speed_before_px_frame: touch.speed_before_px_frame,
-            speed_after_px_frame: touch.speed_after_px_frame,
-            velocity_residual_px_frame: touch.velocity_residual_px_frame,
-            technique: "unknown_touch",
-            action_prediction,
-            court: None,
-            physical_motion_supported: true,
-            athlete_identity_verified: false,
-        });
-    }
+    ));
+    let mut result = Vec::with_capacity(geometry.len());
     for candidate in geometry {
         let frame = first + candidate.frame as u64;
         if frame < emit_start || frame >= emit_end {
@@ -356,9 +292,32 @@ pub fn evaluate_block(
             continue;
         };
         let bbox = pixel_bbox(player.bbox_xyxy_norm, w, h);
+        // Without body-joint corroboration, an off-body ball that only makes
+        // a weak residual bounce must not be attributed to a nearby player.
+        // Real hand contact is validated independently by the RTMPose path.
+        let body_width = bbox[2] - bbox[0];
+        let outside_x = (bbox[0] - candidate.ball_x)
+            .max(candidate.ball_x - bbox[2])
+            .max(0.0);
+        if candidate.motion.speed_after < 10.0
+            && outside_x > 0.30 * body_width
+        {
+            continue;
+        }
         let radius = ((ball.bbox_xyxy_norm[2] - ball.bbox_xyxy_norm[0]) * w
             + (ball.bbox_xyxy_norm[3] - ball.bbox_xyxy_norm[1]) * h)
             * 0.25;
+        // RAVEL is a bounded confidence hint on the *same* player/frame;
+        // it cannot insert another Touch, choose its player, or veto physics.
+        let corroboration = if settings.use_ravel_touch {
+            player.touch_probability.unwrap_or(0.0)
+        } else {
+            0.0
+        };
+        let probability = (candidate.probability + 0.03 * corroboration).min(0.88);
+        if probability < settings.threshold {
+            continue;
+        }
         let action_prediction = standing_height(frames, candidate.frame, candidate.track_id, h)
             .and_then(|height_px| {
                 action_prediction::predict(PositionEvidence {
@@ -366,7 +325,7 @@ pub fn evaluate_block(
                     ball_radius_px: radius,
                     player_bbox_px: bbox,
                     standing_height_px: height_px,
-                    touch_score: candidate.probability,
+                    touch_score: probability,
                     track_score: player.score,
                     context: CourtContext::Unavailable,
                 })
@@ -374,7 +333,7 @@ pub fn evaluate_block(
         result.push(PhysicalTouchCandidate {
             frame_index: frame,
             provisional_track_id: Some(candidate.track_id),
-            probability: candidate.probability,
+            probability,
             ball_x_px: candidate.ball_x,
             ball_y_px: candidate.ball_y,
             motion_frame_index: first + candidate.motion.motion_frame as u64,
@@ -386,18 +345,22 @@ pub fn evaluate_block(
             action_prediction,
             court: None,
             physical_motion_supported: true,
+            body_contact_supported: false,
+            ball_occluded_at_contact: false,
+            inferred_body_reach_supported: false,
             athlete_identity_verified: false,
         });
     }
-    // RAVEL and geometric detection may describe the same impact. Keep the
-    // most strongly supported proposal; never double-count it in a rally.
+    // Several neighboring frames may describe one physical velocity break.
+    // Retain the strongest physics-supported candidate within the impact window.
     result.sort_by(|a, b| {
         b.probability
             .total_cmp(&a.probability)
             .then_with(|| a.frame_index.cmp(&b.frame_index))
     });
     let mut unique: Vec<PhysicalTouchCandidate> = Vec::new();
-    let min_gap = (settings.min_interval_sec * 30.0).round().max(1.0) as u64;
+    let min_gap =
+        ((settings.min_interval_sec * 30.0).round().max(1.0) as u64).max(settings.min_gap as u64);
     for candidate in result {
         if unique
             .iter()
@@ -413,6 +376,162 @@ pub fn evaluate_block(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn pose_motion_finds_change_with_moving_wrist_and_rejects_missing_motion() {
+        let mut frames = scenario(true, true, false);
+        for (i, frame) in frames.iter_mut().enumerate() {
+            let x = if i <= 32 {
+                0.20 + i as f64 * 0.008
+            } else {
+                0.456 - (i - 32) as f64 * 0.008
+            };
+            frame.selected_ball.as_mut().unwrap().bbox_xyxy_norm[0] = x;
+            frame.selected_ball.as_mut().unwrap().bbox_xyxy_norm[2] = x + 0.02;
+        }
+        let mut poses = Vec::new();
+        for (frame_index, x) in [(28, 0.42), (32, 0.46), (36, 0.50)] {
+            let mut keypoints = [[0.0; 3]; 17];
+            keypoints[9] = [x, 0.365, 0.95];
+            poses.push(PoseFrame {
+                frame_index,
+                players: vec![PosePlayer {
+                    track_id: 1,
+                    keypoints,
+                }],
+            });
+        }
+        let contacts =
+            evaluate_pose_block(&frames, &poses, 640, 360, 0, 80, TouchSettings::default())
+                .unwrap();
+        assert_eq!(contacts.len(), 1);
+        assert_eq!(contacts[0].provisional_track_id, Some(1));
+        assert!(
+            contacts[0].action_prediction.is_some(),
+            "Keep geometry classification when wrists are inconclusive"
+        );
+        let mut unrelated = poses.clone();
+        unrelated.insert(
+            1,
+            PoseFrame {
+                frame_index: 30,
+                players: vec![PosePlayer {
+                    track_id: 2,
+                    keypoints: poses[0].players[0].keypoints,
+                }],
+            },
+        );
+        assert_eq!(
+            evaluate_pose_block(
+                &frames,
+                &unrelated,
+                640,
+                360,
+                0,
+                80,
+                TouchSettings::default()
+            )
+            .unwrap()
+            .len(),
+            1
+        );
+        let mut actual_far = poses.clone();
+        actual_far[1].players[0].keypoints[9][0] = 0.99;
+        assert!(evaluate_pose_block(
+            &frames,
+            &actual_far,
+            640,
+            360,
+            32,
+            33,
+            TouchSettings::default()
+        )
+        .unwrap()
+        .is_empty());
+        let mut wrong_source = frames.clone();
+        for frame in &mut wrong_source {
+            frame.selected_ball.as_mut().unwrap().source_model = "ravel".into();
+        }
+        assert!(evaluate_pose_block(
+            &wrong_source,
+            &poses,
+            640,
+            360,
+            0,
+            80,
+            TouchSettings::default()
+        )
+        .unwrap()
+        .is_empty());
+        assert!(evaluate_pose_block(
+            &frames,
+            &poses[..1],
+            640,
+            360,
+            0,
+            80,
+            TouchSettings::default()
+        )
+        .unwrap()
+        .is_empty());
+        let mut other_player = poses.clone();
+        for pose in &mut other_player {
+            pose.players[0].track_id = 2;
+        }
+        assert!(evaluate_pose_block(
+            &frames,
+            &other_player,
+            640,
+            360,
+            0,
+            80,
+            TouchSettings::default()
+        )
+        .unwrap()
+        .is_empty());
+        let mut low_confidence = poses.clone();
+        for pose in &mut low_confidence {
+            pose.players[0].keypoints[9][2] = 0.1;
+        }
+        assert!(evaluate_pose_block(
+            &frames,
+            &low_confidence,
+            640,
+            360,
+            0,
+            80,
+            TouchSettings::default()
+        )
+        .unwrap()
+        .is_empty());
+        assert!(evaluate_pose_block(
+            &scenario(false, true, false),
+            &poses,
+            640,
+            360,
+            0,
+            80,
+            TouchSettings::default()
+        )
+        .unwrap()
+        .is_empty());
+        let first = evaluate_pose_block(&frames, &poses, 640, 360, 0, 32, TouchSettings::default())
+            .unwrap();
+        let second =
+            evaluate_pose_block(&frames, &poses, 640, 360, 32, 80, TouchSettings::default())
+                .unwrap();
+        assert_eq!(first.len() + second.len(), 1);
+        for pose in &mut poses {
+            pose.players[0].keypoints[9][0] = 0.46;
+        }
+        assert_eq!(
+            evaluate_pose_block(&frames, &poses, 640, 360, 0, 80, TouchSettings::default())
+                .unwrap()
+                .len(),
+            1,
+            "A still hand can block a ball if it approaches, intersects, and rebounds"
+        );
+    }
+
     fn scenario(curve: bool, close: bool, switching: bool) -> Vec<TouchFrame> {
         (0..80u64)
             .map(|i| {
@@ -448,6 +567,84 @@ mod tests {
             })
             .collect()
     }
+    fn strong_rebound_frames() -> Vec<TouchFrame> {
+        let mut frames = scenario(true, true, false);
+        for (i, row) in frames.iter_mut().enumerate() {
+            let x = if i <= 32 {
+                0.20 + i as f64 * 0.008
+            } else {
+                0.20 + 32.0 * 0.008 - (i - 32) as f64 * 0.008
+            };
+            let ball = row.selected_ball.as_mut().unwrap();
+            ball.bbox_xyxy_norm[0] = x;
+            ball.bbox_xyxy_norm[2] = x + 0.02;
+        }
+        frames
+    }
+
+    #[test]
+    fn ravel_logit_without_ball_impact_never_creates_a_touch() {
+        let mut frames = scenario(false, true, false);
+        for frame in &mut frames {
+            frame.players[0].touch_probability = Some(1.0);
+        }
+        let events = evaluate_block(
+            &frames,
+            640,
+            360,
+            0,
+            80,
+            TouchSettings {
+                use_ravel_touch: true,
+                ..TouchSettings::default()
+            },
+        )
+        .unwrap();
+        assert!(events.is_empty());
+    }
+
+    #[test]
+    fn default_hybrid_touch_profile_matches_short_rally_calibration() {
+        let settings = TouchSettings::default();
+        assert_eq!(settings.algorithm, TouchAlgorithm::Legacy);
+        assert_eq!(settings.threshold, 0.48);
+        assert_eq!(settings.smooth, 5);
+        assert_eq!(settings.min_gap, 4);
+        assert_eq!(settings.max_reach_ratio, 0.75);
+        assert_eq!(settings.min_interval_sec, 0.10);
+        assert!(!settings.use_ravel_touch);
+        assert!(!settings.require_pose);
+        assert!(settings.validate().is_ok());
+    }
+
+    #[test]
+    fn old_settings_preserve_existing_behavior() {
+        let settings: TouchSettings = serde_json::from_str(r#"{"threshold":0.5,"smooth":5,"min_gap":10,"max_reach_ratio":0.35,"min_interval_sec":0.35}"#).unwrap();
+        assert!(!settings.use_ravel_touch);
+        assert!(!settings.require_pose);
+        assert!(settings.validate().is_ok());
+    }
+
+    #[test]
+    fn disabling_ravel_touch_matches_absent_touch_scores() {
+        let frames = scenario(true, true, false);
+        let settings = TouchSettings {
+            use_ravel_touch: false,
+            ..TouchSettings::default()
+        };
+        let without_model = evaluate_block(&frames, 640, 360, 0, 80, settings).unwrap();
+        let mut no_scores = frames;
+        for frame in &mut no_scores {
+            frame.players[0].touch_probability = None;
+        }
+        let expected =
+            evaluate_block(&no_scores, 640, 360, 0, 80, TouchSettings::default()).unwrap();
+        assert_eq!(
+            serde_json::to_value(without_model).unwrap(),
+            serde_json::to_value(expected).unwrap()
+        );
+    }
+
     #[test]
     fn geometry_recovers_a_real_impact_without_any_ravel_touch_logits() {
         let mut frames = scenario(true, true, false);
@@ -518,20 +715,27 @@ mod tests {
 
     #[test]
     fn ravel_and_geometry_never_double_count_same_impact() {
-        let frames = scenario(true, true, false);
-        let contacts = evaluate_block(&frames, 640, 360, 0, 80, TouchSettings::default()).unwrap();
+        let frames = strong_rebound_frames();
+        let settings = TouchSettings {
+            use_ravel_touch: true,
+            ..TouchSettings::default()
+        };
+        let contacts = evaluate_block(&frames, 640, 360, 0, 80, settings).unwrap();
         assert_eq!(contacts.len(), 1);
     }
 
     #[test]
     fn changing_ball_motion_plus_ravel_peaks_and_reach_proposes_contact() {
         let rows = evaluate_block(
-            &scenario(true, true, false),
+            &strong_rebound_frames(),
             640,
             360,
             0,
             80,
-            TouchSettings::default(),
+            TouchSettings {
+                use_ravel_touch: true,
+                ..TouchSettings::default()
+            },
         )
         .unwrap();
         assert!(!rows.is_empty());
@@ -599,7 +803,7 @@ mod tests {
     fn nearby_track_can_support_motion_but_not_claim_missing_source_frame() {
         // The strongest smoothed peak is frame 30, but RAVEL has no player
         // detection there. The +/-2 frame associator sees player 1 on 29/31.
-        // The resulting physical Touch must retain UNKNOWN player identity.
+        // The playerless peak must not become a published Touch.
         let mut frames = scenario(true, true, false);
         for (index, row) in frames.iter_mut().enumerate() {
             for player in &mut row.players {
@@ -612,20 +816,15 @@ mod tests {
         }
         frames[30].players.clear();
         let events = evaluate_block(&frames, 640, 360, 0, 80, TouchSettings::default()).unwrap();
-        assert!(
-            !events.is_empty(),
-            "Motion-supported Touch must survive a one-frame player gap"
-        );
-        assert!(events
-            .iter()
-            .any(|event| event.frame_index == 30 && event.provisional_track_id.is_none()));
-        assert!(events
-            .iter()
-            .all(|event| event.provisional_track_id.is_none_or(|id| frames
-                [event.frame_index as usize]
-                .players
-                .iter()
-                .any(|player| player.track_id == id))));
+        assert!(events.iter().all(|event| {
+            event.frame_index != 30
+                && event.provisional_track_id.is_some_and(|id| {
+                    frames[event.frame_index as usize]
+                        .players
+                        .iter()
+                        .any(|player| player.track_id == id)
+                })
+        }));
         assert!(events
             .iter()
             .all(|event| frames[event.frame_index as usize].selected_ball.is_some()));
@@ -674,7 +873,7 @@ mod tests {
 
     #[test]
     fn emission_bounds_do_not_repeat_events() {
-        let frames = scenario(true, true, false);
+        let frames = strong_rebound_frames();
         let a = evaluate_block(&frames, 640, 360, 0, 30, TouchSettings::default()).unwrap();
         let b = evaluate_block(&frames, 640, 360, 30, 80, TouchSettings::default()).unwrap();
         assert!(a.iter().all(|c| c.frame_index < 30));

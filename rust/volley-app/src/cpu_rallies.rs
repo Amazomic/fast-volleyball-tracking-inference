@@ -29,7 +29,8 @@ use volley_core::{
     fusion::Candidate,
     rally_contact_context::{BallSample as CourtBallSample, ContactEvidence},
     rally_reconstruction::{
-        BallFrame, ContactFrame, RallyProposal, RallySegmenter, RallySettings, RallyTotals,
+        ground_bounce_candidate, BallFrame, ContactFrame, RallyProposal, RallySegmenter,
+        RallySettings, RallyTotals,
     },
 };
 
@@ -95,6 +96,12 @@ struct MotionContact {
     #[serde(default)]
     court: Option<volley_core::court_geometry::CourtContactEvidence>,
     physical_motion_supported: bool,
+    #[serde(default)]
+    body_contact_supported: bool,
+    #[serde(default)]
+    ball_occluded_at_contact: bool,
+    #[serde(default)]
+    inferred_body_reach_supported: bool,
     athlete_identity_verified: bool,
 }
 impl MotionContact {
@@ -102,6 +109,12 @@ impl MotionContact {
         if self.frame_index >= frames
             || !self.physical_motion_supported
             || self.athlete_identity_verified
+            || (self.body_contact_supported && self.provisional_track_id.is_none())
+            || (self.ball_occluded_at_contact
+                && (!self.body_contact_supported && !self.inferred_body_reach_supported
+                    || self.provisional_track_id.is_none()))
+            || (self.inferred_body_reach_supported
+                && (!self.ball_occluded_at_contact || self.body_contact_supported))
             || self.technique != "unknown_touch"
             || self.action_prediction.as_ref().is_some_and(|prediction| {
                 self.provisional_track_id.is_none() || !prediction.valid()
@@ -113,7 +126,8 @@ impl MotionContact {
                 .provisional_track_id
                 .is_some_and(|id| id == 0 || id > i64::MAX as u64)
             || self.motion_frame_index >= frames
-            || self.motion_frame_index.abs_diff(self.frame_index) > 4
+            || self.motion_frame_index.abs_diff(self.frame_index)
+                > volley_core::touch_pipeline::MAX_OBSERVED_TOUCH_OFFSET_FRAMES
             || !self.probability.is_finite()
             || !(0.0..=1.0).contains(&self.probability)
             || ![
@@ -203,6 +217,90 @@ fn write_proposal(
     Ok(())
 }
 
+// Read only ball centers in a separate bounded streaming pass. This lets
+// rallies use the *same* VBallNet teleport rejection as Touch and preview,
+// without making synthetic positions into evidence or retaining long videos
+// in memory. A boolean mask costs one byte per frame, even for long matches.
+#[derive(Deserialize)]
+struct BallOnlyFrame {
+    frame_index: u64,
+    selected_ball: Option<BallOnlySelected>,
+}
+#[derive(Deserialize)]
+struct BallOnlySelected {
+    source_model: String,
+    detection: BallOnlyDetection,
+}
+#[derive(Deserialize)]
+struct BallOnlyDetection {
+    score: f64,
+    bbox_xyxy_norm: [f64; 4],
+}
+
+fn reject_teleport_frames(
+    source: &Path,
+    expected_sha: &str,
+    frames: u64,
+    width: u32,
+    height: u32,
+    min_score: f64,
+) -> Result<Vec<bool>, String> {
+    const CHUNK: usize = 240;
+    const HALO: usize = 16;
+    let total = usize::try_from(frames).map_err(|_| "Rally frame count too large")?;
+    let mut rejected = vec![false; total];
+    let mut reader = BoundedReader::open(source)?;
+    let mut buffer = std::collections::VecDeque::<Option<[f64; 2]>>::new();
+    let mut buffer_start = 0;
+    let mut next_read = 0;
+    let mut core_start = 0;
+    while core_start < total {
+        let core_end = (core_start + CHUNK).min(total);
+        let region_start = core_start.saturating_sub(HALO);
+        let region_end = (core_end + HALO).min(total);
+        while next_read < region_end {
+            let bytes = reader.line()?.ok_or("Truncated ball source pre-scan")?;
+            let row: BallOnlyFrame = serde_json::from_slice(&bytes)
+                .map_err(|_| "Malformed ball source pre-scan frame")?;
+            if row.frame_index != next_read as u64 {
+                return Err("Ball source pre-scan frames out of order".into());
+            }
+            let sample = row.selected_ball.and_then(|entry| {
+                let b = entry.detection.bbox_xyxy_norm;
+                (entry.source_model == "vballnet"
+                    && entry.detection.score.is_finite()
+                    && entry.detection.score >= min_score
+                    && b.iter().all(|v| v.is_finite() && (0.0..=1.0).contains(v))
+                    && b[2] > b[0]
+                    && b[3] > b[1])
+                    .then_some([(b[0] + b[2]) * 0.5, (b[1] + b[3]) * 0.5])
+            });
+            buffer.push_back(sample);
+            next_read += 1;
+        }
+        let points = buffer
+            .iter()
+            .skip(region_start - buffer_start)
+            .take(region_end - region_start)
+            .copied()
+            .collect::<Vec<_>>();
+        let flags = volley_core::touch_pipeline::flag_ball_teleports(&points, width, height);
+        for index in core_start..core_end {
+            rejected[index] = flags[index - region_start];
+        }
+        core_start = core_end;
+        let keep_from = core_start.saturating_sub(HALO);
+        while buffer_start < keep_from {
+            buffer.pop_front();
+            buffer_start += 1;
+        }
+    }
+    if reader.line()?.is_some() || reader.finish() != expected_sha {
+        return Err("Ball source pre-scan SHA-256 mismatch".into());
+    }
+    Ok(rejected)
+}
+
 // The rebuild contract deliberately enumerates the full verified source
 // identity (files, SHAs, run ids, geometry). Grouping into parameter structs
 // belongs to the stage E decomposition, not to a lint-driven rewrite of
@@ -221,11 +319,20 @@ fn rebuild_from_snapshots(
     output: &Path,
     replay_id: &str,
     touch_id: &str,
+    court: Option<&volley_core::court_geometry::CourtTransform>,
 ) -> Result<(String, RallyTotals, OutputCounters), String> {
     settings.validate()?;
     if frames == 0 || frames > 48 * 3600 * 30 || expected_touches > frames {
         return Err("Native rally source frame/contact count exceeds limits".into());
     }
+    let false_ball_frames = reject_teleport_frames(
+        frames_file,
+        replay_sha,
+        frames,
+        width,
+        height,
+        settings.min_ball_score,
+    )?;
     let mut inputs = BoundedReader::open(frames_file)?;
     let mut touches = BoundedReader::open(touches_file)?;
     let output_file = OpenOptions::new()
@@ -240,6 +347,7 @@ fn rebuild_from_snapshots(
     let mut history = CourtHistory::default();
     let mut next = next_contact(&mut touches)?;
     let mut previous_contact: Option<u64> = None;
+    let mut ground_window = std::collections::VecDeque::new();
     for frame_index in 0..frames {
         let bytes = inputs.line()?.ok_or("Tracked frame JSONL is truncated")?;
         let frame: ReplayFrame = serde_json::from_slice(&bytes)
@@ -266,18 +374,27 @@ fn rebuild_from_snapshots(
                 };
                 ball.detection
                     .validate(frame_index - frame_index % 9, model)?;
-                let [left, top, right, bottom] = ball.detection.bbox_xyxy_norm;
-                history.push_ball(CourtBallSample {
-                    frame: frame_index,
-                    y_px: (top + bottom) * 0.5 * height as f64,
-                    radius_px: ((right - left) * width as f64 + (bottom - top) * height as f64)
-                        * 0.25,
-                });
-                Some(BallFrame {
-                    x_px: (left + right) * 0.5 * width as f64,
-                    y_px: (top + bottom) * 0.5 * height as f64,
-                    score: ball.detection.score,
-                })
+                if ball.source_model == "ravel" {
+                    None
+                } else {
+                    let [left, top, right, bottom] = ball.detection.bbox_xyxy_norm;
+                    if ball.detection.score >= settings.min_ball_score
+                        && !false_ball_frames[frame_index as usize]
+                    {
+                        history.push_ball(CourtBallSample {
+                            frame: frame_index,
+                            y_px: (top + bottom) * 0.5 * height as f64,
+                            radius_px: ((right - left) * width as f64
+                                + (bottom - top) * height as f64)
+                                * 0.25,
+                        });
+                    }
+                    Some(BallFrame {
+                        x_px: (left + right) * 0.5 * width as f64,
+                        y_px: (top + bottom) * 0.5 * height as f64,
+                        score: ball.detection.score,
+                    })
+                }
             }
             None => None,
         };
@@ -285,7 +402,28 @@ fn rebuild_from_snapshots(
             return Err("Too many CPU player observations per rally frame".into());
         }
         let mut verified_frame_ids = std::collections::BTreeSet::<u64>::new();
-        for tracked in frame.tracked_players {
+        // Distinguish immutable raw ball evidence from confidence-qualified
+        // ball observations used by touch/court/rally reconstruction.
+        let reliable_ball = ball.filter(|b| {
+            b.score >= settings.min_ball_score && !false_ball_frames[frame_index as usize]
+        });
+        let near_player = reliable_ball.is_some_and(|b| {
+            frame.tracked_players.iter().any(|tracked| {
+                let [x1, y1, x2, y2] = tracked.detection.bbox_xyxy_norm;
+                let (x1, y1, x2, y2) = (
+                    x1 * width as f64,
+                    y1 * height as f64,
+                    x2 * width as f64,
+                    y2 * height as f64,
+                );
+                let margin = (y2 - y1) * 0.20;
+                b.x_px >= x1 - margin
+                    && b.x_px <= x2 + margin
+                    && b.y_px >= y1 - margin
+                    && b.y_px <= y2 + margin
+            })
+        });
+        for tracked in &frame.tracked_players {
             if tracked.track_id == 0
                 || tracked.track_id > i64::MAX as u64
                 || tracked.is_verified_athlete
@@ -310,9 +448,18 @@ fn rebuild_from_snapshots(
             }
             // A Touch candidate cannot claim an observed ball when the
             // original selected-ball snapshot has no ball in this frame.
-            if ball.is_none() {
+            if item.ball_occluded_at_contact {
+                // Never claim an observed ball at an occlusion: only a
+                // pose-confirmed, dual-sided VBallNet flight fit is permitted.
+                if reliable_ball.is_some()
+                    || (!item.body_contact_supported && !item.inferred_body_reach_supported)
+                {
+                    return Err("Invalid occluded-ball touch evidence".into());
+                }
+            } else if reliable_ball.is_none() {
                 return Err(
-                    "Touch candidate has no selected-ball evidence in its source frame".into(),
+                    "Touch candidate has no confidence-qualified VBallNet ball in its source frame"
+                        .into(),
                 );
             }
             if previous_contact.is_some_and(|prev| item.frame_index <= prev) {
@@ -343,7 +490,7 @@ fn rebuild_from_snapshots(
         if next.as_ref().is_some_and(|t| t.frame_index < frame_index) {
             return Err("Out-of-order native Touch frame index".into());
         }
-        if let Some(proposal) = segmenter.push(frame_index, ball, &events)? {
+        if let Some(proposal) = segmenter.push(frame_index, reliable_ball, &events)? {
             write_proposal(
                 &mut writer,
                 &mut digest,
@@ -353,6 +500,50 @@ fn rebuild_from_snapshots(
                 touch_id,
                 &mut totals,
             )?;
+        }
+        let on_court = reliable_ball.is_some_and(|b| {
+            court.is_some_and(|c| {
+                c.evidence_for_feet([b.x_px / width as f64, b.y_px / height as f64])
+                    .is_some()
+            })
+        });
+        ground_window.push_back((
+            frame_index,
+            reliable_ball,
+            near_player,
+            !events.is_empty(),
+            on_court,
+        ));
+        if ground_window.len() == 9 {
+            let center = &ground_window[4];
+            let samples: Option<Vec<BallFrame>> =
+                ground_window.iter().map(|entry| entry.1).collect();
+            if let Some(samples) = samples {
+                let points: [BallFrame; 9] =
+                    samples.try_into().map_err(|_| "Invalid ground window")?;
+                let scale = 1280.0 / width.max(height) as f64;
+                let points = points.map(|point| BallFrame {
+                    x_px: point.x_px * scale,
+                    y_px: point.y_px * scale,
+                    score: point.score,
+                });
+                let near_contact = ground_window.iter().any(|entry| entry.3);
+                let near_player = ground_window.iter().skip(3).take(3).any(|entry| entry.2);
+                if ground_bounce_candidate(&points, near_player || near_contact, center.4) {
+                    if let Some(proposal) = segmenter.finish_at_possible_ground_bounce(center.0) {
+                        write_proposal(
+                            &mut writer,
+                            &mut digest,
+                            proposal,
+                            &history,
+                            replay_id,
+                            touch_id,
+                            &mut totals,
+                        )?;
+                    }
+                }
+            }
+            ground_window.pop_front();
         }
         history.trim(frame_index);
     }
@@ -435,9 +626,8 @@ pub(crate) fn process(state: &AppState, request: &RallyRequest) -> Result<Value,
     let touch_dir = touch_root.join(&request.touch_id);
     let tracked = source_manifest(&track_dir, "CPU Track ID").map_err(storage::bad_request)?;
     let contacts = source_manifest(&touch_dir, "CPU Touch").map_err(storage::bad_request)?;
-    let current_court_revision =
-        crate::video_edits::court_snapshot(state, &request.project_id, &request.video)?
-            .map(|snapshot| snapshot.revision);
+    let court = crate::video_edits::court_snapshot(state, &request.project_id, &request.video)?;
+    let current_court_revision = court.as_ref().map(|snapshot| snapshot.revision.clone());
     if contacts["court_revision"] != json!(current_court_revision) {
         return Err(storage::bad_request(
             "Touch results were computed from an outdated court markup",
@@ -527,6 +717,7 @@ pub(crate) fn process(state: &AppState, request: &RallyRequest) -> Result<Value,
             &part,
             &request.replay_id,
             &request.touch_id,
+            court.as_ref().map(|snapshot| &snapshot.transform),
         )?;
         if inference_stream::source_stamp(prepared)? != (size, mtime) {
             return Err("Prepared video changed during native rally processing".into());
@@ -550,6 +741,7 @@ pub(crate) fn process(state: &AppState, request: &RallyRequest) -> Result<Value,
             "court_revision":contacts["court_revision"],
             "court_context_enabled":contacts["court_context_enabled"],
             "court_contact_context_version":"python_serve_toss_possession_v1",
+            "ground_boundary_version":"trajectory_court_player_v2",
             "touch_candidates_ingested":output.ingested_touch_candidates,
             "physical_touch_player_gate":"same_frame_verified_cpu_track",
             "physical_touch_ball_gate":"same_frame_selected_ball",
@@ -618,6 +810,111 @@ pub async fn status(
 mod tests {
     use super::*;
 
+    #[test]
+    fn confidence_does_not_override_short_false_ball_island() {
+        let dir = std::env::temp_dir().join(format!("ball-repair-{}", Uuid::new_v4()));
+        fs::create_dir(&dir).unwrap();
+        let path = dir.join("frames.jsonl");
+        let mut bytes = Vec::new();
+        for i in 0..30_u64 {
+            let x = if (10..=17).contains(&i) {
+                0.93
+            } else {
+                0.34 + i as f64 * 0.001
+            };
+            let row = json!({
+                "frame_index":i,
+                "selected_ball":{
+                    "source_model":"vballnet",
+                    "detection":{
+                        "score":0.56,
+                        "bbox_xyxy_norm":[x,0.35,x+0.02,0.37]
+                    }
+                }
+            });
+            bytes.extend(serde_json::to_vec(&row).unwrap());
+            bytes.push(b'\n');
+        }
+        fs::write(&path, &bytes).unwrap();
+        let sha = format!("{:x}", Sha256::digest(&bytes));
+        let masked = reject_teleport_frames(&path, &sha, 30, 1280, 720, 0.35).unwrap();
+        assert!(masked[10..=17].iter().all(|v| *v));
+        assert!(masked[..10].iter().all(|v| !*v));
+        assert!(masked[18..].iter().all(|v| !*v));
+        // Do not turn low confidence into a hard 67% threshold.
+        let under_67 = reject_teleport_frames(&path, &sha, 30, 1280, 720, 0.67).unwrap();
+        assert!(under_67.iter().all(|v| !*v));
+        assert!(
+            fs::read(&path).unwrap() == bytes,
+            "Immutable replay remains unchanged"
+        );
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn contact_from_real_ball_frame_may_estimate_impact_inside_short_gap() {
+        let mut touch = MotionContact {
+            frame_index: 476,
+            provisional_track_id: Some(6),
+            probability: 0.81,
+            ball_x_px: 820.0,
+            ball_y_px: 407.5,
+            motion_frame_index: 482,
+            direction_change_deg: 178.0,
+            speed_before_px_frame: 17.2,
+            speed_after_px_frame: 30.3,
+            velocity_residual_px_frame: 47.5,
+            technique: "unknown_touch".into(),
+            action_prediction: None,
+            court: None,
+            physical_motion_supported: true,
+            body_contact_supported: false,
+            ball_occluded_at_contact: false,
+            inferred_body_reach_supported: false,
+            athlete_identity_verified: false,
+        };
+        assert!(touch.verify(756, 1280, 720).is_ok());
+        // An arbitrarily distant guessed impact must still be rejected.
+        touch.motion_frame_index = 486;
+        assert!(touch.verify(756, 1280, 720).is_err());
+        touch.motion_frame_index = 482;
+        touch.provisional_track_id = Some(0);
+        assert!(touch.verify(756, 1280, 720).is_err());
+    }
+
+    #[test]
+    #[ignore = "requires copied diagnostic inputs"]
+    fn copied_replay_ground_boundary_diagnostic() {
+        let dir = Path::new(&std::env::var("VOLLEY_COPIED_DIAGNOSTIC").unwrap()).to_path_buf();
+        let tracks = dir.join("tracks.jsonl");
+        let touches = dir.join("touches.jsonl");
+        let court_points: [[f64; 2]; 4] =
+            serde_json::from_slice(&fs::read(dir.join("court.json")).unwrap()).unwrap();
+        let court = volley_core::court_geometry::CourtTransform::new(court_points).unwrap();
+        let output = dir.join("diagnostic-output.jsonl");
+        let track_sha = format!("{:x}", Sha256::digest(fs::read(&tracks).unwrap()));
+        let touch_sha = format!("{:x}", Sha256::digest(fs::read(&touches).unwrap()));
+        let frames = fs::read_to_string(&tracks).unwrap().lines().count() as u64;
+        let count = fs::read_to_string(&touches).unwrap().lines().count() as u64;
+        rebuild_from_snapshots(
+            &tracks,
+            &touches,
+            &track_sha,
+            &touch_sha,
+            frames,
+            count,
+            1280,
+            720,
+            RallySettings::default(),
+            &output,
+            "0123456789abcdef0123456789abcdef",
+            "abcdef0123456789abcdef0123456789",
+            Some(&court),
+        )
+        .unwrap();
+        eprintln!("{}", fs::read_to_string(output).unwrap());
+    }
+
     // Read-only integration test against an explicitly supplied real,
     // SHA-bound CPU replay. Runs new CPU Touch + Rally snapshots entirely
     // inside a unique temporary directory; never reuses GPU analysis or
@@ -665,6 +962,7 @@ mod tests {
                 &rallies,
                 "0123456789abcdef0123456789abcdef",
                 "abcdef0123456789abcdef0123456789",
+                None,
             )?;
             let actual = format!(
                 "{:x}",
@@ -704,7 +1002,9 @@ mod tests {
         let frames = 450_u64;
         for frame in 0..frames {
             let t = frame % 200;
-            let x = 0.10 + t.min(200 - t) as f64 * 0.005;
+            // Strong, physically observable VBallNet reversal even without
+            // RAVEL Touch logits; the player box stays within ball reach.
+            let x = (0.60 - (100_i64 - t as i64).unsigned_abs() as f64 * 0.008).max(0.10);
             let touch = (96..=104).contains(&frame) || (296..=304).contains(&frame);
             let players = if frame == 100 {
                 vec![]
@@ -756,6 +1056,7 @@ mod tests {
                 &rallies,
                 "0123456789abcdef0123456789abcdef",
                 "abcdef0123456789abcdef0123456789",
+                None,
             )?;
             if ingested.ingested_touch_candidates != contacts {
                 return Err("CPU rally reconstruction dropped a valid Touch".into());
@@ -793,9 +1094,14 @@ mod tests {
                     }
                 })
             };
+            let observed_id = touches
+                .iter()
+                .position(|&touch_frame| touch_frame == frame)
+                .map(|index| if index % 2 == 0 { 3 } else { 4 })
+                .unwrap_or(3);
             let row = json!({
                 "frame_index":frame,
-                "tracked_players":[{"track_id":3,"is_verified_athlete":false,
+                "tracked_players":[{"track_id":observed_id,"is_verified_athlete":false,
                     "detection":{"frame_index":frame,"class_name":"player","score":0.95,
                     "bbox_xyxy_norm":[0.2,0.2,0.4,0.8],"query_index":0}}],
                 "selected_ball":ball,
@@ -807,10 +1113,12 @@ mod tests {
             tracked.push(b'\n');
         }
         let mut contacts = Vec::new();
-        for &frame in touches {
+        for (index, &frame) in touches.iter().enumerate() {
+            // The fixture alternates players so legal multi-Touch rallies remain valid.
+            let track_id = if index % 2 == 0 { 3 } else { 4 };
             let event = json!({
                 "frame_index":frame,
-                "provisional_track_id":3,
+                "provisional_track_id":track_id,
                 "probability":0.94,
                 "ball_x_px":150.0,"ball_y_px":120.0,
                 "motion_frame_index":frame,
@@ -858,6 +1166,7 @@ mod tests {
             &output,
             "0123456789abcdef0123456789abcdef",
             "abcdef0123456789abcdef0123456789",
+            None,
         );
         let response = result.map(|(sha, stats, counts)| {
             let bytes = fs::read(&output).unwrap();
@@ -894,6 +1203,60 @@ mod tests {
         assert_eq!(rows[0]["authoritative_rally"], false);
         assert_eq!(rows[0]["provisional_track_ids"][0], 3);
         assert_ne!(rows[0]["candidate_id"], rows[1]["candidate_id"]);
+    }
+    #[test]
+    fn reconstructed_rally_ends_at_possible_ground_bounce_with_court() {
+        let (raw, touches, _, touch_sha) = fixture(150, None, &[20, 70]);
+        let mut changed = Vec::new();
+        for line in raw
+            .split(|byte| *byte == b'\n')
+            .filter(|line| !line.is_empty())
+        {
+            let mut row: Value = serde_json::from_slice(line).unwrap();
+            let frame = row["frame_index"].as_u64().unwrap();
+            if (100..=120).contains(&frame) {
+                let y = 0.70 - (frame as f64 - 110.0).abs() * 0.02;
+                row["selected_ball"]["detection"]["bbox_xyxy_norm"][1] = json!(y);
+                row["selected_ball"]["detection"]["bbox_xyxy_norm"][3] = json!(y + 0.01);
+            }
+            changed.extend(serde_json::to_vec(&row).unwrap());
+            changed.push(b'\n');
+        }
+        let root = std::env::temp_dir().join(format!("rally-ground-{}", Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let tracks = root.join("tracks.jsonl");
+        let contacts = root.join("contacts.jsonl");
+        let output = root.join("output.jsonl");
+        fs::write(&tracks, &changed).unwrap();
+        fs::write(&contacts, &touches).unwrap();
+        let court = volley_core::court_geometry::CourtTransform::new([
+            [0.0, 0.0],
+            [1.0, 0.0],
+            [1.0, 1.0],
+            [0.0, 1.0],
+        ])
+        .unwrap();
+        rebuild_from_snapshots(
+            &tracks,
+            &contacts,
+            &format!("{:x}", Sha256::digest(&changed)),
+            &touch_sha,
+            150,
+            2,
+            640,
+            360,
+            RallySettings::default(),
+            &output,
+            "0123456789abcdef0123456789abcdef",
+            "abcdef0123456789abcdef0123456789",
+            Some(&court),
+        )
+        .unwrap();
+        let data = fs::read_to_string(&output).unwrap();
+        let event: Value = serde_json::from_str(data.lines().next().unwrap()).unwrap();
+        assert_eq!(event["end_reason"], "possible_ground_bounce");
+        assert!((108..=111).contains(&event["detected_end_frame"].as_u64().unwrap()));
+        fs::remove_dir_all(root).unwrap();
     }
     #[test]
     fn rescoring_requires_no_gpu_and_single_contact_is_not_a_rally() {

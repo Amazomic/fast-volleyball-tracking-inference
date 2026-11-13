@@ -10,7 +10,7 @@ use axum::{extract::State, http::HeaderMap, Json};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::sync::Arc;
-use volley_inference::{Config, Device, Engine, ModelKind};
+use volley_inference::{person::PersonEngine, Config, Device, Engine, ModelKind};
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -64,7 +64,7 @@ pub async fn preflight(
             "gpu_memory_limit_mb":request.gpu_memory_limit_mb,
             "cpu_threads":request.cpu_threads,
             "vballnet_v4c":ball.as_ref().map(|m|serde_json::to_value(m).unwrap_or(Value::Null)).ok(),
-            "ravel_013":players.as_ref().map(|m|serde_json::to_value(m).unwrap_or(Value::Null)).ok(),
+            "person_pose":players.as_ref().map(|m|serde_json::to_value(m).unwrap_or(Value::Null)).ok(),
             "model_checks_passed":manifest_valid,
             "model_errors":[ball.err(),players.err()],
             "runtime_probed":request.probe_runtime,
@@ -78,6 +78,14 @@ pub async fn preflight(
             for model in [ModelKind::Ball,ModelKind::Players]{
                 let mut choice=config.clone();
                 choice.model=model;
+                if model == ModelKind::Players {
+                    match PersonEngine::load(&path, choice.device, choice.cpu_threads, choice.gpu_memory_limit_mb) {
+                        Ok(_) => sessions.push(json!({"model":"person_pose","session_opened":true,
+                            "input":"RTMDet + RTMPose", "note":"Two ONNX sessions; no inference performed"})),
+                        Err(e) => sessions.push(json!({"model":"person_pose","session_opened":false,"error":e})),
+                    }
+                    continue;
+                }
                 match Engine::load(&path,&choice) {
                     Ok(engine)=>sessions.push(json!({
                         "model":model,"session_opened":true,

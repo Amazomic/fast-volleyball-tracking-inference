@@ -708,7 +708,8 @@ fn edit(root: &Path, req: &EditRequest) -> Result<(), ApiError> {
     if req.kind == "gpu"
         && all.iter().any(|(kind, _, v)| {
             kind == "fusion"
-                && (v["sources"]["ravel"]["job_id"] == req.id
+                && ((v["sources"]["person_pose"]["job_id"] == req.id
+                    || v["sources"]["ravel"]["job_id"] == req.id)
                     || v["sources"]["vballnet"]["job_id"] == req.id)
         })
     {
@@ -793,7 +794,9 @@ fn edit(root: &Path, req: &EditRequest) -> Result<(), ApiError> {
     }
     if req.kind == "fusion" {
         for id in [
-            target.2["sources"]["ravel"]["job_id"].as_str(),
+            target.2["sources"]["person_pose"]["job_id"]
+                .as_str()
+                .or_else(|| target.2["sources"]["ravel"]["job_id"].as_str()),
             target.2["sources"]["vballnet"]["job_id"].as_str(),
         ]
         .into_iter()
@@ -803,7 +806,8 @@ fn edit(root: &Path, req: &EditRequest) -> Result<(), ApiError> {
             let shared = all.iter().any(|(kind, other, v)| {
                 kind == "fusion"
                     && other != &req.id
-                    && (v["sources"]["ravel"]["job_id"] == id
+                    && ((v["sources"]["person_pose"]["job_id"] == id
+                        || v["sources"]["ravel"]["job_id"] == id)
                         || v["sources"]["vballnet"]["job_id"] == id)
             });
             if !shared

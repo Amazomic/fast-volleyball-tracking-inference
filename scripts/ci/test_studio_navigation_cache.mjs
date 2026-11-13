@@ -22,12 +22,12 @@ const runtime={navigate:tab=>tab,beginLoad(){}};
 const context={state,ui,runtime,projectId:()=> "project-1",
   loadVideos:()=>{videoLoads++;return Promise.resolve();},
   loadPlayers:()=>{playerLoads++;return Promise.resolve();},
-  document:{querySelectorAll:()=>[]},
-  window:{dispatchEvent(){}},
+  document:{querySelectorAll:()=>[],addEventListener(){}},
+  window:{dispatchEvent(){},addEventListener(){}},
   CustomEvent:class {constructor(name,config){this.type=name;this.detail=config.detail;}},
   failure:err=>{throw err;}
 };
-runInNewContext(section(tabs,"  const switchTab=(requested)=>{","  const projectId=()=>")+
+runInNewContext(section(tabs,"  const views={","  const projectId=()=>")+
   "\nthis.switchTab=switchTab;",context);
 context.switchTab("analysis");
 context.switchTab("preview");

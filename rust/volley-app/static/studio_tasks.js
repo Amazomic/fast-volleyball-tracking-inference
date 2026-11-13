@@ -126,7 +126,7 @@
       clear("gpu");
       return;
     }
-    const model=data.model==="players"?"RAVEL":data.model==="ball"?"VballNet":"GPU";
+    const model=data.model==="players"?"RTMDet + RTMPose":data.model==="ball"?"VballNet":"GPU";
     set("gpu",{projectId:project,label:"Анализ GPU · "+model,
       stage:{"queued":"В очереди","loading_model":"Загрузка модели","running":"Инференс"}[data.phase]||
         String(data.phase||"Обработка"),progress:Number.isFinite(data.progress_percent)?data.progress_percent:null});

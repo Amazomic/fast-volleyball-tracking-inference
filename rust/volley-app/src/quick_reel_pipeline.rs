@@ -183,7 +183,7 @@ async fn quick_gpu_model(
         || *cancelled.borrow(),
         |status| {
             let model_label = if model == volley_inference::ModelKind::Players {
-                "RAVEL-013"
+                "RTMDet + RTMPose"
             } else {
                 "VballNetV4c"
             };
@@ -422,7 +422,7 @@ pub(super) async fn run_native_pipeline(
             inference_fusion::FuseRequest {
                 project_id: project_id.clone(),
                 video: alias.clone(),
-                ravel_job_id: players,
+                person_job_id: players,
                 vball_job_id: ball,
             },
             &workspace,
